@@ -9,6 +9,7 @@ import SystemArchPage from './routes/SystemArchPage';
 import ServiceDetailPage from './routes/ServiceDetailPage';
 import LogsPage from './routes/LogsPage';
 import MetricsPage from './routes/MetricsPage';
+import InvestigatePage from './routes/InvestigatePage';
 import SettingsPage from './routes/SettingsPage';
 
 export default function App() {
@@ -26,6 +27,7 @@ export default function App() {
             <Route path="/service/:serviceName" element={<ServiceDetailPage />} />
             <Route path="/logs" element={<LogsPage />} />
             <Route path="/metrics" element={<MetricsPage />} />
+            <Route path="/investigate" element={<InvestigatePage />} />
             <Route path="/settings" element={<SettingsPage />} />
           </Route>
         </Routes>

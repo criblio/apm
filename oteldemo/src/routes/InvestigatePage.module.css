@@ -1,0 +1,358 @@
+/* Investigate page — chat-style layout for the Copilot Investigator.
+ *
+ * The conversation scrolls inside a center column capped at a
+ * readable width (matches the native Cribl Search Copilot UI). The
+ * composer sits at the bottom and stays put as the transcript
+ * grows. Run Query approval cards sit inline in the stream.
+ */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--cds-color-bg-subtle);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--cds-space-md) var(--cds-space-lg);
+  border-bottom: 1px solid var(--cds-color-border-subtle);
+  background: var(--cds-color-bg);
+}
+.title {
+  font-size: var(--cds-font-size-md);
+  font-weight: var(--cds-font-weight-semibold);
+  color: var(--cds-color-fg);
+}
+.subtitle {
+  font-size: var(--cds-font-size-xs);
+  color: var(--cds-color-fg-subtle);
+  margin-top: 2px;
+}
+.headerActions {
+  display: flex;
+  gap: var(--cds-space-sm);
+}
+
+.transcript {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--cds-space-lg);
+}
+.transcriptInner {
+  max-width: 920px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--cds-space-md);
+}
+
+.emptyState {
+  text-align: center;
+  padding: var(--cds-space-xl) var(--cds-space-lg);
+  color: var(--cds-color-fg-subtle);
+}
+.emptyTitle {
+  font-size: var(--cds-font-size-lg);
+  font-weight: var(--cds-font-weight-semibold);
+  color: var(--cds-color-fg);
+  background: linear-gradient(90deg, #0190ff, #7c3aed);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  margin-bottom: var(--cds-space-sm);
+}
+.emptyHint {
+  font-size: var(--cds-font-size-sm);
+  color: var(--cds-color-fg-subtle);
+  margin-bottom: var(--cds-space-lg);
+}
+
+.suggestions {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--cds-space-md);
+  max-width: 720px;
+  margin: 0 auto;
+}
+.suggestion {
+  padding: var(--cds-space-md);
+  background: var(--cds-color-bg);
+  border: 1px solid var(--cds-color-border-subtle);
+  border-radius: var(--cds-radius-md);
+  text-align: left;
+  cursor: pointer;
+  font-size: var(--cds-font-size-sm);
+  color: var(--cds-color-fg);
+  transition: border-color 0.12s, box-shadow 0.12s;
+}
+.suggestion:hover {
+  border-color: var(--cds-color-accent);
+  box-shadow: var(--cds-shadow-sm);
+}
+
+/* Message cards ------------------------------------------------- */
+
+.userMessage {
+  align-self: flex-end;
+  max-width: 70%;
+  padding: var(--cds-space-sm) var(--cds-space-md);
+  background: var(--cds-color-accent-subtle);
+  border-radius: var(--cds-radius-lg);
+  border: 1px solid var(--cds-color-border-subtle);
+  font-size: var(--cds-font-size-sm);
+  color: var(--cds-color-fg);
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.assistantMessage {
+  display: flex;
+  gap: var(--cds-space-sm);
+  align-items: flex-start;
+}
+.assistantIcon {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #0190ff, #7c3aed);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-size: 12px;
+  font-weight: 700;
+}
+.assistantBody {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: var(--cds-space-sm) 0;
+  font-size: var(--cds-font-size-sm);
+  color: var(--cds-color-fg);
+  line-height: 1.55;
+}
+.assistantBody p {
+  margin: 0 0 var(--cds-space-sm) 0;
+}
+.assistantBody p:last-child {
+  margin-bottom: 0;
+}
+.assistantBody code {
+  font-family: var(--cds-font-family-mono);
+  font-size: 0.9em;
+  padding: 1px 4px;
+  background: var(--cds-color-bg-subtle);
+  border-radius: 3px;
+}
+.assistantBody pre {
+  font-family: var(--cds-font-family-mono);
+  font-size: var(--cds-font-size-xs);
+  padding: var(--cds-space-sm);
+  background: var(--cds-color-bg-subtle);
+  border: 1px solid var(--cds-color-border-subtle);
+  border-radius: var(--cds-radius-sm);
+  overflow-x: auto;
+  white-space: pre;
+}
+.assistantBody strong {
+  font-weight: var(--cds-font-weight-semibold);
+}
+
+/* Tool call approval card --------------------------------------- */
+
+.toolCall {
+  padding: var(--cds-space-md);
+  background: var(--cds-color-bg);
+  border: 1px solid var(--cds-color-border-subtle);
+  border-radius: var(--cds-radius-md);
+}
+.toolCallHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--cds-space-sm);
+  margin-bottom: var(--cds-space-sm);
+}
+.toolCallDescription {
+  font-size: var(--cds-font-size-sm);
+  font-weight: var(--cds-font-weight-semibold);
+  color: var(--cds-color-fg);
+}
+.toolCallMeta {
+  font-size: var(--cds-font-size-xs);
+  color: var(--cds-color-fg-subtle);
+}
+.toolCallQuery {
+  font-family: var(--cds-font-family-mono);
+  font-size: var(--cds-font-size-xs);
+  padding: var(--cds-space-sm);
+  background: var(--cds-color-bg-subtle);
+  border: 1px solid var(--cds-color-border-subtle);
+  border-radius: var(--cds-radius-sm);
+  overflow-x: auto;
+  white-space: pre;
+  color: var(--cds-color-fg);
+  margin-bottom: var(--cds-space-sm);
+}
+.toolCallActions {
+  display: flex;
+  gap: var(--cds-space-sm);
+  justify-content: flex-end;
+}
+.btn {
+  padding: 6px 14px;
+  border-radius: var(--cds-radius-sm);
+  border: 1px solid var(--cds-color-border-subtle);
+  background: var(--cds-color-bg);
+  color: var(--cds-color-fg);
+  font-size: var(--cds-font-size-xs);
+  font-weight: var(--cds-font-weight-semibold);
+  cursor: pointer;
+}
+.btn:hover {
+  border-color: var(--cds-color-accent);
+}
+.btnPrimary {
+  background: var(--cds-color-accent);
+  border-color: var(--cds-color-accent);
+  color: white;
+}
+.btnPrimary:hover {
+  background: var(--cds-color-accent-hover);
+}
+.btnDanger {
+  color: var(--cds-color-error);
+}
+
+/* Tool result panel --------------------------------------------- */
+
+.toolResult {
+  margin-top: var(--cds-space-sm);
+}
+.toolResultMeta {
+  font-size: var(--cds-font-size-xs);
+  color: var(--cds-color-fg-subtle);
+  margin-bottom: var(--cds-space-xs);
+}
+.toolResultTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--cds-font-size-xs);
+  font-family: var(--cds-font-family-mono);
+}
+.toolResultTable th,
+.toolResultTable td {
+  padding: 4px 8px;
+  text-align: left;
+  border-bottom: 1px solid var(--cds-color-border-subtle);
+  white-space: nowrap;
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.toolResultTable th {
+  font-weight: var(--cds-font-weight-semibold);
+  color: var(--cds-color-fg-subtle);
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.3px;
+}
+.toolResultError {
+  padding: var(--cds-space-sm);
+  background: var(--cds-color-bg-subtle);
+  border-left: 3px solid var(--cds-color-error);
+  font-size: var(--cds-font-size-xs);
+  color: var(--cds-color-error);
+  font-family: var(--cds-font-family-mono);
+}
+
+/* Thinking indicator -------------------------------------------- */
+
+.thinking {
+  display: flex;
+  gap: var(--cds-space-sm);
+  align-items: center;
+  color: var(--cds-color-fg-subtle);
+  font-size: var(--cds-font-size-sm);
+  font-style: italic;
+}
+.thinkingDots {
+  display: inline-flex;
+  gap: 3px;
+}
+.thinkingDot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--cds-color-accent);
+  animation: bounce 1.4s infinite ease-in-out both;
+}
+.thinkingDot:nth-child(1) { animation-delay: -0.32s; }
+.thinkingDot:nth-child(2) { animation-delay: -0.16s; }
+@keyframes bounce {
+  0%, 80%, 100% { transform: scale(0.6); opacity: 0.5; }
+  40% { transform: scale(1); opacity: 1; }
+}
+
+/* Composer ------------------------------------------------------ */
+
+.composer {
+  flex: 0 0 auto;
+  padding: var(--cds-space-md) var(--cds-space-lg);
+  border-top: 1px solid var(--cds-color-border-subtle);
+  background: var(--cds-color-bg);
+}
+.composerInner {
+  max-width: 920px;
+  margin: 0 auto;
+  display: flex;
+  gap: var(--cds-space-sm);
+  align-items: flex-end;
+}
+.composerTextarea {
+  flex: 1 1 auto;
+  resize: none;
+  padding: var(--cds-space-sm) var(--cds-space-md);
+  border: 1px solid var(--cds-color-border-subtle);
+  border-radius: var(--cds-radius-md);
+  background: var(--cds-color-bg);
+  font-family: inherit;
+  font-size: var(--cds-font-size-sm);
+  color: var(--cds-color-fg);
+  min-height: 44px;
+  max-height: 200px;
+  line-height: 1.5;
+  outline: none;
+}
+.composerTextarea:focus {
+  border-color: var(--cds-color-accent);
+}
+.composerSend {
+  padding: var(--cds-space-sm) var(--cds-space-md);
+  background: var(--cds-color-accent);
+  color: white;
+  border: none;
+  border-radius: var(--cds-radius-md);
+  font-weight: var(--cds-font-weight-semibold);
+  font-size: var(--cds-font-size-sm);
+  cursor: pointer;
+  min-height: 44px;
+}
+.composerSend:disabled {
+  background: var(--cds-color-border-subtle);
+  cursor: not-allowed;
+}
+
+.errorBanner {
+  padding: var(--cds-space-sm) var(--cds-space-md);
+  background: var(--cds-color-bg-subtle);
+  border-left: 3px solid var(--cds-color-error);
+  border-radius: var(--cds-radius-sm);
+  color: var(--cds-color-error);
+  font-size: var(--cds-font-size-sm);
+}

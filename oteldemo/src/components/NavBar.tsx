@@ -9,6 +9,7 @@ const tabs = [
   { label: 'Metrics', to: '/metrics' },
   { label: 'Compare', to: '/compare' },
   { label: 'System Architecture', to: '/architecture' },
+  { label: 'Investigate', to: '/investigate' },
 ];
 
 export default function NavBar() {
