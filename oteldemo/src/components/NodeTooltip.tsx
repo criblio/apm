@@ -15,6 +15,8 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import Sparkline from './Sparkline';
+import InvestigateButton from './InvestigateButton';
+import type { InvestigationSeed } from '../api/agentContext';
 import { serviceHealth } from '../utils/health';
 import type {
   ServiceSummary,
@@ -395,11 +397,64 @@ export default function NodeTooltip({
         </>
       )}
 
-      <Link to={`/service/${encodeURIComponent(service)}`} className={s.openLink}>
-        View service detail →
-      </Link>
+      <div className={s.tooltipActions}>
+        <Link to={`/service/${encodeURIComponent(service)}`} className={s.openLink}>
+          View service detail →
+        </Link>
+        <InvestigateButton
+          seed={buildNodeSeed(service, summary, prevSummary, ops, lookback)}
+          title={`Investigate ${service}`}
+        />
+      </div>
 
       {!pinned && <div className={s.pinHint}>Click the node to pin this card</div>}
     </div>
   );
+}
+
+/**
+ * Seed for "Investigate this service" triggered from the System
+ * Architecture node tooltip. Threads the same lazy-loaded operation
+ * data the tooltip shows so the agent starts with the same picture
+ * the user sees.
+ */
+function buildNodeSeed(
+  service: string,
+  summary: ServiceSummary | undefined,
+  prevSummary: ServiceSummary | undefined,
+  ops: OperationSummary[] | null,
+  lookback: string,
+): InvestigationSeed {
+  const signals: string[] = [];
+  if (summary) {
+    signals.push(`Error rate: ${(summary.errorRate * 100).toFixed(2)}%`);
+    signals.push(`p95: ${summary.p95Us >= 1000 ? (summary.p95Us / 1000).toFixed(1) + 'ms' : summary.p95Us.toFixed(0) + 'μs'}`);
+    signals.push(`Requests: ${summary.requests.toLocaleString()} in ${lookback}`);
+  }
+  if (prevSummary && summary) {
+    const delta = (summary.errorRate - prevSummary.errorRate) * 100;
+    if (Math.abs(delta) >= 0.5) {
+      signals.push(
+        `Error rate delta: ${delta >= 0 ? '▲' : '▼'}${Math.abs(delta).toFixed(2)}pp vs prior window`,
+      );
+    }
+  }
+  if (ops && ops.length > 0) {
+    const erroring = ops
+      .filter((o) => o.errorRate > 0)
+      .sort((a, b) => b.errors - a.errors)
+      .slice(0, 3);
+    if (erroring.length > 0) {
+      signals.push(
+        `Top erroring operations: ${erroring.map((o) => `${o.operation} (${(o.errorRate * 100).toFixed(1)}%)`).join(', ')}`,
+      );
+    }
+  }
+  return {
+    question: `Investigate the current state of the ${service} service (triggered from the System Architecture graph). Look at error rates, latency anomalies, and upstream/downstream dependencies.`,
+    service,
+    knownSignals: signals,
+    earliest: lookback,
+    latest: 'now',
+  };
 }

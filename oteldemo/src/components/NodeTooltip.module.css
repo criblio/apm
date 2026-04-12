@@ -133,13 +133,19 @@
   font-style: italic;
 }
 
+.tooltipActions {
+  display: flex;
+  align-items: center;
+  gap: var(--cds-space-xs);
+  margin-top: var(--cds-space-md);
+}
+
 .openLink {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: var(--cds-space-xs);
-  width: 100%;
-  margin-top: var(--cds-space-md);
+  flex: 1 1 auto;
   padding: var(--cds-space-xs) var(--cds-space-md);
   height: 30px;
   font-size: var(--cds-font-size-sm);

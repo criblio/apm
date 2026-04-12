@@ -149,3 +149,14 @@
 .statValueErr {
   color: var(--cds-color-danger);
 }
+
+.investigateHint {
+  margin-top: var(--cds-space-sm);
+  padding-top: var(--cds-space-xs);
+  border-top: 1px solid var(--cds-color-border-subtle);
+  font-size: 10px;
+  color: var(--cds-color-accent);
+  text-align: center;
+  font-style: italic;
+  letter-spacing: 0.2px;
+}

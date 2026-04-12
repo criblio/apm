@@ -13,9 +13,11 @@
  *
  */
 import { useCallback, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import NodeTooltip from './NodeTooltip';
 import EdgeTooltip from './EdgeTooltip';
 import ZoomControls from './ZoomControls';
+import type { InvestigationSeed } from '../api/agentContext';
 import { serviceColor, serviceColorAtLightness } from '../utils/spans';
 import { serviceHealth, healthFromRate } from '../utils/health';
 import { useForceLayout, type SimNode, type SimLink } from '../hooks/useForceLayout';
@@ -92,6 +94,50 @@ export default function IsometricGraph({
   loadOperations,
   lookback,
 }: Props) {
+  const navigate = useNavigate();
+
+  /**
+   * Click handler for dependency edges → launches a Copilot
+   * investigation pre-filled with the edge's context (parent → child,
+   * call count, error rate, kind). Navigates to /investigate with a
+   * seed passed via router state.
+   */
+  const investigateEdge = useCallback(
+    (info: {
+      parent: string;
+      child: string;
+      kind: 'rpc' | 'messaging';
+      topic?: string;
+      callCount: number;
+      errorCount: number;
+      p95DurUs: number;
+    }) => {
+      const errorRate = info.callCount > 0 ? info.errorCount / info.callCount : 0;
+      const signals: string[] = [
+        `Call count: ${info.callCount.toLocaleString()} in ${lookback}`,
+        `Error count: ${info.errorCount.toLocaleString()}`,
+        `Error rate: ${(errorRate * 100).toFixed(2)}%`,
+        `p95 duration: ${info.p95DurUs >= 1000 ? (info.p95DurUs / 1000).toFixed(1) + 'ms' : info.p95DurUs.toFixed(0) + 'μs'}`,
+        `Dependency kind: ${info.kind}`,
+      ];
+      if (info.topic) signals.push(`Messaging topic: ${info.topic}`);
+      const question =
+        info.errorCount > 0
+          ? `The ${info.parent} → ${info.child} ${info.kind} call has ${info.errorCount} failing calls (${(errorRate * 100).toFixed(2)}% error rate). Investigate whether the failure originates in ${info.child} or is something about how ${info.parent} is calling it.`
+          : `Investigate the ${info.parent} → ${info.child} ${info.kind} dependency. Look at latency patterns, error spikes, and which operations on each side dominate the traffic.`;
+      const seed: InvestigationSeed = {
+        question,
+        service: info.child,
+        knownSignals: signals,
+        topology: [{ parent: info.parent, child: info.child, kind: info.kind }],
+        earliest: lookback,
+        latest: 'now',
+      };
+      navigate('/investigate', { state: { seed } });
+    },
+    [navigate, lookback],
+  );
+
   const {
     transform,
     svgRef,
@@ -500,7 +546,19 @@ export default function IsometricGraph({
                       prev && prev.key === edgeKey ? null : prev,
                     );
                   }}
-                  style={{ cursor: 'help' }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    investigateEdge({
+                      parent: srcId,
+                      child: tgtId,
+                      kind: (l.kind ?? 'rpc') as 'rpc' | 'messaging',
+                      topic: l.topic,
+                      callCount: l.value,
+                      errorCount: l.errorCount,
+                      p95DurUs: l.p95DurUs,
+                    });
+                  }}
+                  style={{ cursor: 'pointer' }}
                 />
                 <line
                   x1={sx}

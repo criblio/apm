@@ -64,6 +64,28 @@ export const APM_TOOL_DEFINITIONS: AgentToolDefinition[] = [
     },
   },
   {
+    id: 'render_trace',
+    description:
+      'Display a distributed trace (span waterfall) to the user. Call this when you want to show a specific trace — for example, an erroring trace, a slow trace, or a trace the user asked about by id. The UI fetches and renders the full span tree from the provided trace_id.',
+    schema: {
+      type: 'object',
+      properties: {
+        traceId: {
+          type: 'string',
+          description: 'The trace_id to render. Must be a hexadecimal trace_id from the otel dataset.',
+          minLength: 1,
+        },
+        description: {
+          type: 'string',
+          description:
+            'A short (one sentence) description of why this trace is being shown — e.g. "Slowest payment Charge trace in the window" or "Representative failing checkout flow".',
+          maxLength: 200,
+        },
+      },
+      required: ['traceId', 'description'],
+    },
+  },
+  {
     id: 'update_context',
     description: 'Update the context',
     schema: {

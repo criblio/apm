@@ -6,8 +6,45 @@ import TraceLogsView from '../components/TraceLogsView';
 import { getTrace, getTraceLogs } from '../api/search';
 import { summarizeTrace } from '../api/transform';
 import { formatDurationUs } from '../utils/spans';
-import type { JaegerTrace, TraceLogEntry } from '../api/types';
+import type { JaegerTrace, TraceLogEntry, TraceSummary } from '../api/types';
+import InvestigateButton from '../components/InvestigateButton';
+import type { InvestigationSeed } from '../api/agentContext';
 import s from './TraceView.module.css';
+
+/**
+ * Seed for "Investigate this trace". Pre-fills the trace_id so the
+ * agent can call render_trace immediately instead of discovering it.
+ * Also surfaces error counts and root service/op as known signals.
+ */
+function buildTraceSeed(
+  trace: JaegerTrace,
+  summary: TraceSummary,
+): InvestigationSeed {
+  const signals: string[] = [
+    `Trace ID: ${trace.traceID}`,
+    `Root: ${summary.rootService} / ${summary.rootOperation}`,
+    `Duration: ${(summary.duration / 1000).toFixed(1)}ms`,
+    `Spans: ${summary.spanCount} across ${summary.services.length} services`,
+  ];
+  if (summary.errorCount > 0) {
+    signals.push(`Error spans: ${summary.errorCount}`);
+  }
+  signals.push(`Services involved: ${summary.services.join(', ')}`);
+
+  const question =
+    summary.errorCount > 0
+      ? `Investigate trace ${trace.traceID}. It has ${summary.errorCount} error spans across ${summary.services.length} services. Start by rendering the trace, then identify where the failure originates and what the downstream/upstream effects are.`
+      : `Investigate trace ${trace.traceID}. The trace spans ${summary.services.length} services over ${(summary.duration / 1000).toFixed(1)}ms. Render it first, then explain what's happening in the trace and whether anything looks anomalous.`;
+
+  // Widen the range to -24h so run_search can look up related
+  // spans across the full trace lifetime.
+  return {
+    question,
+    knownSignals: signals,
+    earliest: '-24h',
+    latest: 'now',
+  };
+}
 
 type Tab = 'timeline' | 'logs';
 
@@ -151,6 +188,11 @@ export default function TraceView() {
             <span className={s.statLabel}>Services</span>
             <span className={s.statValue}>{summary.services.length}</span>
           </div>
+          <InvestigateButton
+            seed={buildTraceSeed(trace, summary)}
+            variant="primary"
+            title="Investigate this trace with Copilot"
+          />
         </div>
       </div>
 

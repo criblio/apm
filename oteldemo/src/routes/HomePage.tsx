@@ -20,6 +20,8 @@ import { previousWindow } from '../utils/timeRange';
 import { useRangeParam } from '../hooks/useRangeParam';
 import { useStreamFilterEnabled } from '../hooks/useStreamFilter';
 import DeltaChip from '../components/DeltaChip';
+import InvestigateButton from '../components/InvestigateButton';
+import type { InvestigationSeed } from '../api/agentContext';
 import type {
   ServiceSummary,
   ServiceBucket,
@@ -77,6 +79,62 @@ function fmtErrorRate(rate: number): { text: string; className: string } {
   const pct = rate * 100;
   const cls = pct >= 5 ? s.errHigh : pct >= 1 ? s.errHigh : s.errLow;
   return { text: `${pct.toFixed(2)}%`, className: cls };
+}
+
+/**
+ * Build an InvestigationSeed for a Home catalog row. Threads the
+ * known anomaly signals (error rate delta, p95 delta, health bucket,
+ * traffic rate) into the agent so it starts with the right
+ * hypothesis instead of re-discovering them.
+ */
+function buildHomeRowSeed(
+  svc: ServiceSummary,
+  bucket: string,
+  prev: ServiceSummary | undefined,
+  range: string,
+): InvestigationSeed {
+  const signals: string[] = [];
+  const errPct = svc.errorRate * 100;
+  signals.push(`Error rate: ${errPct.toFixed(2)}%`);
+  if (prev) {
+    const prevPct = prev.errorRate * 100;
+    const delta = errPct - prevPct;
+    if (Math.abs(delta) >= 0.5) {
+      signals.push(
+        `Error rate ${delta >= 0 ? '▲' : '▼'} ${Math.abs(delta).toFixed(2)}pp vs prior window (was ${prevPct.toFixed(2)}%)`,
+      );
+    }
+  }
+  signals.push(`p95 latency: ${fmtUs(svc.p95Us)}`);
+  if (prev && prev.p95Us > 0) {
+    const ratio = svc.p95Us / prev.p95Us;
+    if (ratio >= 1.3 || ratio <= 0.7) {
+      signals.push(
+        `p95 ${ratio >= 1 ? '▲' : '▼'} ${(ratio * 100 - 100).toFixed(0)}% vs prior window (was ${fmtUs(prev.p95Us)})`,
+      );
+    }
+  }
+  signals.push(`Traffic: ${svc.requests.toLocaleString()} requests in ${range}`);
+  if (bucket && bucket !== 'healthy' && bucket !== 'idle') {
+    signals.push(`Health bucket: ${bucket}`);
+  }
+
+  const hypothesis =
+    errPct >= 5
+      ? `The ${svc.service} service has an error rate of ${errPct.toFixed(2)}%. Investigate the root cause.`
+      : bucket === 'latency_anomaly'
+        ? `The ${svc.service} service has a latency anomaly (p95=${fmtUs(svc.p95Us)}). Investigate what's driving it.`
+        : bucket === 'traffic_drop'
+          ? `The ${svc.service} service's traffic dropped compared to the prior window. Investigate why.`
+          : `Investigate the current state and recent behavior of the ${svc.service} service.`;
+
+  return {
+    question: hypothesis,
+    service: svc.service,
+    knownSignals: signals,
+    earliest: range,
+    latest: 'now',
+  };
 }
 
 /** Parse relative-time string like "-1h" / "-30m" into ms duration. */
@@ -409,6 +467,7 @@ export default function HomePage() {
                 </th>
                 <th>Requests</th>
                 <th>Latency p95</th>
+                <th />
               </tr>
             </thead>
             <tbody>
@@ -508,6 +567,12 @@ export default function HomePage() {
                         color={color}
                         strokeWidth={1.5}
                         ariaLabel={`p95 latency sparkline for ${svc.service}`}
+                      />
+                    </td>
+                    <td className={s.actionCell}>
+                      <InvestigateButton
+                        seed={buildHomeRowSeed(svc, health.bucket, prev, range)}
+                        title={`Investigate ${svc.service}`}
                       />
                     </td>
                   </tr>

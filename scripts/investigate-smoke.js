@@ -207,9 +207,8 @@ async function main() {
       console.log(`\n[${elapsed}s] Appears complete`);
       break;
     }
-    if (txt.includes('Error:') && !txt.includes('error rate') && elapsed > 30) {
-      console.log(`\n[${elapsed}s] Error surfaced — may still be recoverable`);
-    }
+    // Note: don't false-positive on "Error:" text because stack
+    // traces in rendered spans legitimately contain that string.
   }
 
   await page.screenshot({ path: `${OUT}/smoke-final.png` });

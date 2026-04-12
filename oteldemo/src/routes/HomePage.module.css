@@ -226,6 +226,13 @@
   padding-bottom: 6px !important;
 }
 
+.actionCell {
+  width: 1%;
+  white-space: nowrap;
+  text-align: right;
+  padding-right: var(--cds-space-md) !important;
+}
+
 .empty {
   padding: var(--cds-space-xxl);
   text-align: center;

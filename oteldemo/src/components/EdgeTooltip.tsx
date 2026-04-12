@@ -118,6 +118,10 @@ export default function EdgeTooltip({
         <span className={s.statLabel}>p95</span>
         <span className={s.statValue}>{formatDurationUs(p95DurUs)}</span>
       </div>
+
+      <div className={s.investigateHint}>
+        Click edge to investigate with Copilot →
+      </div>
     </div>
   );
 }

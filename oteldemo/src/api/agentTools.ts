@@ -12,6 +12,9 @@
  * result and spins.
  */
 import { runQuery } from './cribl';
+import { getTrace } from './search';
+import type { JaegerTrace } from './types';
+import { summarizeTrace } from './transform';
 
 export interface ToolCallInvocation {
   id: string;
@@ -26,14 +29,15 @@ export interface ToolExecutionResult {
    *  {role:'tool', tool_call_id, content} message. Freeform string
    *  (JSON-stringified for structured tools, markdown for summaries). */
   content: string;
-  /** Optional UI metadata — query results table, rendered chart,
-   *  etc. — that the chat UI can render inline beside the tool call
-   *  card. Not sent back to the agent. */
-  ui?: RunSearchUi;
+  /** Optional UI metadata — query results table, rendered trace,
+   *  rendered summary, etc. — that the chat UI displays inline
+   *  beside the tool call card. Not sent back to the agent. */
+  ui?: RunSearchUi | RenderTraceUi | SummaryUi;
 }
 
 /** UI payload for a run_search tool execution. */
 export interface RunSearchUi {
+  kind: 'search';
   query: string;
   description?: string;
   earliest: string;
@@ -44,6 +48,22 @@ export interface RunSearchUi {
   error?: string;
 }
 
+/** UI payload for a render_trace tool execution. */
+export interface RenderTraceUi {
+  kind: 'trace';
+  traceId: string;
+  description: string;
+  trace?: JaegerTrace;
+  error?: string;
+}
+
+/** UI payload for a present_investigation_summary tool execution. */
+export interface SummaryUi {
+  kind: 'summary';
+  findings: Array<{ category: string; details: string }>;
+  conclusion: string;
+}
+
 /** Arguments parsed out of a tool_call.function.arguments JSON string. */
 interface RunSearchArgs {
   query: string;
@@ -52,6 +72,11 @@ interface RunSearchArgs {
   limit?: number;
   description?: string;
   confirmBeforeRunning?: boolean;
+}
+
+interface RenderTraceArgs {
+  traceId: string;
+  description?: string;
 }
 
 interface UpdateContextArgs {
@@ -106,6 +131,7 @@ async function runSearchTool(
     const durationMs = Date.now() - started;
 
     const ui: RunSearchUi = {
+      kind: 'search',
       query: args.query,
       description,
       earliest,
@@ -124,6 +150,7 @@ async function runSearchTool(
     const durationMs = Date.now() - started;
     const msg = err instanceof Error ? err.message : String(err);
     const ui: RunSearchUi = {
+      kind: 'search',
       query: args.query,
       description,
       earliest,
@@ -196,6 +223,88 @@ function formatRowsForAgent(
 }
 
 /**
+ * Fetch a full trace by trace_id and attach it as UI metadata. The
+ * agent gets a textual summary back (span count, services, root
+ * operation, duration, error count) so it can continue reasoning;
+ * the UI displays the actual waterfall via the SpanTree component.
+ */
+async function renderTraceTool(
+  args: RenderTraceArgs,
+): Promise<{ content: string; ui: RenderTraceUi }> {
+  const traceId = (args.traceId || '').trim();
+  const description = args.description ?? '';
+  if (!traceId) {
+    const ui: RenderTraceUi = {
+      kind: 'trace',
+      traceId,
+      description,
+      error: 'No traceId provided',
+    };
+    return {
+      content: 'render_trace failed: no traceId provided. Pass a hexadecimal trace_id string.',
+      ui,
+    };
+  }
+
+  try {
+    // Widen to -24h here — traces can extend beyond the caller's
+    // investigation window, and the trace lookup is cheap enough
+    // to make the wider scan worth it for a single trace.
+    const trace = await getTrace(traceId, '-24h', 'now');
+    if (!trace) {
+      const ui: RenderTraceUi = {
+        kind: 'trace',
+        traceId,
+        description,
+        error: 'Trace not found',
+      };
+      return {
+        content: `Trace ${traceId} was not found in the last 24 hours. It may have expired from the dataset retention window, or the id may be wrong.`,
+        ui,
+      };
+    }
+
+    const summary = summarizeTrace(trace);
+    const ui: RenderTraceUi = {
+      kind: 'trace',
+      traceId,
+      description,
+      trace,
+    };
+
+    // Give the agent a concise textual picture of the trace so it
+    // can reason about it without the full span dump blowing out
+    // its context window.
+    const services = Array.from(new Set(summary.services)).join(', ');
+    const durMs = (summary.duration / 1000).toFixed(1);
+    const startIso = new Date(summary.startTime / 1000).toISOString();
+    const content = [
+      `Trace ${traceId} rendered to the user.`,
+      `Root: ${summary.rootService}/${summary.rootOperation}`,
+      `Start: ${startIso}`,
+      `Duration: ${durMs}ms`,
+      `Spans: ${summary.spanCount}`,
+      `Error spans: ${summary.errorCount}`,
+      `Services involved: ${services}`,
+    ].join(' · ');
+
+    return { content, ui };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const ui: RenderTraceUi = {
+      kind: 'trace',
+      traceId,
+      description,
+      error: msg,
+    };
+    return {
+      content: `render_trace failed for ${traceId}: ${msg}`,
+      ui,
+    };
+  }
+}
+
+/**
  * Acknowledge update_context calls — the native UI stores these in
  * a session-scoped key/value bag. We don't need the state to drive
  * anything in our embedded UI, but we must reply with a tool result
@@ -211,31 +320,50 @@ function updateContextTool(args: UpdateContextArgs): string {
 }
 
 /**
- * Format the final investigation summary for display. The agent
- * calls this with a structured findings array + conclusion; we
- * stitch them into markdown that the chat UI renders as a final
- * summary card.
+ * Normalize a present_investigation_summary tool call into a structured
+ * UI payload (for the Final Report card) plus a compact markdown
+ * representation fed back to the agent. The agent schema requires
+ * findings to be an array of {category, details} but we also accept
+ * older variants where details is a string[] — normalize everything to
+ * a single markdown blob per finding.
  */
-function formatInvestigationSummary(args: PresentInvestigationSummaryArgs): string {
-  const parts: string[] = [];
-  if (args.findings && Array.isArray(args.findings) && args.findings.length > 0) {
-    parts.push('## Findings');
+function normalizeInvestigationSummary(args: PresentInvestigationSummaryArgs): {
+  ui: SummaryUi;
+  content: string;
+} {
+  const findings: Array<{ category: string; details: string }> = [];
+  if (args.findings && Array.isArray(args.findings)) {
     for (const f of args.findings) {
       const category = f.category ?? 'Finding';
-      parts.push(`### ${category}`);
-      const details = f.details;
-      if (Array.isArray(details)) {
-        for (const d of details) parts.push(`- ${d}`);
-      } else if (typeof details === 'string') {
-        parts.push(details);
+      let details = '';
+      if (Array.isArray(f.details)) {
+        details = f.details.map((d) => `- ${d}`).join('\n');
+      } else if (typeof f.details === 'string') {
+        details = f.details;
       }
+      findings.push({ category, details });
     }
   }
-  if (args.conclusion) {
-    parts.push('## Conclusion');
-    parts.push(args.conclusion);
+  const conclusion = args.conclusion ?? '';
+
+  // Markdown version fed back to the agent as the tool result
+  const parts: string[] = [];
+  if (findings.length > 0) {
+    parts.push('## Findings');
+    for (const f of findings) {
+      parts.push(`### ${f.category}`);
+      parts.push(f.details);
+    }
   }
-  return parts.join('\n\n');
+  if (conclusion) {
+    parts.push('## Conclusion');
+    parts.push(conclusion);
+  }
+
+  return {
+    ui: { kind: 'summary', findings, conclusion },
+    content: parts.join('\n\n') || 'Investigation summary presented.',
+  };
 }
 
 /**
@@ -251,6 +379,12 @@ export async function executeToolCall(
     case 'run_search': {
       const args = parseArgs<RunSearchArgs>(call.arguments);
       const { content, ui } = await runSearchTool(args, signal);
+      return { id: call.id, name: call.name, content, ui };
+    }
+
+    case 'render_trace': {
+      const args = parseArgs<RenderTraceArgs>(call.arguments);
+      const { content, ui } = await renderTraceTool(args);
       return { id: call.id, name: call.name, content, ui };
     }
 
@@ -308,12 +442,8 @@ export async function executeToolCall(
 
     case 'present_investigation_summary': {
       const args = parseArgs<PresentInvestigationSummaryArgs>(call.arguments);
-      const markdown = formatInvestigationSummary(args);
-      return {
-        id: call.id,
-        name: call.name,
-        content: markdown || 'Investigation summary presented.',
-      };
+      const { content, ui } = normalizeInvestigationSummary(args);
+      return { id: call.id, name: call.name, content, ui };
     }
 
     case 'edit_notebook': {

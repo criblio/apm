@@ -15,6 +15,8 @@
  */
 import { Link } from 'react-router-dom';
 import { serviceColor } from '../utils/spans';
+import InvestigateButton from './InvestigateButton';
+import type { InvestigationSeed } from '../api/agentContext';
 import type { OperationAnomaly } from '../api/types';
 import s from './TraceClassList.module.css';
 
@@ -38,6 +40,32 @@ function fmtRatio(ratio: number): string {
   if (ratio >= 100) return `×${ratio.toFixed(0)}`;
   if (ratio >= 10) return `×${ratio.toFixed(1)}`;
   return `×${ratio.toFixed(2)}`;
+}
+
+/**
+ * Seed an investigation from an anomaly widget row. Pre-fills the
+ * ratio, current p95, and baseline p95 so the agent starts with the
+ * right hypothesis ("why is this op slower than its baseline?")
+ * instead of a generic "investigate this service".
+ */
+function buildAnomalySeed(
+  item: OperationAnomaly,
+  lookback: string,
+): InvestigationSeed {
+  const signals: string[] = [
+    `Current p95: ${fmtDurationUs(item.currP95Us)}`,
+    `Baseline p95 (prior window): ${fmtDurationUs(item.prevP95Us)}`,
+    `Ratio: ${fmtRatio(item.ratio)} vs baseline`,
+    `Request count in window: ${item.requests.toLocaleString()}`,
+  ];
+  return {
+    question: `The ${item.operation} operation on ${item.service} has a p95 of ${fmtDurationUs(item.currP95Us)}, which is ${fmtRatio(item.ratio)} its baseline of ${fmtDurationUs(item.prevP95Us)}. Investigate what's causing the slowdown — look for changes in downstream calls, exception events, affected pods, and whether this correlates with any error rate change.`,
+    service: item.service,
+    operation: item.operation,
+    knownSignals: signals,
+    earliest: lookback,
+    latest: 'now',
+  };
 }
 
 export default function OperationAnomalyList({ items, loading, lookback }: Props) {
@@ -108,6 +136,10 @@ export default function OperationAnomalyList({ items, loading, lookback }: Props
                 >
                   {fmtRatio(item.ratio)}
                 </span>
+                <InvestigateButton
+                  seed={buildAnomalySeed(item, lookback)}
+                  title={`Investigate ${item.service} ${item.operation}`}
+                />
                 <span className={s.arrow}>→</span>
               </Link>
             </li>

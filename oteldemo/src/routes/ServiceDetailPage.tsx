@@ -20,6 +20,8 @@ import { previousWindow } from '../utils/timeRange';
 import { useRangeParam } from '../hooks/useRangeParam';
 import { useStreamFilterEnabled } from '../hooks/useStreamFilter';
 import DeltaChip from '../components/DeltaChip';
+import InvestigateButton from '../components/InvestigateButton';
+import type { InvestigationSeed } from '../api/agentContext';
 import type {
   ServiceSummary,
   ServiceBucket,
@@ -95,6 +97,75 @@ function fmtRate(requestsPerMin: number): string {
 function errClass(rate: number): string {
   if (rate === 0) return s.errZero;
   return rate * 100 >= 1 ? s.errHigh : s.errLow;
+}
+
+/**
+ * Build an InvestigationSeed for the Service Detail page. Threads
+ * the service's current error rate, p95 delta, and top anomalous
+ * operations so the agent starts with specific evidence instead of
+ * a generic "investigate this service".
+ */
+function buildServiceSeed(
+  serviceName: string,
+  summary: ServiceSummary | null,
+  prev: ServiceSummary | null,
+  operations: OperationSummary[],
+  range: string,
+): InvestigationSeed {
+  const signals: string[] = [];
+  if (summary) {
+    signals.push(`Error rate: ${(summary.errorRate * 100).toFixed(2)}%`);
+    signals.push(`p95: ${fmtUs(summary.p95Us)}, p99: ${fmtUs(summary.p99Us)}`);
+    signals.push(`Total requests: ${summary.requests.toLocaleString()}`);
+  }
+  if (prev && summary) {
+    const deltaPct = (summary.errorRate - prev.errorRate) * 100;
+    if (Math.abs(deltaPct) >= 0.5) {
+      signals.push(
+        `Error rate delta: ${deltaPct >= 0 ? '▲' : '▼'}${Math.abs(deltaPct).toFixed(2)}pp vs prior window`,
+      );
+    }
+    if (prev.p95Us > 0) {
+      const ratio = summary.p95Us / prev.p95Us;
+      if (ratio >= 1.3 || ratio <= 0.7) {
+        signals.push(
+          `p95 delta: ${ratio >= 1 ? '▲' : '▼'}${(ratio * 100 - 100).toFixed(0)}% vs prior window`,
+        );
+      }
+    }
+  }
+  // Top erroring operations
+  const erroring = operations
+    .filter((o) => o.errorRate > 0)
+    .sort((a, b) => b.errors - a.errors)
+    .slice(0, 3);
+  if (erroring.length > 0) {
+    const list = erroring
+      .map((o) => `${o.operation} (${(o.errorRate * 100).toFixed(1)}% errors)`)
+      .join(', ');
+    signals.push(`Top erroring operations: ${list}`);
+  }
+  // Top slow operations (by p95)
+  const slow = [...operations].sort((a, b) => b.p95Us - a.p95Us).slice(0, 3);
+  if (slow.length > 0) {
+    const list = slow
+      .map((o) => `${o.operation} (p95=${fmtUs(o.p95Us)})`)
+      .join(', ');
+    signals.push(`Slowest operations by p95: ${list}`);
+  }
+
+  const hasErrors = summary && summary.errorRate > 0.01;
+  const question = hasErrors
+    ? `The ${serviceName} service has an error rate of ${((summary?.errorRate ?? 0) * 100).toFixed(2)}%. Investigate the root cause and identify which operations and downstream dependencies are involved.`
+    : `Investigate the current behavior of the ${serviceName} service. Look for any anomalies in latency, error patterns, or traffic compared to baseline.`;
+
+  return {
+    question,
+    service: serviceName,
+    knownSignals: signals,
+    earliest: range,
+    latest: 'now',
+  };
 }
 
 /** Parse a relative-time like "-1h" into ms duration, for rate normalization. */
@@ -680,6 +751,11 @@ export default function ServiceDetailPage() {
             </span>
           </div>
           <TimeRangePicker value={range} onChange={setRange} />
+          <InvestigateButton
+            seed={buildServiceSeed(serviceName, summary, prevSig, operations, range)}
+            variant="primary"
+            title={`Investigate ${serviceName}`}
+          />
         </div>
       </div>
 

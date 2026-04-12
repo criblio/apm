@@ -53,6 +53,18 @@ the context below instead of discovering it yourself. Do NOT call
 \`get_dataset_context\` or use regex extraction on \`_raw\` — every field
 below is available as a structured column.
 
+### Traces vs spans (important)
+
+This dataset contains **spans**, not traces. A trace is the set of all spans
+that share the same \`trace_id\`. When the user asks about a "trace", they
+mean "show me the spans with this trace_id as a tree / waterfall" — never
+query individual spans in isolation if the user is trace-oriented.
+
+When you find a relevant trace (e.g. a root-cause error propagates through
+a specific trace_id, or the user asks to see a slow/erroring trace), call
+the \`render_trace\` tool with the \`traceId\` so the UI can show the full
+waterfall to the user. Don't just list the trace_id as text — render it.
+
 ### Dataset
 - ID: \`${datasetId}\`
 - Content: OpenTelemetry traces, logs, and metrics from an OTel Collector
@@ -126,6 +138,33 @@ top level rather than nested under \`resource.attributes\`:
 - String comparison: \`tostring(x)=="value"\`
 - Null check: \`isnotnull(field)\`, \`isempty(str)\`
 - Type coercion: \`tostring()\`, \`toint()\`, \`toreal()\`
+
+### Timestamp formatting (CRITICAL for human readability)
+
+Raw OpenTelemetry timestamps are Unix epoch nanoseconds (\`start_time_unix_nano\`,
+\`end_time_unix_nano\`) or epoch seconds (\`_time\`). These render as
+unreadable 19-digit integers in search result tables, which is useless to a
+human. **Always project an ISO-8601 timestamp alongside any raw timestamp**
+in query output so the user sees a readable time.
+
+Convert to ISO-8601:
+
+\`\`\`kql
+| extend iso_time = strftime(_time, "%Y-%m-%dT%H:%M:%S.%LZ")
+\`\`\`
+
+For spans, convert the start/end time fields via \`_time\` (which the
+collector populates from \`start_time_unix_nano\`), or do it manually:
+
+\`\`\`kql
+| extend start_iso = strftime(toreal(start_time_unix_nano)/1e9, "%Y-%m-%dT%H:%M:%S.%LZ"),
+         end_iso = strftime(toreal(end_time_unix_nano)/1e9, "%Y-%m-%dT%H:%M:%S.%LZ")
+\`\`\`
+
+Project \`iso_time\` (or \`start_iso\` / \`end_iso\`) in every query that shows
+per-row timestamps. You may also keep the raw field for reference, but the
+ISO version must be in the projection too. In summary text to the user,
+always refer to times in ISO-8601, never as raw unix epochs.
 
 ### Example working queries (proven against this data)
 
@@ -241,12 +280,29 @@ ${seed.question}
 ### Scope
 ${scopeLines.join('\n')}
 
-Use the field mappings and example queries above. Do NOT use regex
-extraction on \`_raw\`. Do NOT call \`get_dataset_context\` — the
-schema is already documented above. Bracket-quote all dotted field
-names (e.g. \`["service.name"]\`). When you need to run a search,
-use the \`run_search\` tool with the time range \`${earliest}\` to
-\`${latest}\` unless you have reason to widen it.
+### How to conduct this investigation
+
+1. Use the field mappings and example queries above. Do NOT use regex
+   extraction on \`_raw\`. Do NOT call \`get_dataset_context\` — the
+   schema is already documented above.
+2. Bracket-quote all dotted field names (e.g. \`["service.name"]\`).
+3. When you need to run a search, use the **\`run_search\` tool** with
+   the time range \`${earliest}\` to \`${latest}\` unless you have
+   reason to widen it. Always project an ISO-8601 timestamp
+   (\`iso_time\`) alongside any raw timestamp in your query output.
+4. If you find a specific trace that illustrates the problem (slow
+   trace, erroring trace, a trace_id the user asks about), call the
+   **\`render_trace\` tool** with that trace_id. The UI will display
+   the full waterfall to the user. Do NOT just list trace_ids as
+   text — render at least one representative trace.
+5. When you have enough evidence to explain the problem, call the
+   **\`present_investigation_summary\` tool** with structured
+   \`findings\` and a \`conclusion\`. Do NOT write the summary as
+   markdown or as a template literal in plain text — always use the
+   tool call. The UI renders the tool's output as a final report card.
+6. Never tell the user "I can't execute searches from this chat" —
+   you can, via the \`run_search\` tool. Never dump KQL queries as
+   text for the user to run themselves — execute them yourself.
 `;
 
   return preamble + topology + signals + investigation;

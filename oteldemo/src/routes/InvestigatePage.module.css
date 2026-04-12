@@ -271,6 +271,83 @@
   font-family: var(--cds-font-family-mono);
 }
 
+/* Trace tree wrap — renders the full SpanTree waterfall inside a
+ * bounded scroll container so very deep traces don't blow out the
+ * chat layout. */
+.traceTreeWrap {
+  max-height: 480px;
+  overflow: auto;
+  border: 1px solid var(--cds-color-border-subtle);
+  border-radius: var(--cds-radius-sm);
+  background: var(--cds-color-bg-subtle);
+}
+
+/* Investigation summary card ------------------------------------ */
+
+.summaryCard {
+  padding: var(--cds-space-md) var(--cds-space-lg);
+  background: var(--cds-color-bg);
+  border: 1px solid var(--cds-color-accent-subtle);
+  border-left: 4px solid var(--cds-color-accent);
+  border-radius: var(--cds-radius-md);
+  box-shadow: var(--cds-shadow-sm);
+}
+.summaryTitle {
+  font-size: var(--cds-font-size-md);
+  font-weight: var(--cds-font-weight-semibold);
+  color: var(--cds-color-fg);
+  margin-bottom: var(--cds-space-sm);
+  padding-bottom: var(--cds-space-xs);
+  border-bottom: 1px solid var(--cds-color-border-subtle);
+}
+.summaryFindings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cds-space-md);
+  margin-bottom: var(--cds-space-md);
+}
+.summaryFinding {
+  padding: var(--cds-space-sm) 0;
+}
+.summaryCategory {
+  font-size: var(--cds-font-size-sm);
+  font-weight: var(--cds-font-weight-semibold);
+  color: var(--cds-color-accent);
+  margin-bottom: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+.summaryDetails {
+  font-size: var(--cds-font-size-sm);
+  color: var(--cds-color-fg);
+  line-height: 1.55;
+}
+.summaryDetails p {
+  margin: 0 0 var(--cds-space-xs) 0;
+}
+.summaryDetails p:last-child {
+  margin-bottom: 0;
+}
+.summaryDetails code {
+  font-family: var(--cds-font-family-mono);
+  font-size: 0.9em;
+  padding: 1px 4px;
+  background: var(--cds-color-bg-subtle);
+  border-radius: 3px;
+}
+.summaryConclusion {
+  padding-top: var(--cds-space-sm);
+  border-top: 1px solid var(--cds-color-border-subtle);
+}
+.summaryConclusionLabel {
+  font-size: var(--cds-font-size-xs);
+  font-weight: var(--cds-font-weight-semibold);
+  color: var(--cds-color-fg-subtle);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  margin-bottom: 4px;
+}
+
 /* Thinking indicator -------------------------------------------- */
 
 .thinking {

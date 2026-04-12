@@ -24,7 +24,14 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { runInvestigation, type LoopEvent } from '../api/agentLoop';
 import { buildSeedPrompt, type InvestigationSeed } from '../api/agentContext';
 import type { AgentMessage, AgentToolCall } from '../api/agent';
-import type { ToolExecutionResult, RunSearchUi } from '../api/agentTools';
+import type {
+  ToolExecutionResult,
+  RunSearchUi,
+  RenderTraceUi,
+  SummaryUi,
+} from '../api/agentTools';
+import SpanTree from '../components/SpanTree';
+import { summarizeTrace } from '../api/transform';
 import s from './InvestigatePage.module.css';
 
 // ─────────────────────────────────────────────────────────────────
@@ -452,16 +459,42 @@ function ToolCallCard({
   onApprove: () => void;
   onSkip: () => void;
 }) {
-  // We only render a rich card for run_search. Other tools (update_context,
-  // summaries, etc.) are agent plumbing the user doesn't need to see —
-  // they're represented by the surrounding assistant text.
-  if (entry.call.function.name !== 'run_search') {
-    return null;
+  const name = entry.call.function.name;
+  const ui = entry.result?.ui;
+
+  if (name === 'run_search') {
+    return (
+      <SearchCard
+        entry={entry}
+        onApprove={onApprove}
+        onSkip={onSkip}
+        ui={ui?.kind === 'search' ? ui : undefined}
+      />
+    );
   }
+  if (name === 'render_trace') {
+    return <TraceCard entry={entry} ui={ui?.kind === 'trace' ? ui : undefined} />;
+  }
+  if (name === 'present_investigation_summary') {
+    return <SummaryCard ui={ui?.kind === 'summary' ? ui : undefined} />;
+  }
+  // update_context and friends are agent plumbing — don't clutter the
+  // transcript with them.
+  return null;
+}
 
+function SearchCard({
+  entry,
+  onApprove,
+  onSkip,
+  ui,
+}: {
+  entry: ToolCallEntry;
+  onApprove: () => void;
+  onSkip: () => void;
+  ui?: RunSearchUi;
+}) {
   const args = parseRunSearchArgs(entry.call.function.arguments);
-  const resultUi = entry.result?.ui;
-
   return (
     <div className={s.toolCall}>
       <div className={s.toolCallHeader}>
@@ -471,7 +504,7 @@ function ToolCallCard({
           </div>
           <div className={s.toolCallMeta}>
             {args.earliest ?? '-15m'} to {args.latest ?? 'now'}
-            {resultUi && ` · ${resultUi.rowCount} rows · ${resultUi.durationMs}ms`}
+            {ui && ` · ${ui.rowCount} rows · ${ui.durationMs}ms`}
           </div>
         </div>
         {entry.status === 'pending' && entry.needsApproval && (
@@ -486,17 +519,104 @@ function ToolCallCard({
         )}
       </div>
       <pre className={s.toolCallQuery}>{args.query ?? '(no query)'}</pre>
-      {resultUi?.error && (
-        <div className={s.toolResultError}>{resultUi.error}</div>
-      )}
-      {resultUi && !resultUi.error && resultUi.rows.length > 0 && (
-        <ResultTable ui={resultUi} />
-      )}
-      {resultUi && !resultUi.error && resultUi.rows.length === 0 && (
+      {ui?.error && <div className={s.toolResultError}>{ui.error}</div>}
+      {ui && !ui.error && ui.rows.length > 0 && <ResultTable ui={ui} />}
+      {ui && !ui.error && ui.rows.length === 0 && (
         <div className={s.toolResultMeta}>No results</div>
       )}
     </div>
   );
+}
+
+function TraceCard({
+  entry,
+  ui,
+}: {
+  entry: ToolCallEntry;
+  ui?: RenderTraceUi;
+}) {
+  // Keep the selected-span state local to this card so each rendered
+  // trace has its own independent selection.
+  const [selectedSpanId, setSelectedSpanId] = useState<string | null>(null);
+  const args = parseRenderTraceArgs(entry.call.function.arguments);
+  const traceId = ui?.traceId ?? args.traceId ?? '(unknown)';
+  const description = ui?.description || args.description || 'Render trace';
+
+  return (
+    <div className={s.toolCall}>
+      <div className={s.toolCallHeader}>
+        <div>
+          <div className={s.toolCallDescription}>
+            🧵 Trace: {description}
+          </div>
+          <div className={s.toolCallMeta}>
+            {traceId}
+            {ui?.trace && (() => {
+              const summary = summarizeTrace(ui.trace);
+              const durMs = (summary.duration / 1000).toFixed(1);
+              return ` · ${summary.spanCount} spans · ${durMs}ms · ${summary.errorCount} errors`;
+            })()}
+          </div>
+        </div>
+      </div>
+      {!ui && <div className={s.toolResultMeta}>Loading trace…</div>}
+      {ui?.error && <div className={s.toolResultError}>{ui.error}</div>}
+      {ui?.trace && (
+        <div className={s.traceTreeWrap}>
+          <SpanTree
+            trace={ui.trace}
+            selectedSpanId={selectedSpanId}
+            onSelect={setSelectedSpanId}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SummaryCard({ ui }: { ui?: SummaryUi }) {
+  if (!ui) {
+    return (
+      <div className={s.summaryCard}>
+        <div className={s.summaryTitle}>📋 Investigation summary</div>
+        <div className={s.toolResultMeta}>Preparing…</div>
+      </div>
+    );
+  }
+  return (
+    <div className={s.summaryCard}>
+      <div className={s.summaryTitle}>📋 Investigation summary</div>
+      {ui.findings.length > 0 && (
+        <div className={s.summaryFindings}>
+          {ui.findings.map((f, i) => (
+            <div key={i} className={s.summaryFinding}>
+              <div className={s.summaryCategory}>{f.category}</div>
+              <div className={s.summaryDetails}>
+                {renderAssistantMarkdown(f.details)}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {ui.conclusion && (
+        <div className={s.summaryConclusion}>
+          <div className={s.summaryConclusionLabel}>Conclusion</div>
+          <div>{renderAssistantMarkdown(ui.conclusion)}</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function parseRenderTraceArgs(raw: string): {
+  traceId?: string;
+  description?: string;
+} {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
 }
 
 function ResultTable({ ui }: { ui: RunSearchUi }) {
@@ -593,13 +713,51 @@ function applyLoopEvent(
     }
     case 'assistantDone': {
       const lastIdx = findLastAssistant(prev, ev.turnId);
-      if (lastIdx !== -1) {
-        const next = prev.slice();
-        const entry = next[lastIdx] as AssistantEntry;
+      if (lastIdx === -1) return prev;
+      const next = prev.slice();
+      const entry = next[lastIdx] as AssistantEntry;
+      // Scrub any {% present_investigation_summary {...} %} text the
+      // agent may have written instead of calling the tool. If we
+      // find any, split the assistant entry into cleaned text +
+      // synthetic summary entries that render via SummaryCard.
+      const { cleaned, summaries } = scrubTemplateSummaries(entry.content);
+      if (summaries.length === 0) {
         next[lastIdx] = { ...entry, inProgress: false };
         return next;
       }
-      return prev;
+      const insertions: TranscriptEntry[] = [];
+      // Replace the assistant entry with the cleaned version (if any
+      // text remains) and append a synthetic toolCall entry per
+      // parsed summary. Use a nanoid-ish key so React keeps stable.
+      next[lastIdx] = { ...entry, inProgress: false, content: cleaned };
+      // If the cleaned content is now empty, drop the assistant entry.
+      if (!cleaned.trim()) {
+        next.splice(lastIdx, 1);
+      }
+      for (let i = 0; i < summaries.length; i++) {
+        const synthId = `synthetic-summary-${ev.turnId}-${i}`;
+        insertions.push({
+          kind: 'toolCall',
+          id: synthId,
+          turnId: ev.turnId,
+          call: {
+            id: synthId,
+            function: {
+              name: 'present_investigation_summary',
+              arguments: JSON.stringify(summaries[i]),
+            },
+          },
+          needsApproval: false,
+          status: 'done',
+          result: {
+            id: synthId,
+            name: 'present_investigation_summary',
+            content: '',
+            ui: summaries[i],
+          },
+        });
+      }
+      return [...next, ...insertions];
     }
     case 'toolCall': {
       return [
@@ -615,15 +773,14 @@ function applyLoopEvent(
       ];
     }
     case 'toolResult': {
-      return prev.map((e) =>
-        e.kind === 'toolCall' && e.call.id === ev.result.id
-          ? {
-              ...e,
-              status: ev.result.ui?.error ? 'error' : 'done',
-              result: ev.result,
-            }
-          : e,
-      );
+      return prev.map((e) => {
+        if (e.kind !== 'toolCall' || e.call.id !== ev.result.id) return e;
+        const ui = ev.result.ui;
+        const hasError =
+          (ui?.kind === 'search' && !!ui.error) ||
+          (ui?.kind === 'trace' && !!ui.error);
+        return { ...e, status: hasError ? 'error' : 'done', result: ev.result };
+      });
     }
     case 'notification':
     case 'done':
@@ -642,4 +799,53 @@ function findLastAssistant(entries: TranscriptEntry[], turnId: string): number {
     if (e.kind === 'assistant' && e.turnId === turnId) return i;
   }
   return -1;
+}
+
+/**
+ * Scrub any occurrences of `{% present_investigation_summary {...} %}`
+ * text that the agent sometimes emits as plain text instead of
+ * calling the tool properly. Returns the cleaned text (for the
+ * assistant bubble) and an array of parsed summaries (to render as
+ * Summary cards inline).
+ *
+ * This is a belt-and-suspenders fallback: the prompt in
+ * agentContext.ts instructs the agent to CALL the tool, but LLMs
+ * occasionally improvise this template-literal format, and we don't
+ * want the user to see raw JSON dumps in a pretty chat UI.
+ */
+function scrubTemplateSummaries(text: string): {
+  cleaned: string;
+  summaries: SummaryUi[];
+} {
+  const summaries: SummaryUi[] = [];
+  // Two flavors seen in the wild:
+  //   {% present_investigation_summary {...} %}
+  //   {% present_investigation_summary("findings":[...]) %}
+  // Match the tool name, then a balanced JSON object up to `%}`.
+  const regex = /\{%\s*present_investigation_summary\s+(\{[\s\S]*?\})\s*%\}/g;
+  let cleaned = text;
+  let m: RegExpExecArray | null;
+  while ((m = regex.exec(text)) !== null) {
+    try {
+      const obj = JSON.parse(m[1]);
+      const findings: Array<{ category: string; details: string }> = [];
+      if (Array.isArray(obj.findings)) {
+        for (const f of obj.findings) {
+          findings.push({
+            category: typeof f.category === 'string' ? f.category : 'Finding',
+            details: typeof f.details === 'string' ? f.details : '',
+          });
+        }
+      }
+      summaries.push({
+        kind: 'summary',
+        findings,
+        conclusion: typeof obj.conclusion === 'string' ? obj.conclusion : '',
+      });
+      cleaned = cleaned.replace(m[0], '').trim();
+    } catch {
+      /* leave the raw template in place if parsing fails */
+    }
+  }
+  return { cleaned, summaries };
 }
