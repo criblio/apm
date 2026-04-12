@@ -1,28 +1,44 @@
-// Smoke-test the new embedded Investigate page on the staging deployment.
-// Navigates to /investigate, submits a prompt, auto-approves queries,
-// and captures screenshots of the chat conversation until completion.
+// Smoke-test the embedded Investigate page against the authenticated
+// staging deployment. Attaches to the existing /apps/oteldemo shell
+// tab (session cookies intact), navigates the iframe to /investigate,
+// submits a prompt about the payment failure, auto-approves Run Query
+// cards, and captures screenshots of the conversation.
 import { connect } from './browser.js';
 import { writeFileSync, mkdirSync } from 'fs';
 
 const BASE = 'https://main-objective-shirley-sho21r7.cribl-staging.cloud';
-const APP = `${BASE}/app-ui/oteldemo/investigate`;
 const OUT = 'docs/research/investigator-spike/embedded';
 mkdirSync(OUT, { recursive: true });
 
 async function main() {
   const { browser, context, close } = await connect();
-  const page = await context.newPage();
 
-  // Capture console messages from the app (useful if something explodes)
-  page.on('console', (msg) => {
-    const t = msg.type();
-    if (t === 'error' || t === 'warning') {
-      console.log(`[browser ${t}] ${msg.text()}`);
-    }
-  });
-  page.on('pageerror', (err) => console.log('[pageerror]', err.message));
+  // Find the authenticated shell tab (it wraps the app in an iframe
+  // that gets CRIBL_API_URL / CRIBL_BASE_PATH injected).
+  const pages = context.pages();
+  let page = pages.find((p) => p.url().includes('/apps/oteldemo'));
+  if (!page) {
+    // Fall back: any tab on the staging origin that isn't a login
+    page = pages.find(
+      (p) =>
+        p.url().includes('main-objective-shirley-sho21r7.cribl-staging.cloud') &&
+        !p.url().includes('login'),
+    );
+  }
+  if (!page) {
+    console.log('No authenticated staging tab found. Available tabs:');
+    for (const p of pages) console.log('  ', p.url());
+    await close();
+    return;
+  }
+  console.log('Attached to:', page.url());
 
-  // Capture agent API calls (for comparison vs native UI)
+  // Reload to pick up the latest deployed build
+  console.log('Reloading...');
+  await page.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
+  await page.waitForTimeout(6000);
+
+  // Capture agent API calls for comparison vs the native UI spike
   const apiCalls = [];
   page.on('request', (req) => {
     const url = req.url();
@@ -32,125 +48,204 @@ async function main() {
         method: req.method(),
         url: url.replace(BASE, ''),
       });
-      console.log(`>> ${req.method()} ${url.replace(BASE, '').substring(0, 100)}`);
     }
   });
-  page.on('response', async (resp) => {
-    const url = resp.url();
-    if (url.includes('/api/v1/ai/q/agents/local_search')) {
-      console.log(`<< ${resp.status()} /api/v1/ai/q/agents/local_search`);
-    }
+  page.on('console', (msg) => {
+    const t = msg.type();
+    if (t === 'error') console.log(`[console ${t}]`, msg.text());
   });
+  page.on('pageerror', (err) => console.log('[pageerror]', err.message));
 
-  console.log('Navigating to', APP);
-  await page.goto(APP, { waitUntil: 'domcontentloaded', timeout: 30000 });
-  await page.waitForTimeout(4000);
-  await page.screenshot({ path: `${OUT}/01-landing.png` });
+  // Make sure we're on the shell, not app-ui/... directly
+  if (!page.url().includes('/apps/oteldemo')) {
+    console.log('Navigating to shell...');
+    await page.goto(`${BASE}/apps/oteldemo/`, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.waitForTimeout(6000);
+  }
 
-  // Verify the page rendered
-  const title = await page
-    .locator('text=Copilot Investigation')
-    .first()
-    .textContent()
-    .catch(() => null);
-  console.log('Page title found:', title);
+  console.log('Current URL:', page.url());
+  if (page.url().includes('login')) {
+    console.log('Session expired, cannot proceed');
+    await close();
+    return;
+  }
 
-  // Type a prompt and submit
+  await page.screenshot({ path: `${OUT}/smoke-01-shell.png` });
+
+  // Find the app frame. The app is sandboxed into an iframe with
+  // an opaque URL (blank/blob), so we find it by locating the frame
+  // that contains our composer textarea.
+  async function findAppFrame() {
+    for (const f of page.frames()) {
+      const hasOurTextarea = await f
+        .evaluate(() => !!document.querySelector('textarea[placeholder="Ask me to investigate something..."]'))
+        .catch(() => false);
+      if (hasOurTextarea) return f;
+    }
+    return null;
+  }
+
+  // Before navigating, the Investigate page isn't loaded yet, so we
+  // first need to click the nav link from whatever frame contains
+  // the nav. Since the nav lives alongside the composer in the app
+  // iframe, try to find it by looking for frames with our nav link.
+  async function findFrameWithNav() {
+    for (const f of page.frames()) {
+      const hasNav = await f
+        .evaluate(() => {
+          return Array.from(document.querySelectorAll('a')).some(
+            (a) => a.textContent?.trim() === 'Investigate' && a.getAttribute('href')?.includes('investigate'),
+          );
+        })
+        .catch(() => false);
+      if (hasNav) return f;
+    }
+    return null;
+  }
+
+  let appFrame = (await findFrameWithNav()) ?? page;
+
+  // Click Investigate in the app nav
+  const navInvestigate = appFrame.locator('a:has-text("Investigate")').first();
+  const navCount = await navInvestigate.count();
+  console.log('Investigate nav link count:', navCount);
+  if (navCount > 0) {
+    await navInvestigate.click();
+    await page.waitForTimeout(3000);
+  } else {
+    console.log('No Investigate nav link found');
+    await close();
+    return;
+  }
+
+  // After navigation, find the frame with our composer textarea
+  appFrame = (await findAppFrame()) ?? appFrame;
+  console.log('App frame URL after nav:', appFrame.url() || '(opaque)');
+
+  await page.screenshot({ path: `${OUT}/smoke-02-investigate-landing.png` });
+
+  // Verify Copilot Investigation page rendered in our frame
+  const textareas = await appFrame.locator(
+    'textarea[placeholder="Ask me to investigate something..."]',
+  ).count();
+  console.log('Our composer textarea count:', textareas);
+  if (textareas === 0) {
+    console.log('Page did not render. Body text:');
+    const body = await appFrame
+      .evaluate(() => document.body.innerText.substring(0, 1000))
+      .catch(() => '(eval failed)');
+    console.log(body);
+    await close();
+    return;
+  }
+
+  // Type prompt and submit. Use our app's textarea specifically —
+  // there's also a hidden native Cribl Copilot textarea in the shell.
   const prompt =
     'The payment service is failing on gRPC Charge calls. Investigate the root cause in the last 15 minutes.';
-
-  console.log('Typing prompt...');
-  const textarea = page.locator('textarea').first();
+  console.log('Submitting prompt...');
+  const textarea = appFrame.locator(
+    'textarea[placeholder="Ask me to investigate something..."]',
+  );
+  await textarea.waitFor({ state: 'visible', timeout: 10000 });
   await textarea.click();
   await textarea.fill(prompt);
-  await page.screenshot({ path: `${OUT}/02-prompt.png` });
+  await page.screenshot({ path: `${OUT}/smoke-03-prompt.png` });
   await textarea.press('Enter');
 
-  // Follow the conversation and auto-approve Run Query cards
+  // Follow the conversation. Auto-approve Run Query. Take screenshot
+  // on every text change.
   const startTime = Date.now();
-  let shotNum = 3;
+  let shotNum = 4;
   let lastLen = 0;
   let lastAutoClick = 0;
+  let searchJobsObserved = 0;
 
   while (Date.now() - startTime < 540000) {
     await page.waitForTimeout(3000);
     const elapsed = Math.round((Date.now() - startTime) / 1000);
 
-    // Auto-click "Run Query"
     if (Date.now() - lastAutoClick > 2000) {
-      const rq = page.locator('button:has-text("Run Query")');
-      if ((await rq.count()) > 0) {
-        console.log(`\n[${elapsed}s] Auto-clicking Run Query`);
+      const rq = appFrame.locator('button:has-text("Run Query")');
+      const rqCount = await rq.count();
+      if (rqCount > 0) {
+        console.log(`\n[${elapsed}s] Auto-clicking Run Query (${rqCount} pending)`);
         await rq.first().click();
         lastAutoClick = Date.now();
       }
     }
 
-    const txt = await page.evaluate(() => document.body.innerText);
+    const txt = await appFrame.evaluate(() => document.body.innerText);
 
     if (txt.length !== lastLen) {
       lastLen = txt.length;
-      await page.screenshot({
-        path: `${OUT}/${String(shotNum).padStart(2, '0')}-progress.png`,
-      });
-      const tail = txt.substring(Math.max(0, txt.length - 400));
-      console.log(`[${elapsed}s] ${txt.length} chars: ...${tail.replace(/\n+/g, ' | ').substring(0, 300)}`);
+      await page.screenshot({ path: `${OUT}/smoke-${String(shotNum).padStart(2, '0')}.png` });
+      const tail = txt.substring(Math.max(0, txt.length - 500)).replace(/\s+/g, ' ');
+      console.log(`[${elapsed}s] ${txt.length} chars: ...${tail.substring(0, 400)}`);
       shotNum++;
     } else {
       process.stdout.write('.');
     }
 
-    // Termination heuristics — assistant done + no thinking indicator
-    // for a while, or explicit Findings/Conclusion markers
+    const latestJobs = apiCalls.filter(
+      (c) => c.url.includes('/search/jobs') && c.method === 'POST',
+    ).length;
+    if (latestJobs !== searchJobsObserved) {
+      console.log(`\n[${elapsed}s] Search jobs so far: ${latestJobs}`);
+      searchJobsObserved = latestJobs;
+    }
+
+    // Check for completion markers
     if (
       txt.includes('Findings') ||
       txt.includes('Conclusion') ||
       txt.includes('Root Cause') ||
-      txt.includes('investigation summary presented')
+      txt.includes('Investigation summary presented') ||
+      txt.includes('ECONNREFUSED')
     ) {
-      // Wait one more turn for trailing text to stream in
       await page.waitForTimeout(5000);
       console.log(`\n[${elapsed}s] Appears complete`);
       break;
     }
-    if (txt.includes('Error:') && elapsed > 30) {
-      console.log(`\n[${elapsed}s] Error surfaced`);
-      break;
+    if (txt.includes('Error:') && !txt.includes('error rate') && elapsed > 30) {
+      console.log(`\n[${elapsed}s] Error surfaced — may still be recoverable`);
     }
   }
 
-  await page.screenshot({ path: `${OUT}/final.png` });
+  await page.screenshot({ path: `${OUT}/smoke-final.png` });
 
-  // Scroll through the whole page for multi-screen capture
-  const totalHeight = await page.evaluate(() => document.documentElement.scrollHeight);
-  const vh = await page.evaluate(() => window.innerHeight);
-  const scrollable = await page.evaluate(() => {
+  // Scroll transcript from top to capture everything
+  await appFrame.evaluate(() => {
     const tr = document.querySelector('[class*="transcript"]');
-    return tr ? { top: tr.scrollTop, height: tr.scrollHeight } : null;
+    if (tr) tr.scrollTop = 0;
   });
-  console.log('Scroll container:', scrollable, 'totalHeight:', totalHeight, 'vh:', vh);
+  await page.waitForTimeout(500);
+  await page.screenshot({ path: `${OUT}/smoke-scroll-top.png` });
 
-  // Scroll the transcript to capture everything
-  for (let y = 0; y < (scrollable?.height ?? totalHeight); y += vh) {
-    await page.evaluate((sy) => {
+  const scrollHeight = await appFrame.evaluate(() => {
+    const tr = document.querySelector('[class*="transcript"]');
+    return tr ? tr.scrollHeight : 0;
+  });
+  const vh = await appFrame.evaluate(() => window.innerHeight);
+  console.log(`Transcript scrollHeight: ${scrollHeight}, viewport: ${vh}`);
+
+  for (let y = 0; y < scrollHeight; y += vh) {
+    await appFrame.evaluate((sy) => {
       const tr = document.querySelector('[class*="transcript"]');
       if (tr) tr.scrollTop = sy;
-      else window.scrollTo(0, sy);
     }, y);
-    await page.waitForTimeout(300);
-    await page.screenshot({
-      path: `${OUT}/scroll-${Math.floor(y / vh)}.png`,
-    });
+    await page.waitForTimeout(400);
+    await page.screenshot({ path: `${OUT}/smoke-scroll-${Math.floor(y / vh)}.png` });
   }
 
-  const finalText = await page.evaluate(() => document.body.innerText);
-  writeFileSync(`${OUT}/results.txt`, finalText);
-  writeFileSync(`${OUT}/api-calls.json`, JSON.stringify(apiCalls, null, 2));
+  const finalText = await appFrame.evaluate(() => document.body.innerText);
+  writeFileSync(`${OUT}/smoke-results.txt`, finalText);
+  writeFileSync(`${OUT}/smoke-api-calls.json`, JSON.stringify(apiCalls, null, 2));
 
   const totalTime = Math.round((Date.now() - startTime) / 1000);
   const agentCalls = apiCalls.filter((c) => c.url.includes('ai/q/agents') && c.method === 'POST');
   const searchJobs = apiCalls.filter((c) => c.url.includes('/search/jobs') && c.method === 'POST');
-  console.log(`\n=== SMOKE TEST DONE ===`);
+  console.log(`\n=== EMBEDDED SMOKE TEST DONE ===`);
   console.log(`Total time: ${totalTime}s`);
   console.log(`Agent POSTs: ${agentCalls.length}`);
   console.log(`Search jobs: ${searchJobs.length}`);

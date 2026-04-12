@@ -29,6 +29,7 @@ import {
   type ToolExecutionResult,
 } from './agentTools';
 import { buildAgentContext } from './agentContext';
+import { APM_TOOL_DEFINITIONS } from './agentToolDefs';
 import { getCurrentDataset } from './dataset';
 
 /**
@@ -145,6 +146,7 @@ export async function runInvestigation(opts: RunLoopOptions): Promise<void> {
         stream: true,
         sessionId,
         context,
+        tools: APM_TOOL_DEFINITIONS,
       };
 
       // Accumulate the assistant response across streamed frames.
