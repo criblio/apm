@@ -52,38 +52,42 @@ capability they'd ride on.
 
 ## Priorities (in rough order)
 
-### 1. AI-powered investigations (Copilot Investigator) — **NEXT**
+### 1. AI-powered investigations (Copilot Investigator) — **IN PROGRESS**
 
 Cribl Search ships a "Run an Investigation" feature (Copilot
 Investigator) that takes a natural-language prompt about a problem,
 runs AI-guided queries against the data, and produces a structured
-finding. We want to embed this capability throughout Cribl APM so
+finding. We're embedding this capability throughout Cribl APM so
 users can drill into problems with one click.
 
-**Spike goals:**
+**Status snapshot:**
 
-- Capture the API traffic between the Investigator UI and the Cribl
-  Search backend to understand the protocol (REST endpoints, request
-  shape, streaming behavior, how it chains queries)
-- Validate it can find a real outage: turn on `paymentFailure` flag,
-  craft a prompt that leads the Investigator to the payment service
-  error spike
-- Document the API surface so we can replicate it in our app
+- ✅ API spike + protocol docs
+  ([`docs/research/copilot-investigator.md`](docs/research/copilot-investigator.md))
+- ✅ A/B comparison confirming context pre-fill dramatically
+  improves accuracy and time-to-root-cause
+- ✅ Foundation + standalone `/investigate` route (PR #14, branch
+  `copilot-investigator`). Agent client, context builder, tool
+  dispatcher, loop orchestrator, chat UI — all shipped.
+- ✅ Verified end-to-end: agent runs real searches via `run_search`,
+  uses our field mappings correctly, found `payment-786d4cc9bd-k56jj`
+  Invalid-token exception to `charge.js:37:13` in ~2 min
+- 🟡 `present_investigation_summary` renders as raw `{% ... %}` text
+  in the transcript — needs dedicated "Final Report" card
+- ⬜ Integration points (each a follow-up PR):
+  - "Investigate" button on Home catalog rows (service + health
+    bucket + delta signals)
+  - "Investigate" on System Architecture edges (parent+child +
+    call count + error rate)
+  - "Investigate" on System Architecture nodes (service-level)
+  - "Investigate" on Service Detail (service + top anomalous ops)
+  - "Investigate" on Trace Detail (trace ID + error spans)
+  - Anomaly widget row click → pre-filled investigation
 
-**Integration points once the API is understood:**
-
-- "Investigate" button on Home catalog rows (pre-filled with service
-  context)
-- "Investigate" on System Architecture edges (pre-filled with
-  dependency context)
-- "Investigate" on Service Detail (pre-filled with service + time
-  range)
-- "Investigate" on individual traces (pre-filled with trace context)
-- Standalone investigation page with free-form prompt
-
-This leapfrogs the "Natural language / AI query" roadmap item (#11
-previously) by building on Cribl's existing AI infrastructure rather
-than wiring up our own LLM integration.
+This leapfrogs the "Natural language / AI query" roadmap item
+previously listed as a side note — we get it by building on Cribl's
+existing AI infrastructure rather than wiring up our own LLM
+integration.
 
 ### 2. User-facing alerts (via Cribl Saved Searches)
 
