@@ -300,7 +300,12 @@ ${scopeLines.join('\n')}
    \`findings\` and a \`conclusion\`. Do NOT write the summary as
    markdown or as a template literal in plain text — always use the
    tool call. The UI renders the tool's output as a final report card.
-6. Never tell the user "I can't execute searches from this chat" —
+6. **After calling \`present_investigation_summary\`, STOP.** Do not
+   write any additional text, do not restate the findings, do not
+   emit a \`## Findings\` or \`## Conclusion\` markdown block after
+   the tool call. The tool output IS the final report; anything more
+   shows up as redundant text beside the rendered card.
+7. Never tell the user "I can't execute searches from this chat" —
    you can, via the \`run_search\` tool. Never dump KQL queries as
    text for the user to run themselves — execute them yourself.
 `;

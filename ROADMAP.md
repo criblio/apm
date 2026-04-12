@@ -52,42 +52,11 @@ capability they'd ride on.
 
 ## Priorities (in rough order)
 
-### 1. AI-powered investigations (Copilot Investigator) — **IN PROGRESS**
+### ~~1. AI-powered investigations (Copilot Investigator)~~ — **DONE**
 
-Cribl Search ships a "Run an Investigation" feature (Copilot
-Investigator) that takes a natural-language prompt about a problem,
-runs AI-guided queries against the data, and produces a structured
-finding. We're embedding this capability throughout Cribl APM so
-users can drill into problems with one click.
-
-**Status snapshot:**
-
-- ✅ API spike + protocol docs
-  ([`docs/research/copilot-investigator.md`](docs/research/copilot-investigator.md))
-- ✅ A/B comparison confirming context pre-fill dramatically
-  improves accuracy and time-to-root-cause
-- ✅ Foundation + standalone `/investigate` route (PR #14, branch
-  `copilot-investigator`). Agent client, context builder, tool
-  dispatcher, loop orchestrator, chat UI — all shipped.
-- ✅ Verified end-to-end: agent runs real searches via `run_search`,
-  uses our field mappings correctly, found `payment-786d4cc9bd-k56jj`
-  Invalid-token exception to `charge.js:37:13` in ~2 min
-- 🟡 `present_investigation_summary` renders as raw `{% ... %}` text
-  in the transcript — needs dedicated "Final Report" card
-- ⬜ Integration points (each a follow-up PR):
-  - "Investigate" button on Home catalog rows (service + health
-    bucket + delta signals)
-  - "Investigate" on System Architecture edges (parent+child +
-    call count + error rate)
-  - "Investigate" on System Architecture nodes (service-level)
-  - "Investigate" on Service Detail (service + top anomalous ops)
-  - "Investigate" on Trace Detail (trace ID + error spans)
-  - Anomaly widget row click → pre-filled investigation
-
-This leapfrogs the "Natural language / AI query" roadmap item
-previously listed as a side note — we get it by building on Cribl's
-existing AI infrastructure rather than wiring up our own LLM
-integration.
+Moved to the Completed section below. All integration points and
+polish items shipped in PR #14. See `docs/research/copilot-investigator.md`
+for the API spike and A/B comparison.
 
 ### 2. User-facing alerts (via Cribl Saved Searches)
 
@@ -236,6 +205,47 @@ Being honest about the wins too:
 ---
 
 ## Completed
+
+### ~~AI-powered investigations (Copilot Investigator)~~ — DONE
+
+Cribl Search ships a "Run an Investigation" feature (Copilot
+Investigator) — a chat-based AI agent that runs KQL queries, reads
+dataset schemas, and produces structured findings. We embedded it
+throughout Cribl APM so users can drill into problems with one click.
+
+**What shipped** (PR #14, branch `copilot-investigator`):
+
+- **API spike + protocol docs** in
+  [`docs/research/copilot-investigator.md`](docs/research/copilot-investigator.md)
+  — streaming NDJSON protocol, tool-use loop, A/B comparison
+  confirming pre-filled APM context dramatically improves accuracy
+  and time-to-root-cause (bare prompt never completed; context-enriched
+  found `ECONNREFUSED` and `Invalid token` root causes in minutes)
+- **Agent client** (`src/api/agent.ts`) — streaming NDJSON reader +
+  frame parser
+- **Context builder** (`src/api/agentContext.ts`) — pre-fills dataset
+  shape, field mappings, KQL dialect notes (including the bracket-
+  quoted dotted-field rule), service topology, ISO-8601 timestamp
+  requirement, trace-vs-span semantics, and example working queries
+- **Tool dispatcher** (`src/api/agentTools.ts`) — implements
+  `run_search` against the existing `runQuery`, `render_trace`
+  against `getTrace`, `present_investigation_summary` with a
+  structured UI payload
+- **Loop orchestrator** (`src/api/agentLoop.ts`) — conversation
+  state machine emitting typed events to the UI reducer
+- **Chat UI** (`src/routes/InvestigatePage.tsx`) — streaming
+  transcript, inline Run Query approval cards, result tables,
+  rendered trace waterfall (reuses the existing `SpanTree`
+  component), and a dedicated Final Report card
+- **Investigate buttons** on:
+  - Home catalog rows (service + health + delta signals)
+  - Service Detail hero (service + top erroring/slow operations)
+  - Trace Detail header (trace_id + error spans; seeds the agent
+    to call `render_trace` first)
+  - System Architecture node tooltip
+  - System Architecture edges (click an edge line to investigate
+    parent→child with call count + error rate)
+  - Latency anomaly widget rows (p95 ratio + baseline context)
 
 ### ~~Metrics support~~ — DONE
 

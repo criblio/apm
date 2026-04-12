@@ -716,6 +716,26 @@ function applyLoopEvent(
       if (lastIdx === -1) return prev;
       const next = prev.slice();
       const entry = next[lastIdx] as AssistantEntry;
+
+      // If a SummaryCard was already rendered in this transcript
+      // (from a real tool call), the agent sometimes ALSO writes a
+      // redundant markdown dump starting with "## Findings". Drop
+      // the entire assistant message in that case — the card is
+      // the canonical rendering.
+      const hasRenderedSummary = next.some(
+        (e) =>
+          e.kind === 'toolCall' &&
+          e.call.function.name === 'present_investigation_summary' &&
+          e.result?.ui?.kind === 'summary',
+      );
+      const looksLikeRedundantSummary =
+        hasRenderedSummary &&
+        /^\s*##\s*(Findings|Conclusion)\b/m.test(entry.content);
+      if (looksLikeRedundantSummary) {
+        next.splice(lastIdx, 1);
+        return next;
+      }
+
       // Scrub any {% present_investigation_summary {...} %} text the
       // agent may have written instead of calling the tool. If we
       // find any, split the assistant entry into cleaned text +
