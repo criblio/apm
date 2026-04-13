@@ -213,6 +213,72 @@ dataset="${datasetId}" | where isnotnull(end_time_unix_nano)
   | sort by _time desc
   | limit 50
 \`\`\`
+
+### Common failure modes to check (in priority order)
+
+Do not anchor on the first error signal you see. Work through these
+four checks before committing to a root-cause hypothesis, and weight
+their **recency** — signals in the most recent 1-3 minutes beat
+signals from earlier in the lookback window, because the question is
+almost always "what changed recently?".
+
+1. **Traffic drops (service went dark).** The loudest signal when a
+   service is unreachable is that it **stopped emitting spans**, not
+   that it produced errors. Always run a per-service request-rate
+   query comparing the most recent minutes against the earlier part
+   of the window, and call out any service whose rate fell ≥50%. A
+   service that fully crashed will show near-zero current rate with
+   a normal prior rate; its callers will show client-side errors but
+   the root cause is the silent service, not the error-emitting
+   caller. Example:
+   \`\`\`kql
+   dataset="${datasetId}" | where isnotnull(end_time_unix_nano)
+     | extend svc=tostring(resource.attributes['service.name'])
+     | summarize cnt=count() by svc, bin(_time, 60s)
+     | sort by svc, _time
+   \`\`\`
+
+2. **Error-rate changes over time, not totals.** Run an
+   errors-per-minute histogram per service *before* running a
+   whole-window totals query. A flag that fired 3 minutes ago is
+   invisible in a whole-window view if the window is 15 minutes
+   long and 12 minutes of it are pre-flag. Pattern:
+   \`\`\`kql
+   dataset="${datasetId}" | where isnotnull(end_time_unix_nano)
+     | extend svc=tostring(resource.attributes['service.name']),
+              is_error=(tostring(status.code)=="2")
+     | summarize errs=countif(is_error) by svc, bin(_time, 60s)
+     | sort by _time desc
+   \`\`\`
+
+3. **Error propagation vs. origin.** An error-rate spike on a caller
+   (e.g. \`frontend-proxy\`, \`load-generator\`) is almost never the
+   root cause. Pull the set of trace_ids involved in the spike and
+   look for the *earliest failing span in the tree* — that service
+   is the origin. Example propagation query already documented in
+   the "Service-to-service dependency call graph" example above.
+
+4. **Representative trace + rendered waterfall.** Once you have a
+   hypothesis, render one trace that illustrates the full call
+   chain from root to failing leaf. Don't just list trace_ids — use
+   the \`render_trace\` tool.
+
+### Signals to explicitly ignore as noise
+
+These spans appear frequently during routine test operations and
+are **not** indicative of a production problem unless they are the
+**only** signal in the window:
+
+- **flagd EventStream disconnects.** Any span with
+  \`unsanitized_span_name\` containing
+  \`grpc.flagd.evaluation.v1.Service/EventStream\` and error
+  message \`14 UNAVAILABLE: Connection dropped\`. These come from
+  the flagd feature-flag service long-poll reconnecting after a
+  flagd pod bounce, and will light up 6+ subscriber services at
+  once — which superficially looks like a fanned-out outage but is
+  expected test noise. If your only evidence is flagd EventStream
+  errors, say so explicitly rather than reporting "flagd is down"
+  as a root cause.
 `;
 }
 

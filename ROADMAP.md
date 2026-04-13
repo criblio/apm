@@ -52,11 +52,91 @@ capability they'd ride on.
 
 ## Priorities (in rough order)
 
-### ~~1. AI-powered investigations (Copilot Investigator)~~ — **DONE**
+### ~~1. AI-powered investigations (Copilot Investigator)~~ — **DONE (foundation)**
 
-Moved to the Completed section below. All integration points and
-polish items shipped in PR #14. See `docs/research/copilot-investigator.md`
-for the API spike and A/B comparison.
+Foundation and all integration points shipped in PR #14. See
+`docs/research/copilot-investigator.md` for the API spike and A/B
+comparison, and `docs/sessions/2026-04-12-copilot-implementation.md`
+for the implementation log.
+
+### 1a. Copilot Investigator — accuracy follow-ups (NEW, from scenario eval)
+
+The 2026-04-12 scenario evaluation
+(`docs/sessions/2026-04-12-scenario-evaluation.md`) ran five error-
+injection flags paired against the UI and Investigator. The Investigator
+nailed `cartFailure` (131s, exact Redis error + rendered trace) but
+**missed `paymentUnreachable`** — the UI surfaces it cleanly (94% rate
+drop, ▲+88023% p95) while the agent got anchored on stale cart data and
+self-inflicted flagd-bounce noise. Three gaps, impact-ordered:
+
+1. **Traffic-drop detection pass.** Today the agent only looks at error
+   *rates* and *counts*. For unreachable-service scenarios the loudest
+   signal is a service whose per-minute rate collapsed to near-zero.
+   Add a client-side anomaly preflight that runs before the first LLM
+   turn: compute per-service rate deltas vs the prior window, inject
+   "services with traffic drops ≥50%" into the preamble as known
+   signals. Home already does this for its `traffic_drop` health bucket;
+   reuse that query.
+
+2. **Time-window discipline.** Sequential tests bleed into each other
+   because the 15-minute lookback swallows prior failures. Fix at two
+   levels:
+   - **Prompt:** add a "run an error histogram per minute first,
+     distinguish recent from old signal" instruction to
+     `agentContext.ts`. Landing in this PR.
+   - **Code:** when the user prompt says "right now" or "in the last
+     N minutes", the first `run_search` should tighten `earliest`
+     accordingly instead of inheriting `-15m`.
+
+3. **Filter flagd EventStream disconnects as noise.** Every time
+   `flagd-set.sh` bounces the flagd deployment, 6+ services emit
+   `14 UNAVAILABLE: Connection dropped` spans on the EventStream
+   long-poll, and the agent reads that as a fanned-out outage. Two
+   options: filter
+   `grpc.flagd.evaluation.v1.Service/EventStream` at dataset ingest,
+   or add a preamble paragraph explicitly marking those as expected
+   noise. Start with the preamble paragraph (landing in this PR).
+
+### 1b. UI gaps surfaced by the scenario eval
+
+Three concrete UI bugs from the same session:
+
+1. **Ghost nodes for silently-gone services on System Architecture.**
+   When a service drops below N% of its baseline span volume, keep
+   its node on the graph with a dashed outline and a "no traffic"
+   badge, clickable through to its last-known Service Detail page.
+   Today it vanishes from the graph, so `paymentUnreachable` has no
+   clickable target. Catches any blast-radius scenario where the root
+   service goes fully dark (`failedReadinessProbe`, pod crashloops,
+   etc.).
+
+2. **Red "DOWN" state on the Home rate-column DeltaChip.** The chip
+   is currently `relNeutral` so a 94% rate drop renders the same
+   blue color as a 94% surge. A dedicated red treatment for rate
+   drops ≥50% would make payment's row scream in `paymentUnreachable`
+   instead of mumbling.
+
+3. **Root-cause hint on Home rows.** Home currently tints
+   `frontend-proxy` red when `cartFailure` fires because errors
+   attribute to the caller's outgoing-span side. The actual failing
+   service (`cart`) still shows 0% because its own server-side spans
+   aren't errored — cart's `EmptyCart` returns over a broken Redis
+   connection inside the span duration. Add a "likely root: `<svc>`"
+   hint derived from same-trace span-link analysis on anomalous rows.
+   The Investigator already runs this query; Home should render it
+   without asking.
+
+### 1c. FAILURE-SCENARIOS.md smoke test
+
+The 2026-04-12 eval found **three of five tested flags produce zero
+`status.code=2` errors on their targeted service** (`adFailure`,
+`productCatalogFailure`, `llmRateLimitError`). Verified via direct
+KQL — not an observer-side problem. Either the upstream OTel demo's
+flag wiring has regressed or the flags require specific UI actions
+to activate. Either way, `FAILURE-SCENARIOS.md` is stale on those
+rows and can't be trusted as a regression harness. Fix: ship a
+scheduled saved search that counts errors per flagged service on a
+rolling window and alerts when a known-enabled flag emits nothing.
 
 ### 2. User-facing alerts (via Cribl Saved Searches)
 

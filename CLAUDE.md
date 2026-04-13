@@ -32,3 +32,96 @@ When building a feature, inspect the relevant Cribl REST APIs first (the
 Cribl MCP server is wired up via `.mcp.json` — use it to list datasets,
 run searches, etc.) and consult `oteldemo/AGENTS.md` for platform rules
 before writing app code.
+
+## How we work
+
+These conventions apply whenever you work on this repo. They're here
+(rather than in a Claude user memory) so they follow the code across
+machines and are visible to every contributor.
+
+### ROADMAP.md is the canonical priority list
+
+`/ROADMAP.md` at the repo root is the single source of truth for
+priorities, competitive gap analysis, and the Cribl-Search-leverage
+principle (build a domain UI on top of Cribl Search primitives —
+saved searches, alerts, KQL, federation — rather than reinventing
+them). Read it at the start of a session when the user asks "what's
+next" or references prior priorities. Update it in-place when
+priorities shift; don't fork the list into a side doc or memory.
+
+Companion docs: `FAILURE-SCENARIOS.md` for the flagd flag catalog
+and test plan, `oteldemo/AGENTS.md` for the Cribl App Platform
+developer guide.
+
+### Remote/mobile collaboration
+
+Clint often reviews work from mobile, so ship everything in a form
+he can inspect from GitHub on a phone — no desktop console needed.
+
+1. **The deployed staging app is the primary validation surface**,
+   not screenshots in `/tmp/`. When you ship a user-visible change,
+   it lives at the staging URL (see `scripts/` and `.env` for the
+   host) and he can open it from any mobile browser. Tell him what
+   to look for and where, not what you saw.
+2. **Chunk work into small PRs.** One PR per coherent story (one
+   feature, one doc set, ~1–5 commits). Stacked PRs are fine — PR
+   #2 targets PR #1's branch so the diff view only shows the new
+   chunk. Avoid mega-PRs; they don't review well on mobile.
+3. **Session artifacts go in the repo**, under
+   `docs/sessions/YYYY-MM-DD-<slug>.md` plus
+   `docs/sessions/screenshots/YYYY-MM-DD-<slug>/` for images. Keep
+   the screenshot set lean (milestone shots, empty/error states,
+   anything visually non-obvious — not every debug frame). Deeper
+   research artifacts go under `docs/research/`.
+4. **Reference images from PR bodies via GitHub raw URLs** (e.g.
+   `https://raw.githubusercontent.com/criblio/otel-demo-criblcloud/<branch>/docs/sessions/screenshots/.../file.png`).
+   GitHub renders them inline in PR markdown on mobile.
+5. **Every PR body includes:** a one-sentence summary, commit list
+   (if multi-commit), a "Test plan" / "Validate on staging" section
+   with concrete click-through steps, a link to the session log,
+   and any known limitations. See PR #14 / PR #15 for examples.
+6. **Push all branches before wrapping a session.** Stacked PR
+   branches need to be on origin for mobile review.
+
+### Browser automation
+
+When a task needs a real browser (capturing screenshots for a PR,
+driving the staging app through a flow, verifying a UI change), use
+the in-repo helper — **not** `@playwright/mcp` or
+`chrome-devtools-mcp`. MCP browser servers load their tool schemas
+into every conversation turn and burn context tokens; ad-hoc
+Playwright scripts cost nothing until they run.
+
+- `scripts/browser.js` — imports `playwright-core` (a dev dep of
+  `oteldemo/`) and connects to a running Chromium over CDP via
+  `chromium.connectOverCDP(...)`. `close()` only disconnects the
+  CDP client; it never kills the user's browser.
+- `scripts/browser-smoke.js` — run `npm run browser:smoke` from
+  `oteldemo/` to confirm the CDP pipeline is healthy before
+  debugging a more complex driver.
+- `scripts/chromium-vnc.sh start|stop|restart|status` — relaunch
+  the local Chromium with the CDP port exposed when it's not
+  listening. Handles the VNC/gnome-shell/Flatpak env-borrowing
+  that's machine-specific to Clint's dev box. On a different
+  machine you likely just need Chromium launched with
+  `--remote-debugging-port=9222 --remote-debugging-address=127.0.0.1`
+  (or `CDP_ENDPOINT=http://host:port` set in the env).
+
+Pattern: write a short Node ESM script that imports
+`./scripts/browser.js`, does its work, and calls `close()`. Run it
+via the Bash tool. Keep these scripts out of version control unless
+they become reusable — the repo already has enough one-offs.
+
+### PR conventions
+
+- One purpose per PR. Docs + the minimal code change that
+  motivates them is fine; a docs PR that also refactors an
+  unrelated module is not.
+- Commit messages name the area first
+  (`oteldemo: ...`, `docs: ...`, `scripts: ...`) and explain the
+  *why*, not just the *what*. See `git log --oneline` for the
+  house style.
+- Include a `Co-Authored-By:` trailer when Claude collaborated on
+  the commit.
+- When a PR body references a session log or screenshot set, link
+  by raw.githubusercontent URL so mobile readers see it inline.
