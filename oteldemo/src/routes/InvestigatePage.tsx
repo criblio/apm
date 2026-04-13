@@ -24,6 +24,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { runInvestigation, type LoopEvent } from '../api/agentLoop';
 import { buildSeedPrompt, type InvestigationSeed } from '../api/agentContext';
 import type { AgentMessage, AgentToolCall } from '../api/agent';
+import { isSessionExpiredError } from '../api/agent';
 import type {
   ToolExecutionResult,
   RunSearchUi,
@@ -66,6 +67,10 @@ interface ErrorEntry {
   kind: 'error';
   id: string;
   message: string;
+  /** True when this error is a session-expired from the platform's
+   *  auth token. The UI shows a Reload Page affordance instead of
+   *  just the raw message. */
+  sessionExpired?: boolean;
 }
 
 type TranscriptEntry = UserEntry | AssistantEntry | ToolCallEntry | ErrorEntry;
@@ -237,9 +242,10 @@ export default function InvestigatePage() {
         signal: abortRef.current.signal,
       }).catch((err) => {
         const msg = err instanceof Error ? err.message : String(err);
+        const sessionExpired = isSessionExpiredError(err);
         setTranscript((prev) => [
           ...prev,
-          { kind: 'error', id: `err-${Date.now()}`, message: msg },
+          { kind: 'error', id: `err-${Date.now()}`, message: msg, sessionExpired },
         ]);
         setRunning(false);
       });
@@ -438,6 +444,39 @@ function TranscriptRow({
     );
   }
   if (entry.kind === 'error') {
+    if (entry.sessionExpired) {
+      return (
+        <div className={s.errorBanner} role="alert">
+          <div className={s.errorBannerTitle}>
+            Cribl AI bearer token cache is in a broken state
+          </div>
+          <div className={s.errorBannerBody}>
+            <p>
+              The Cribl AI subsystem returned{' '}
+              <code>Bearer Token has expired</code>. This is a
+              platform-side problem with the per-user AI token cache,
+              <em>not</em> your Cribl session — other Cribl API calls
+              are still working.
+            </p>
+            <p>
+              <strong>Reloading this page will not help.</strong> The
+              same failure reproduces in Cribl Search&apos;s own
+              native <code>/search/agent</code> Copilot UI on this
+              workspace, so client-side retries can&apos;t recover.
+              Known mitigations:
+            </p>
+            <ul>
+              <li>Fully log out of Cribl Cloud and log back in.</li>
+              <li>
+                Wait for the server-side cache to TTL out and try
+                again.
+              </li>
+              <li>Contact Cribl support if the problem persists.</li>
+            </ul>
+          </div>
+        </div>
+      );
+    }
     return <div className={s.errorBanner}>Error: {entry.message}</div>;
   }
   // toolCall
@@ -808,7 +847,12 @@ function applyLoopEvent(
     case 'error':
       return [
         ...prev,
-        { kind: 'error', id: `err-${Date.now()}`, message: ev.error.message },
+        {
+          kind: 'error',
+          id: `err-${Date.now()}`,
+          message: ev.error.message,
+          sessionExpired: isSessionExpiredError(ev.error),
+        },
       ];
   }
 }

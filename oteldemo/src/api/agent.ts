@@ -69,6 +69,44 @@ export type AgentFrame =
   | { kind: 'notification'; toolName?: string; content: unknown }
   | { kind: 'unknown'; raw: unknown };
 
+/** Raised when the agent endpoint returns a 5xx with a
+ *  "Bearer Token has expired" reason. This is a Cribl platform-side
+ *  problem with the AI bearer token cache (separate from the user's
+ *  Cribl session cookie — other API calls keep working); no
+ *  client-side action recovers it. Catch this at the UI layer and
+ *  show a banner explaining the situation rather than treating it
+ *  like a transient retry-able error. */
+export class SessionExpiredError extends Error {
+  readonly isSessionExpired = true as const;
+  constructor(
+    message = 'Cribl AI bearer token cache is in a broken state. Reloading the page will not help — the only known recoveries are a full Cribl logout/re-login or contacting Cribl support.',
+  ) {
+    super(message);
+    this.name = 'SessionExpiredError';
+  }
+}
+
+export function isSessionExpiredError(err: unknown): err is SessionExpiredError {
+  return (
+    err instanceof Error &&
+    (err as { isSessionExpired?: boolean }).isSessionExpired === true
+  );
+}
+
+/** Does a server error body look like an expired-token rejection?
+ *  The agent endpoint returns `{"reason":"Bearer Token has expired"}`
+ *  under a 5xx; future Cribl versions may use slightly different
+ *  wording so we match permissively. */
+function looksLikeSessionExpired(body: string): boolean {
+  if (!body) return false;
+  const lower = body.toLowerCase();
+  return (
+    lower.includes('bearer token has expired') ||
+    lower.includes('token has expired') ||
+    lower.includes('token expired')
+  );
+}
+
 function apiUrl(): string {
   return window.CRIBL_API_URL ?? import.meta.env.VITE_CRIBL_API_URL ?? '/api/v1';
 }
@@ -128,6 +166,20 @@ export function parseAgentFrame(line: string): AgentFrame | null {
  *
  * AbortSignal support lets callers cancel in-flight investigations
  * (e.g. when the user navigates away or clicks a Stop button).
+ *
+ * Expired-token detection: if the response body contains
+ * "Bearer Token has expired" (any case), throw a typed
+ * `SessionExpiredError` so the UI can show a clear "Cribl AI token
+ * cache is in a broken state" message instead of a raw 500. We
+ * don't retry, warm up, or attempt automatic recovery — the failure
+ * is server-side (the per-user AI bearer token cache is in a state
+ * no client-side action can refresh; verified by reproducing the
+ * exact same 500 in Cribl Search's own native `/search/agent`
+ * Copilot UI on the same workspace, where the native UI's "Try
+ * Again" button is a re-POST with no recovery either). The fix
+ * lives on the platform side; the only known mitigations from a
+ * client are a full Cribl logout/re-login or waiting for the
+ * server-side cache to TTL out.
  */
 export async function* streamAgent(
   req: AgentRequest,
@@ -141,6 +193,9 @@ export async function* streamAgent(
   });
   if (!resp.ok) {
     const body = await resp.text().catch(() => '');
+    if (looksLikeSessionExpired(body)) {
+      throw new SessionExpiredError();
+    }
     throw new Error(`Agent request failed (${resp.status}): ${body}`);
   }
   if (!resp.body) {

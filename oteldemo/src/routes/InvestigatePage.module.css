@@ -433,3 +433,21 @@
   color: var(--cds-color-error);
   font-size: var(--cds-font-size-sm);
 }
+
+.errorBannerTitle {
+  font-weight: 600;
+  margin-bottom: var(--cds-space-2xs);
+}
+
+.errorBannerBody {
+  color: var(--cds-color-text);
+}
+
+.errorBannerBody p {
+  margin: 0 0 var(--cds-space-sm) 0;
+}
+
+.errorBannerBody ul {
+  margin: 0;
+  padding-left: var(--cds-space-md);
+}
