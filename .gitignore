@@ -17,3 +17,6 @@ k8s/helm-values-processed.yaml
 
 # Node
 node_modules/
+
+# Claude Code runtime state
+.claude/

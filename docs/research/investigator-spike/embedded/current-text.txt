@@ -1,0 +1,171 @@
+The payment service is failing on gRPC Charge calls. Investigate the root cause in the last 15 minutes.
+AI
+
+I’m going to (1) set the investigation goal and (2) load a quick reference for Cribl Search KQL operators so I can write/validate the trace queries cleanly.
+
+AI
+
+I’m going to first identify which service/span is producing the gRPC Charge failures by summarizing requests vs errors across services and gRPC method attributes over the last 15 minutes.I’m going to quantify where the gRPC failures are concentrated (which service/method/status code), then we’ll pivot into the specific failing Charge spans and their upstream/downstream dependencies.
+
+gRPC error concentration by service/method/status in last 15m
+-15m to now · 36 rows · 1872ms
+cribl dataset=otel | where isnotnull(end_time_unix_nano)
+| extend svc=tostring(resource.attributes['service.name']),
+        rpc_method=tostring(attributes['rpc.method']),
+        rpc_service=tostring(attributes['rpc.service']),
+        grpc_code=tostring(attributes['rpc.grpc.status_code']),
+        is_error=(tostring(status.code)=="2")
+| where isnotempty(rpc_method)
+| summarize requests=count(), errors=countif(is_error) by svc, rpc_service, rpc_method, grpc_code
+| sort by errors desc
+| limit 50
+ERRORS	GRPC_CODE	REQUESTS	RPC_METHOD	RPC_SERVICE	SVC
+19	13	19	PlaceOrder	oteldemo.CheckoutService	frontend
+19		19	Charge	oteldemo.PaymentService	payment
+19	13	19	PlaceOrder	oteldemo.CheckoutService	checkout
+19	2	19	Charge	oteldemo.PaymentService	checkout
+9	4	9	EventStream	flagd.evaluation.v1.Service	flagd
+2	4	2	EventStream	flagd.evaluation.v1.Service	product-reviews
+2	4	2	EventStream	flagd.evaluation.v1.Service	ad
+2	4	2	EventStream	flagd.evaluation.v1.Service	fraud-detection
+2	4	2	EventStream	flagd.evaluation.v1.Service	recommendation
+0	0	205	GetCart	oteldemo.CartService	frontend
+0	0	119	Convert	oteldemo.CurrencyService	currency
+0	0	70	ListRecommendations	oteldemo.RecommendationService	frontend
+0	0	48	GetProductReviews	oteldemo.ProductReviewService	frontend
+0	0	69	ListProducts	oteldemo.ProductCatalogService	product-catalog
+0	0	70	GetAds	oteldemo.AdService	frontend
+0	0	27	AskProductAIAssistant	oteldemo.ProductReviewService	product-reviews
+0	0	55	ResolveBoolean	flagd.evaluation.v1.Service	cart
+0	0	132	AddItem	oteldemo.CartService	frontend
+0	0	47	GetProductReviews	oteldemo.ProductReviewService	product-reviews
+0	0	70	GetAds	oteldemo.AdService	ad
+… 16 more rows
+AI
+
+Next I’ll zoom into the failing payment service spans for rpc.method="Charge" to capture the exact error messages, gRPC codes, and which pods/versions are involved—this usually points directly to the root cause (e.g., upstream deadline, downstream dependency failure, or an internal exception).
+
+Payment Charge error breakdown by grpc_code/status/pod/version
+-15m to now · 0 rows · 137ms
+cribl dataset=otel | where isnotnull(end_time_unix_nano)
+| extend svc=tostring(resource.attributes['service.name']),
+        rpc_method=tostring(attributes['rpc.method']),
+        rpc_service=tostring(attributes['rpc.service']),
+        grpc_code=tostring(attributes['rpc.grpc.status_code']),
+        pod=tostring(resource.attributes['k8s.pod.name']),
+        ver=tostring(resource.attributes['service.version']),
+        is_error=(tostring(status.code)=="2")
+| where svc=="payment" and rpc_method=="Charge" and is_error
+| summarize errors=count(), sample_status_message=any(status.message) by grpc_code, sample_status_message, pod, ver
+| sort by errors desc
+| limit 50
+Search job creation failed (400): {"status":"error","message":"{\"message\":\"Unknown Kusto scalar function 'any'\",\"name\":\"KustoError\"}"}
+AI
+
+The last query used a scalar helper that isn’t available in this KQL dialect. I’ll adjust by grouping on status.message directly (so we still see the error text) and re-run the breakdown by gRPC code/pod/version.The prior query failed because this KQL dialect doesn’t support any(). I’ll re-run using a breakdown by status.message (plus pod/version) so we can still see the dominant failure strings and where they’re coming from.
+
+Payment Charge errors by grpc_code/status_message/pod/version
+-15m to now · 1 rows · 1949ms
+cribl dataset=otel | where isnotnull(end_time_unix_nano)
+| extend svc=tostring(resource.attributes['service.name']),
+        rpc_method=tostring(attributes['rpc.method']),
+        grpc_code=tostring(attributes['rpc.grpc.status_code']),
+        pod=tostring(resource.attributes['k8s.pod.name']),
+        ver=tostring(resource.attributes['service.version']),
+        is_error=(tostring(status.code)=="2"),
+        status_message=tostring(status.message)
+| where svc=="payment" and rpc_method=="Charge" and is_error
+| summarize errors=count() by grpc_code, status_message, pod, ver
+| sort by errors desc
+| limit 50
+ERRORS	GRPC_CODE	POD	STATUS_MESSAGE	VER
+19		payment-786d4cc9bd-k56jj		2.2.0
+AI
+
+To get the actual root cause, I’ll pull the most recent failing payment → Charge spans and inspect their attributes/events (exceptions often live in the events array even when status.message is empty). I’ll validate the query first, then run it over the last 15 minutes.Now I’ll pull a sample of the most recent failing payment → Charge spans to inspect their attributes/events (often exceptions are captured in the events array) and to grab trace IDs we can use to see upstream/downstream context.
+
+Recent failing payment Charge spans with attributes/events
+-15m to now · 18 rows · 1939ms
+cribl dataset=otel | where isnotnull(end_time_unix_nano)
+| extend svc=tostring(resource.attributes['service.name']),
+        rpc_method=tostring(attributes['rpc.method']),
+        is_error=(tostring(status.code)=="2"),
+        dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
+        pod=tostring(resource.attributes['k8s.pod.name']),
+        ver=tostring(resource.attributes['service.version']),
+        status_message=tostring(status.message)
+| where svc=="payment" and rpc_method=="Charge" and is_error
+| project _time, trace_id, span_id, parent_span_id, name, kind, dur_us, pod, ver, status, status_message, attributes, events
+| sort by _time desc
+| limit 50
+_TIME	ATTRIBUTES	DUR_US	EVENTS	KIND	NAME	PARENT_SPAN_ID	POD
+1776020740.519	{"rpc.system":"grpc","rpc.method":"Charge","rpc.service":"oteldemo.PaymentService","app.payment.amount":"66.79","grpc.error_name":"Error","grpc.error_message":"Payment request failed. Invalid token. app.loyalty.level=gold","unsanitized_span_name":"grpc.oteldemo.PaymentService/Charge"}	3708.16	[{"time_unix_nano":1776020738792697600,"name":"exception","attributes":{"exception.type":"Error","exception.message":"Payment request failed. Invalid token. app.loyalty.level=gold","exception.stacktrace":"Error: Payment request failed. Invalid token. app.loyalty.level=gold\n at module.exports.charge (/usr/src/app/charge.js:37:13)\n at process.processTicksAndRejections (node:internal/process/task_queues:105:5)\n at async Object.chargeServiceHandler [as charge] (/usr/src/app/index.js:21:22)"},"dropped_attributes_count":0}]	2	oteldemo.PaymentService/Charge	391b182de37f856e	payment-786d4cc9bd-k56jj
+1776020740.519	{"rpc.system":"grpc","rpc.method":"Charge","rpc.service":"oteldemo.PaymentService","app.payment.amount":"443.80","grpc.error_name":"Error","grpc.error_message":"Payment request failed. Invalid token. app.loyalty.level=gold","unsanitized_span_name":"grpc.oteldemo.PaymentService/Charge"}	9544.96	[{"time_unix_nano":1776020735342530000,"name":"exception","attributes":{"exception.type":"Error","exception.message":"Payment request failed. Invalid token. app.loyalty.level=gold","exception.stacktrace":"Error: Payment request failed. Invalid token. app.loyalty.level=gold\n at module.exports.charge (/usr/src/app/charge.js:37:13)\n at process.processTicksAndRejections (node:internal/process/task_queues:105:5)\n at async Object.chargeServiceHandler [as charge] (/usr/src/app/index.js:21:22)"},"dropped_attributes_count":0}]	2	oteldemo.PaymentService/Charge	863ffa71f1bb6278	payment-786d4cc9bd-k56jj
+1776020591.15	{"rpc.system":"grpc","rpc.method":"Charge","rpc.service":"oteldemo.PaymentService","app.payment.amount":"16858.18","grpc.error_name":"Error","grpc.error_message":"Payment request failed. Invalid token. app.loyalty.level=gold","unsanitized_span_name":"grpc.oteldemo.PaymentService/Charge"}	584.704	[{"time_unix_nano":1776020586223572500,"name":"exception","attributes":{"exception.type":"Error","exception.message":"Payment request failed. Invalid token. app.loyalty.level=gold","exception.stacktrace":"Error: Payment request failed. Invalid token. app.loyalty.level=gold\n at module.exports.charge (/usr/src/app/charge.js:37:13)\n at process.processTicksAndRejections (node:internal/process/task_queues:105:5)\n at async Object.chargeServiceHandler [as charge] (/usr/src/app/index.js:21:22)"},"dropped_attributes_count":0}]	2	oteldemo.PaymentService/Charge	9226f6f9ba4b619c	payment-786d4cc9bd-k56jj
+1776020591.15	{"rpc.system":"grpc","rpc.method":"Charge","rpc.service":"oteldemo.PaymentService","app.payment.amount":"1399.38","grpc.error_name":"Error","grpc.error_message":"Payment request failed. Invalid token. app.loyalty.level=gold","unsanitized_span_name":"grpc.oteldemo.PaymentService/Charge"}	8257.28	[{"time_unix_nano":1776020586043240700,"name":"exception","attributes":{"exception.type":"Error","exception.message":"Payment request failed. Invalid token. app.loyalty.level=gold","exception.stacktrace":"Error: Payment request failed. Invalid token. app.loyalty.level=gold\n at module.exports.charge (/usr/src/app/charge.js:37:13)\n at process.processTicksAndRejections (node:internal/process/task_queues:105:5)\n at async Object.chargeServiceHandler [as charge] (/usr/src/app/index.js:21:22)"},"dropped_attributes_count":0}]	2	oteldemo.PaymentService/Charge	4d2b55ce5071d905	payment-786d4cc9bd-k56jj
+1776020525.08	{"rpc.system":"grpc","rpc.method":"Charge","rpc.service":"oteldemo.PaymentService","app.payment.amount":"377.96","grpc.error_name":"Error","grpc.error_message":"Payment request failed. Invalid token. app.loyalty.level=gold","unsanitized_span_name":"grpc.oteldemo.PaymentService/Charge"}	7453.44	[{"time_unix_nano":1776020522793444900,"name":"exception","attributes":{"exception.type":"Error","exception.message":"Payment request failed. Invalid token. app.loyalty.level=gold","exception.stacktrace":"Error: Payment request failed. Invalid token. app.loyalty.level=gold\n at module.exports.charge (/usr/src/app/charge.js:37:13)\n at process.processTicksAndRejections (node:internal/process/task_queues:105:5)\n at async Object.chargeServiceHandler [as charge] (/usr/src/app/index.js:21:22)"},"dropped_attributes_count":0}]	2	oteldemo.PaymentService/Charge	d620f743c84b23bc	payment-786d4cc9bd-k56jj
+1776020439.34	{"rpc.system":"grpc","rpc.method":"Charge","rpc.service":"oteldemo.PaymentService","app.payment.amount":"367.98","grpc.error_name":"Error","grpc.error_message":"Payment request failed. Invalid token. app.loyalty.level=gold","unsanitized_span_name":"grpc.oteldemo.PaymentService/Charge"}	8005.632	[{"time_unix_nano":1776020434095992300,"name":"exception","attributes":{"exception.type":"Error","exception.message":"Payment request failed. Invalid token. app.loyalty.level=gold","exception.stacktrace":"Error: Payment request failed. Invalid token. app.loyalty.level=gold\n at module.exports.charge (/usr/src/app/charge.js:37:13)\n at process.processTicksAndRejections (node:internal/process/task_queues:105:5)\n at async Object.chargeServiceHandler [as charge] (/usr/src/app/index.js:21:22)"},"dropped_attributes_count":0}]	2	oteldemo.PaymentService/Charge	c3722a41cfd7154e	payment-786d4cc9bd-k56jj
+1776020423.884	{"rpc.system":"grpc","rpc.method":"Charge","rpc.service":"oteldemo.PaymentService","app.payment.amount":"925.66","grpc.error_name":"Error","grpc.error_message":"Payment request failed. Invalid token. app.loyalty.level=gold","unsanitized_span_name":"grpc.oteldemo.PaymentService/Charge"}	6444.032	[{"time_unix_nano":1776020418764435200,"name":"exception","attributes":{"exception.type":"Error","exception.message":"Payment request failed. Invalid token. app.loyalty.level=gold","exception.stacktrace":"Error: Payment request failed. Invalid token. app.loyalty.level=gold\n at module.exports.charge (/usr/src/app/charge.js:37:13)\n at process.processTicksAndRejections (node:internal/process/task_queues:105:5)\n at async Object.chargeServiceHandler [as charge] (/usr/src/app/index.js:21:22)"},"dropped_attributes_count":0}]	2	oteldemo.PaymentService/Charge	16d717f3f488045e	payment-786d4cc9bd-k56jj
+1776020397.987	{"rpc.system":"grpc","rpc.method":"Charge","rpc.service":"oteldemo.PaymentService","app.payment.amount":"4294.38","grpc.error_name":"Error","grpc.error_message":"Payment request failed. Invalid token. app.loyalty.level=gold","unsanitized_span_name":"grpc.oteldemo.PaymentService/Charge"}	7371.264	[{"time_unix_nano":1776020392716360200,"name":"exception","attributes":{"exception.type":"Error","exception.message":"Payment request failed. Invalid token. app.loyalty.level=gold","exception.stacktrace":"Error: Payment request failed. Invalid token. app.loyalty.level=gold\n at module.exports.charge (/usr/src/app/charge.js:37:13)\n at process.processTicksAndRejections (node:internal/process/task_queues:105:5)\n at async Object.chargeServiceHandler [as charge] (/usr/src/app/index.js:21:22)"},"dropped_attributes_count":0}]	2	oteldemo.PaymentService/Charge	c22d02598d8b3bcb	payment-786d4cc9bd-k56jj
+1776020384.721	{"rpc.system":"grpc","rpc.method":"Charge","rpc.service":"oteldemo.PaymentService","app.payment.amount":"691.79","grpc.error_name":"Error","grpc.error_message":"Payment request failed. Invalid token. app.loyalty.level=gold","unsanitized_span_name":"grpc.oteldemo.PaymentService/Charge"}	18275.328	[{"time_unix_nano":1776020379662616600,"name":"exception","attributes":{"exception.type":"Error","exception.message":"Payment request failed. Invalid token. app.loyalty.level=gold","exception.stacktrace":"Error: Payment request failed. Invalid token. app.loyalty.level=gold\n at module.exports.charge (/usr/src/app/charge.js:37:13)\n at process.processTicksAndRejections (node:internal/process/task_queues:105:5)\n at async Object.chargeServiceHandler [as charge] (/usr/src/app/index.js:21:22)"},"dropped_attributes_count":0}]	2	oteldemo.PaymentService/Charge	19bb7a84d27eed9e	payment-786d4cc9bd-k56jj
+1776020300.194	{"rpc.system":"grpc","rpc.method":"Charge","rpc.service":"oteldemo.PaymentService","app.payment.amount":"554.75","grpc.error_name":"Error","grpc.error_message":"Payment request failed. Invalid token. app.loyalty.level=gold","unsanitized_span_name":"grpc.oteldemo.PaymentService/Charge"}	6860.032	[{"time_unix_nano":1776020296604847900,"name":"exception","attributes":{"exception.type":"Error","exception.message":"Payment request failed. Invalid token. app.loyalty.level=gold","exception.stacktrace":"Error: Payment request failed. Invalid token. app.loyalty.level=gold\n at module.exports.charge (/usr/src/app/charge.js:37:13)\n at process.processTicksAndRejections (node:internal/process/task_queues:105:5)\n at async Object.chargeServiceHandler [as charge] (/usr/src/app/index.js:21:22)"},"dropped_attributes_count":0}]	2	oteldemo.PaymentService/Charge	5efdac9d00a35a01	payment-786d4cc9bd-k56jj
+1776020282.929	{"rpc.system":"grpc","rpc.method":"Charge","rpc.service":"oteldemo.PaymentService","app.payment.amount":"309.40","grpc.error_name":"Error","grpc.error_message":"Payment request failed. Invalid token. app.loyalty.level=gold","unsanitized_span_name":"grpc.oteldemo.PaymentService/Charge"}	1928.448	[{"time_unix_nano":1776020279424912400,"name":"exception","attributes":{"exception.type":"Error","exception.message":"Payment request failed. Invalid token. app.loyalty.level=gold","exception.stacktrace":"Error: Payment request failed. Invalid token. app.loyalty.level=gold\n at module.exports.charge (/usr/src/app/charge.js:37:13)\n at process.processTicksAndRejections (node:internal/process/task_queues:105:5)\n at async Object.chargeServiceHandler [as charge] (/usr/src/app/index.js:21:22)"},"dropped_attributes_count":0}]	2	oteldemo.PaymentService/Charge	5f79c6910be9c482	payment-786d4cc9bd-k56jj
+1776020282.929	{"rpc.system":"grpc","rpc.method":"Charge","rpc.service":"oteldemo.PaymentService","app.payment.amount":"4325.87","grpc.error_name":"Error","grpc.error_message":"Payment request failed. Invalid token. app.loyalty.level=gold","unsanitized_span_name":"grpc.oteldemo.PaymentService/Charge"}	8337.408	[{"time_unix_nano":1776020277853326300,"name":"exception","attributes":{"exception.type":"Error","exception.message":"Payment request failed. Invalid token. app.loyalty.level=gold","exception.stacktrace":"Error: Payment request failed. Invalid token. app.loyalty.level=gold\n at module.exports.charge (/usr/src/app/charge.js:37:13)\n at process.processTicksAndRejections (node:internal/process/task_queues:105:5)\n at async Object.chargeServiceHandler [as charge] (/usr/src/app/index.js:21:22)"},"dropped_attributes_count":0}]	2	oteldemo.PaymentService/Charge	304753b1f83b8a66	payment-786d4cc9bd-k56jj
+1776020248.391	{"rpc.system":"grpc","rpc.method":"Charge","rpc.service":"oteldemo.PaymentService","app.payment.amount":"1435.76","grpc.error_name":"Error","grpc.error_message":"Payment request failed. Invalid token. app.loyalty.level=gold","unsanitized_span_name":"grpc.oteldemo.PaymentService/Charge"}	2458.368	[{"time_unix_nano":1776020243282445300,"name":"exception","attributes":{"exception.type":"Error","exception.message":"Payment request failed. Invalid token. app.loyalty.level=gold","exception.stacktrace":"Error: Payment request failed. Invalid token. app.loyalty.level=gold\n at module.exports.charge (/usr/src/app/charge.js:37:13)\n at process.processTicksAndRejections (node:internal/process/task_queues:105:5)\n at async Object.chargeServiceHandler [as charge] (/usr/src/app/index.js:21:22)"},"dropped_attributes_count":0}]	2	oteldemo.PaymentService/Charge	e8eec5fe73699482	payment-786d4cc9bd-k56jj
+1776020227.909	{"rpc.system":"grpc","rpc.method":"Charge","rpc.service":"oteldemo.PaymentService","app.payment.amount":"14964.62","grpc.error_name":"Error","grpc.error_message":"Payment request failed. Invalid token. app.loyalty.level=gold","unsanitized_span_name":"grpc.oteldemo.PaymentService/Charge"}	8335.104	[{"time_unix_nano":1776020222611326200,"name":"exception","attributes":{"exception.type":"Error","exception.message":"Payment request failed. Invalid token. app.loyalty.level=gold","exception.stacktrace":"Error: Payment request failed. Invalid token. app.loyalty.level=gold\n at module.exports.charge (/usr/src/app/charge.js:37:13)\n at process.processTicksAndRejections (node:internal/process/task_queues:105:5)\n at async Object.chargeServiceHandler [as charge] (/usr/src/app/index.js:21:22)"},"dropped_attributes_count":0}]	2	oteldemo.PaymentService/Charge	49ac3a325f9d059e	payment-786d4cc9bd-k56jj
+1776020073.732	{"rpc.system":"grpc","rpc.method":"Charge","rpc.service":"oteldemo.PaymentService","app.payment.amount":"694.70","grpc.error_name":"Error","grpc.error_message":"Payment request failed. Invalid token. app.loyalty.level=gold","unsanitized_span_name":"grpc.oteldemo.PaymentService/Charge"}	5919.232	[{"time_unix_nano":1776020068509866200,"name":"exception","attributes":{"exception.type":"Error","exception.message":"Payment request failed. Invalid token. app.loyalty.level=gold","exception.stacktrace":"Error: Payment request failed. Invalid token. app.loyalty.level=gold\n at module.exports.charge (/usr/src/app/charge.js:37:13)\n at process.processTicksAndRejections (node:internal/process/task_queues:105:5)\n at async Object.chargeServiceHandler [as charge] (/usr/src/app/index.js:21:22)"},"dropped_attributes_count":0}]	2	oteldemo.PaymentService/Charge	52282e20c69a3b45	payment-786d4cc9bd-k56jj
+1776019986.798	{"rpc.system":"grpc","rpc.method":"Charge","rpc.service":"oteldemo.PaymentService","app.payment.amount":"7215.98","grpc.error_name":"Error","grpc.error_message":"Payment request failed. Invalid token. app.loyalty.level=gold","unsanitized_span_name":"grpc.oteldemo.PaymentService/Charge"}	8240.128	[{"time_unix_nano":1776019985476224000,"name":"exception","attributes":{"exception.type":"Error","exception.message":"Payment request failed. Invalid token. app.loyalty.level=gold","exception.stacktrace":"Error: Payment request failed. Invalid token. app.loyalty.level=gold\n at module.exports.charge (/usr/src/app/charge.js:37:13)\n at process.processTicksAndRejections (node:internal/process/task_queues:105:5)\n at async Object.chargeServiceHandler [as charge] (/usr/src/app/index.js:21:22)"},"dropped_attributes_count":0}]	2	oteldemo.PaymentService/Charge	f91e09a31a5e8e3e	payment-786d4cc9bd-k56jj
+1776019952.866	{"rpc.system":"grpc","rpc.method":"Charge","rpc.service":"oteldemo.PaymentService","app.payment.amount":"2929.79","grpc.error_name":"Error","grpc.error_message":"Payment request failed. Invalid token. app.loyalty.level=gold","unsanitized_span_name":"grpc.oteldemo.PaymentService/Charge"}	6540.8	[{"time_unix_nano":1776019947678530800,"name":"exception","attributes":{"exception.type":"Error","exception.message":"Payment request failed. Invalid token. app.loyalty.level=gold","exception.stacktrace":"Error: Payment request failed. Invalid token. app.loyalty.level=gold\n at module.exports.charge (/usr/src/app/charge.js:37:13)\n at process.processTicksAndRejections (node:internal/process/task_queues:105:5)\n at async Object.chargeServiceHandler [as charge] (/usr/src/app/index.js:21:22)"},"dropped_attributes_count":0}]	2	oteldemo.PaymentService/Charge	1c05b4a837c526d3	payment-786d4cc9bd-k56jj
+1776019907.697	{"rpc.system":"grpc","rpc.method":"Charge","rpc.service":"oteldemo.PaymentService","app.payment.amount":"794.78","grpc.error_name":"Error","grpc.error_message":"Payment request failed. Invalid token. app.loyalty.level=gold","unsanitized_span_name":"grpc.oteldemo.PaymentService/Charge"}	6038.784	[{"time_unix_nano":1776019903842027300,"name":"exception","attributes":{"exception.type":"Error","exception.message":"Payment request failed. Invalid token. app.loyalty.level=gold","exception.stacktrace":"Error: Payment request failed. Invalid token. app.loyalty.level=gold\n at module.exports.charge (/usr/src/app/charge.js:37:13)\n at process.processTicksAndRejections (node:internal/process/task_queues:105:5)\n at async Object.chargeServiceHandler [as charge] (/usr/src/app/index.js:21:22)"},"dropped_attributes_count":0}]	2	oteldemo.PaymentService/Charge	f2398fd29b8f9570	payment-786d4cc9bd-k56jj
+AI
+
+To confirm what’s actually breaking, I’m going to trace *downstream* from the failing payment Charge spans: find any child spans under those Charge spans (HTTP/gRPC dependencies) and see which one errors—this distinguishes “payment code threw locally” vs “payment failed calling a dependency.” I’ll validate the query, then run it for the last 15 minutes.I’ll now run a dependency check: for traces containing a failing payment Charge span, I’ll look for any *child spans* (downstream calls) that hang off the Charge span. If there are none and the error is local with an exception, that strongly indicates an internal app error (e.g., auth/token validation) rather than a downstream outage.
+
+Child spans of failing payment Charge spans (downstream dependencies)
+-15m to now · 17 rows · 3185ms
+cribl dataset=otel | where isnotnull(end_time_unix_nano)
+| extend svc=tostring(resource.attributes['service.name']),
+         is_error=(tostring(status.code)=="2")
+| project _time, trace_id, span_id, parent_span_id, name, kind, svc, is_error, attributes, status
+| join kind=inner (
+    cribl dataset=otel | where isnotnull(end_time_unix_nano)
+    | extend svc=tostring(resource.attributes['service.name']),
+             rpc_method=tostring(attributes['rpc.method']),
+             is_error=(tostring(status.code)=="2")
+    | where svc=="payment" and rpc_method=="Charge" and is_error
+    | project trace_id, charge_span_id=span_id
+  ) on trace_id
+| where parent_span_id == charge_span_id and span_id != charge_span_id
+| extend dep_rpc_method=tostring(attributes['rpc.method']),
+         http_method=tostring(attributes['http.request.method']),
+         http_status=toint(attributes['http.response.status_code']),
+         grpc_code=tostring(attributes['rpc.grpc.status_code']),
+         dep_status_message=tostring(status.message)
+| project _time, trace_id, charge_span_id, child_span_id=span_id, svc, name, kind, is_error, grpc_code, http_method, http_status, dep_status_message, attributes
+| sort by _time desc
+| limit 100
+_TIME	ATTRIBUTES	CHARGE_SPAN_ID	CHILD_SPAN_ID	DEP_STATUS_MESSAGE	GRPC_CODE	HTTP_METHOD	HTTP_STATUS
+1776020740.519	{"app.loyalty.level":"gold"}	87e42ab9bbc8282a	c396c5ffc8e66f61				
+1776020740.518	{"app.loyalty.level":"gold"}	4ac1c8ac01e497b4	cf53ed08f262a479				
+1776020591.15	{"app.loyalty.level":"gold"}	957acec751be7f5a	255fcfc3ea700b3d				
+1776020591.15	{"app.loyalty.level":"gold"}	6a16038923ebb01a	d5afc338bd75a696				
+1776020525.08	{"app.loyalty.level":"gold"}	288d02a3f0ecb09c	1cc48b891a7949ec				
+1776020439.339	{"app.loyalty.level":"gold"}	6b4283d3a52719d7	d3d5e23bfb6c6f1b				
+1776020423.883	{"app.loyalty.level":"gold"}	4f1792d7d3d9dfe3	7631c3d5a7614405				
+1776020397.986	{"app.loyalty.level":"gold"}	00e3b63b9484ffc6	c281b2ad49b1fe3f				
+1776020384.721	{"app.loyalty.level":"gold"}	eb07e39732ff7060	357ffbd96a20defe				
+1776020300.194	{"app.loyalty.level":"gold"}	eac994a16b561b99	4341338598848d61				
+1776020282.929	{"app.loyalty.level":"gold"}	b7cfc70653aef270	2e3fc194ac5393a3				
+1776020282.929	{"app.loyalty.level":"gold"}	f5566be76b2363f9	223e19785109fe30				
+1776020248.39	{"app.loyalty.level":"gold"}	05dd94cfa0cd0ea9	a6486806643056c5				
+1776020227.909	{"app.loyalty.level":"gold"}	d63a06dd9c648658	b6f5cff92488aa1c				
+1776020073.732	{"app.loyalty.level":"gold"}	be83981f93046861	480a86cb5ac11303				
+1776019986.798	{"app.loyalty.level":"gold"}	33df406678d73f54	c6b4351ba5375c36				
+1776019952.866	{"app.loyalty.level":"gold"}	fbba47f50d77fa26	fa7f2219fc4f4616				
+AI
+
+I have enough evidence to identify the root cause: the payment service’s gRPC Charge spans are failing due to an internal exception (“Invalid token”), consistently from a single pod/version. I’m going to record the key findings into the investigation notes and then summarize the conclusion.
+
+AI
+
+{% present_investigation_summary {"findings":[{"category":"Error scope (last 15 minutes)","details":"- Payment Charge: 19 errors / 19 requests for svc=\"payment\", rpc.method=\"Charge\" (all have tostring(status.code)==\"2\").\n- Correlated upstream: checkout calling Charge shows 19 errors with rpc.grpc.status_code=\"2\"; PlaceOrder shows 19 errors with rpc.grpc.status_code=\"13\" (likely propagated failure)."},{"category":"Root-cause evidence inside failing spans","details":"From the most recent failing payment Charge spans:\n- Span attribute grpc.error_message: \"Payment request failed. Invalid token. app.loyalty.level=gold\"\n- events contains an exception with:\n - exception.type: Error\n - exception.message: \"Payment request failed. Invalid token. app.loyalty.level=gold\"\n - exception.stacktrace: points to `/usr/src/app/charge.js:37:13` (then /usr/src/app/index.js:21:22).\n- status.message is empty across these spans (error detail is in attributes/events instead)."},{"category":"Where it’s happening (pod/version)","details":"- All observed failing payment Charge spans are from pod `payment-786d4cc9bd-k56jj`, service.version `2.2.0`.\n- No evidence (in child-span inspection) of an external dependency span failing underneath the Charge span; a child span named charge exists and is not marked as an error."}],"conclusion":"The payment service is failing Charge due to an internal application exception: \"Payment request failed. Invalid token\" (seen in span attributes/events with a stacktrace to charge.js:37). The failures are concentrated on pod payment-786d4cc9bd-k56jj running version 2.2.0, and upstream services are propagating the error."} %}
