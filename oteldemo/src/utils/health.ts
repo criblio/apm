@@ -29,6 +29,7 @@ export type HealthBucket =
   | 'warn'
   | 'critical'
   | 'idle'
+  | 'silent'
   | 'traffic_drop'
   | 'latency_anomaly';
 
@@ -44,6 +45,10 @@ const HEALTH: Record<HealthBucket, { color: string; label: string }> = {
   warn: { color: '#f59e0b', label: 'Warn (1–5% errors)' },
   critical: { color: '#dc2626', label: 'Critical (>5% errors)' },
   idle: { color: '#9ca3af', label: 'No recent traffic' },
+  silent: {
+    color: '#dc2626',
+    label: 'Was busy in the prior window, fully silent now (likely down)',
+  },
   traffic_drop: {
     color: '#a855f7',
     label: 'Traffic drop vs prior window',
@@ -63,6 +68,7 @@ const HEALTH_BG: Record<HealthBucket, string> = {
   warn: 'rgba(245, 158, 11, 0.12)',
   critical: 'rgba(220, 38, 38, 0.12)',
   idle: 'transparent',
+  silent: 'rgba(220, 38, 38, 0.12)',
   traffic_drop: 'rgba(168, 85, 247, 0.12)',
   latency_anomaly: 'rgba(6, 182, 212, 0.12)',
 };
@@ -76,6 +82,7 @@ export const HEALTH_LEGEND: Array<{ bucket: HealthBucket; color: string; label: 
   { bucket: 'watch', ...HEALTH.watch },
   { bucket: 'warn', ...HEALTH.warn },
   { bucket: 'critical', ...HEALTH.critical },
+  { bucket: 'silent', ...HEALTH.silent },
   { bucket: 'latency_anomaly', ...HEALTH.latency_anomaly },
   { bucket: 'traffic_drop', ...HEALTH.traffic_drop },
   { bucket: 'idle', ...HEALTH.idle },
@@ -105,6 +112,15 @@ export function serviceHealth(
   anomalousServices?: Set<string>,
 ): HealthInfo {
   if (!summary || summary.requests === 0) {
+    // "Was busy in the prior window, fully silent now" is materially
+    // different from "always idle" — it usually means the service
+    // crashed or got isolated. Promote those to the `silent` bucket
+    // so the System Architecture graph can render them as ghost
+    // nodes and the row tint matches a critical signal. Falls back
+    // to `idle` (gray dashed) when there's no prior baseline either.
+    if (prev && prev.requests >= MIN_BASELINE_REQUESTS) {
+      return { bucket: 'silent', ...HEALTH.silent };
+    }
     return { bucket: 'idle', ...HEALTH.idle };
   }
   const errInfo = healthFromRate(summary.errorRate);

@@ -86,8 +86,17 @@ export interface RunLoopOptions {
   approveToolCall?: (call: ToolCallInvocation) => Promise<boolean>;
   /** Abort the whole investigation. */
   signal?: AbortSignal;
-  /** Max number of agent round-trips before giving up — safety net
-   *  against runaway loops. Default 30. */
+  /** Max number of agent round-trips before giving up. Default 12 —
+   *  tuned down from the original 30 after the 2026-04-13 retest
+   *  showed the paymentUnreachable agent found the root cause by
+   *  turn ~7 but kept running "validation" turns until turn 14,
+   *  where the conversation history had grown large enough that the
+   *  LLM couldn't start streaming within the platform's 30-second
+   *  time-to-first-byte proxy timeout. Any investigation that
+   *  hasn't converged by turn 12 is almost certainly going in
+   *  circles or has a contextual problem a 13th turn won't fix;
+   *  cutting off there keeps the loop well inside the TTFB budget
+   *  and forces the agent to commit to a summary. */
   maxTurns?: number;
 }
 
@@ -116,7 +125,7 @@ export async function runInvestigation(opts: RunLoopOptions): Promise<void> {
     onEvent,
     approveToolCall,
     signal,
-    maxTurns = 30,
+    maxTurns = 12,
   } = opts;
 
   const messages: AgentMessage[] = [...initialMessages];
@@ -153,52 +162,83 @@ export async function runInvestigation(opts: RunLoopOptions): Promise<void> {
       let textContent = '';
       let pendingToolCalls: AgentToolCall[] | null = null;
 
-      for await (const frame of streamAgent(req, signal)) {
-        if (signal?.aborted) {
-          onEvent({ kind: 'done', reason: 'aborted' });
-          return;
+      // Per-turn timing for diagnosing platform-proxy timeouts. The
+      // user reported "Error: Request timeout" ~1m into a multi-turn
+      // investigation. When that happens we want the error to say
+      // *which* turn failed and how long it ran, not a bare string,
+      // so the next debug round has actionable detail.
+      const turnStart = Date.now();
+      const turnLabel = `turn ${turn + 1} after ${messages.length} prior msgs`;
+      try {
+        for await (const frame of streamAgent(req, signal)) {
+          if (signal?.aborted) {
+            onEvent({ kind: 'done', reason: 'aborted' });
+            return;
+          }
+
+          switch (frame.kind) {
+            case 'text':
+              textContent += frame.content;
+              onEvent({ kind: 'assistantText', turnId, chunk: frame.content });
+              break;
+
+            case 'toolCalls':
+              // Tool call frames arrive as a batch after all text
+              // for this turn is streamed. Record them and stop
+              // consuming the stream — the server closes it right
+              // after emitting tool calls anyway, but being explicit
+              // keeps the flow obvious.
+              pendingToolCalls = frame.calls;
+              break;
+
+            case 'toolResult':
+              // Server-side tool (e.g. fetch_local_context). Not
+              // something we executed — just surface to the UI in
+              // case we want to show a debug pane.
+              onEvent({
+                kind: 'notification',
+                turnId,
+                toolName: 'fetch_local_context',
+                content: frame.content,
+              });
+              break;
+
+            case 'notification':
+              onEvent({
+                kind: 'notification',
+                turnId,
+                toolName: frame.toolName,
+                content: frame.content,
+              });
+              break;
+
+            case 'unknown':
+              // Keep unknown frames for debugging but don't stall.
+              break;
+          }
         }
-
-        switch (frame.kind) {
-          case 'text':
-            textContent += frame.content;
-            onEvent({ kind: 'assistantText', turnId, chunk: frame.content });
-            break;
-
-          case 'toolCalls':
-            // Tool call frames arrive as a batch after all text
-            // for this turn is streamed. Record them and stop
-            // consuming the stream — the server closes it right
-            // after emitting tool calls anyway, but being explicit
-            // keeps the flow obvious.
-            pendingToolCalls = frame.calls;
-            break;
-
-          case 'toolResult':
-            // Server-side tool (e.g. fetch_local_context). Not
-            // something we executed — just surface to the UI in
-            // case we want to show a debug pane.
-            onEvent({
-              kind: 'notification',
-              turnId,
-              toolName: 'fetch_local_context',
-              content: frame.content,
-            });
-            break;
-
-          case 'notification':
-            onEvent({
-              kind: 'notification',
-              turnId,
-              toolName: frame.toolName,
-              content: frame.content,
-            });
-            break;
-
-          case 'unknown':
-            // Keep unknown frames for debugging but don't stall.
-            break;
+      } catch (turnErr) {
+        const elapsedMs = Date.now() - turnStart;
+        const elapsedSec = (elapsedMs / 1000).toFixed(1);
+        const baseMsg =
+          turnErr instanceof Error ? turnErr.message : String(turnErr);
+        // AbortError is normal user-cancel — propagate as-is.
+        if (turnErr instanceof Error && turnErr.name === 'AbortError') {
+          throw turnErr;
         }
+        // SessionExpiredError stays itself; just attach the timing
+        // for the banner to display if it wants.
+        const enriched = new Error(
+          `${baseMsg} (failed on ${turnLabel}, after ${elapsedSec}s of LLM streaming)`,
+        );
+        if (
+          turnErr instanceof Error &&
+          (turnErr as { isSessionExpired?: boolean }).isSessionExpired === true
+        ) {
+          (enriched as { isSessionExpired?: boolean }).isSessionExpired = true;
+          enriched.name = 'SessionExpiredError';
+        }
+        throw enriched;
       }
 
       // Emit the final assistant text as one atomic message in the

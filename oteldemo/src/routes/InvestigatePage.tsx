@@ -22,7 +22,12 @@ import {
 } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { runInvestigation, type LoopEvent } from '../api/agentLoop';
-import { buildSeedPrompt, type InvestigationSeed } from '../api/agentContext';
+import {
+  buildSeedPrompt,
+  tightenEarliestFromPrompt,
+  type InvestigationSeed,
+} from '../api/agentContext';
+import { runPreflight, formatPreflightSignals } from '../api/agentPreflight';
 import type { AgentMessage, AgentToolCall } from '../api/agent';
 import { isSessionExpiredError } from '../api/agent';
 import type {
@@ -253,13 +258,51 @@ export default function InvestigatePage() {
     [sessionId, handleLoopEvent, approveToolCall],
   );
 
+  // Enrich a seed before building the prompt:
+  //
+  //  1. **Time-window discipline**: when the user phrased the
+  //     question with "in the last N minutes" / "right now", honor
+  //     that instead of inheriting the seed's default. Without this,
+  //     a fresh investigation against a 15m default window pulls in
+  //     stale errors from prior tests (the bleed-over class of
+  //     misattribution we documented in the 2026-04-12 eval).
+  //
+  //  2. **Preflight signals**: run the silent-service / rate-drop /
+  //     error-spike preflight against the (possibly tightened)
+  //     range and merge results into knownSignals so the agent
+  //     starts with our anomaly summary instead of having to
+  //     discover it.
+  //
+  //  Both steps are best-effort. A failure in either should not
+  //  block the investigation — we just ship the seed as-is.
+  const enrichSeed = useCallback(
+    async (s: InvestigationSeed): Promise<InvestigationSeed> => {
+      let next: InvestigationSeed = s;
+      const tightened = tightenEarliestFromPrompt(s.question);
+      if (tightened) {
+        next = { ...next, earliest: tightened, latest: 'now' };
+      }
+      try {
+        const earliest = next.earliest ?? '-15m';
+        const latest = next.latest ?? 'now';
+        const preflight = await runPreflight(earliest, latest);
+        const lines = formatPreflightSignals(preflight);
+        const merged: string[] = [...(next.knownSignals ?? []), ...lines];
+        next = { ...next, knownSignals: merged };
+      } catch {
+        /* swallow — caller still gets the time-tightened seed */
+      }
+      return next;
+    },
+    [],
+  );
+
   // Seed the conversation on first mount if we arrived with a seed.
   const didSeedRef = useRef(false);
   useEffect(() => {
     if (didSeedRef.current) return;
     didSeedRef.current = true;
     if (!seed) return;
-    const prompt = buildSeedPrompt(seed);
     setTranscript([
       {
         kind: 'user',
@@ -267,30 +310,37 @@ export default function InvestigatePage() {
         content: seed.question,
       },
     ]);
-    startInvestigation([
-      { id: `m-${Date.now()}`, role: 'user', content: prompt, reqId: 0 },
-    ]);
     // Clear the seed from location state so a reload doesn't re-fire
     // the same investigation.
     navigate(location.pathname, { replace: true, state: {} });
-  }, [seed, startInvestigation, navigate, location.pathname]);
+    void (async () => {
+      const enriched = await enrichSeed(seed);
+      const prompt = buildSeedPrompt(enriched);
+      startInvestigation([
+        { id: `m-${Date.now()}`, role: 'user', content: prompt, reqId: 0 },
+      ]);
+    })();
+  }, [seed, startInvestigation, navigate, location.pathname, enrichSeed]);
 
   const submitFreeForm = useCallback(
     (text: string) => {
       const trimmed = text.trim();
       if (!trimmed || running) return;
-      const freeSeed: InvestigationSeed = { question: trimmed };
-      const prompt = buildSeedPrompt(freeSeed);
       setTranscript((prev) => [
         ...prev,
         { kind: 'user', id: `u-${Date.now()}`, content: trimmed },
       ]);
       setComposerText('');
-      startInvestigation([
-        { id: `m-${Date.now()}`, role: 'user', content: prompt, reqId: 0 },
-      ]);
+      void (async () => {
+        const freeSeed: InvestigationSeed = { question: trimmed };
+        const enriched = await enrichSeed(freeSeed);
+        const prompt = buildSeedPrompt(enriched);
+        startInvestigation([
+          { id: `m-${Date.now()}`, role: 'user', content: prompt, reqId: 0 },
+        ]);
+      })();
     },
-    [running, startInvestigation],
+    [running, startInvestigation, enrichSeed],
   );
 
   const handleComposerKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {

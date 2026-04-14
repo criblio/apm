@@ -12,6 +12,7 @@ import {
   listSlowTraceClasses,
   listErrorClasses,
   listOperationAnomalies,
+  getDependencies,
 } from '../api/search';
 import { listCachedHomePanels } from '../api/panelCache';
 import { serviceColor } from '../utils/spans';
@@ -28,6 +29,7 @@ import type {
   SlowTraceClass,
   ErrorClass,
   OperationAnomaly,
+  DependencyEdge,
 } from '../api/types';
 import s from './HomePage.module.css';
 
@@ -79,6 +81,36 @@ function fmtErrorRate(rate: number): { text: string; className: string } {
   const pct = rate * 100;
   const cls = pct >= 5 ? s.errHigh : pct >= 1 ? s.errHigh : s.errLow;
   return { text: `${pct.toFixed(2)}%`, className: cls };
+}
+
+/** Format a Date.now() - lastSeenMs gap as a short "Ns ago" / "Nm ago"
+ *  string for the stale-row pill. */
+function fmtAgo(ms: number): string {
+  const sec = Math.round(ms / 1000);
+  if (sec < 60) return `${sec}s ago`;
+  const min = Math.round(sec / 60);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.round(min / 60);
+  return `${hr}h ago`;
+}
+
+/** Decide whether a service row is "stale" relative to the current
+ *  range — i.e. its newest span is older than ~25% of the lookback
+ *  window. The fraction is conservative on purpose: a service that's
+ *  been silent for >¼ of the window is definitely showing residue
+ *  and the user needs to know, but routine same-minute jitter
+ *  shouldn't fire. */
+function staleAge(
+  lastSeenMs: number | undefined,
+  rangeMs: number,
+  now: number,
+): { ageMs: number } | null {
+  if (!lastSeenMs || !Number.isFinite(lastSeenMs)) return null;
+  const ageMs = now - lastSeenMs;
+  if (ageMs <= 0) return null;
+  const threshold = rangeMs * 0.25;
+  if (ageMs < threshold) return null;
+  return { ageMs };
 }
 
 /**
@@ -155,6 +187,7 @@ export default function HomePage() {
   const drillSuffix = location.search;
   const [summaries, setSummaries] = useState<ServiceSummary[]>([]);
   const [prevSummaries, setPrevSummaries] = useState<ServiceSummary[]>([]);
+  const [edges, setEdges] = useState<DependencyEdge[]>([]);
   const [buckets, setBuckets] = useState<ServiceBucket[]>([]);
   const [slowClasses, setSlowClasses] = useState<SlowTraceClass[]>([]);
   const [errorClasses, setErrorClasses] = useState<ErrorClass[]>([]);
@@ -191,6 +224,15 @@ export default function HomePage() {
     const pPrevSummaries = listServiceSummaries(prev.earliest, prev.latest)
       .then((r) => setPrevSummaries(r))
       .catch(() => setPrevSummaries([]));
+
+    // Dependency edges — fuels the per-row "errors on call to <child>"
+    // root-cause hint. Async, non-blocking; the catalog renders fine
+    // without it, the hints just light up when the query lands.
+    // Drawn from the same dependency query SystemArchPage uses, so
+    // the data shape is consistent between Home and the graph view.
+    const pEdges = getDependencies(range, 'now')
+      .then((r) => setEdges(r))
+      .catch(() => setEdges([]));
 
     // Latency anomaly detection — joins the current window against
     // the criblapm_op_baselines lookup maintained by the scheduled
@@ -278,6 +320,7 @@ export default function HomePage() {
       pSlow,
       pErrors,
       pAnomalies,
+      pEdges,
     ]);
     setLastRefresh(Date.now());
     // streamFilterEnabled is in the dep list so (a) flipping the
@@ -320,6 +363,49 @@ export default function HomePage() {
     return set;
   }, [anomalies]);
 
+  // Per-service "likely root cause" hint, derived from the dependency
+  // edges. For each service, look at its outgoing rpc edges and pick
+  // the downstream child with the highest error-rate-on-edge (errors
+  // attributed to spans where this parent called that child). The
+  // intent is to cut through error-propagation cascades like
+  // cartFailure: frontend-proxy is the row tinted red, but the
+  // outgoing-edge view shows the failure is on calls to its
+  // downstream — and the user can click straight to the actual
+  // root-cause service. Renders as a small "→ <child>" hint chip
+  // next to the service name on rows where any downstream edge has
+  // a meaningful error rate. Excludes ghost / silent / messaging
+  // edges to keep the hint focused on the most common pattern.
+  const rootCauseHints = useMemo(() => {
+    const out = new Map<string, { child: string; errorRate: number }>();
+    type EdgeAgg = { child: string; calls: number; errors: number };
+    const byParent = new Map<string, EdgeAgg[]>();
+    for (const e of edges) {
+      if ((e.kind ?? 'rpc') !== 'rpc') continue;
+      if (e.parent === e.child) continue;
+      if (e.callCount < 5) continue; // skip noise-floor edges
+      const list = byParent.get(e.parent) ?? [];
+      list.push({
+        child: e.child,
+        calls: e.callCount,
+        errors: e.errorCount,
+      });
+      byParent.set(e.parent, list);
+    }
+    for (const [parent, edgeList] of byParent.entries()) {
+      let best: { child: string; errorRate: number } | null = null;
+      for (const ed of edgeList) {
+        if (ed.errors === 0) continue;
+        const rate = ed.errors / ed.calls;
+        if (rate < 0.005) continue; // sub-0.5% is below the noise floor
+        if (!best || rate > best.errorRate) {
+          best = { child: ed.child, errorRate: rate };
+        }
+      }
+      if (best) out.set(parent, best);
+    }
+    return out;
+  }, [edges]);
+
   // Group time-series buckets by service for sparklines
   const sparksByService = useMemo(() => {
     const byService = new Map<string, { t: number; v: number }[]>();
@@ -358,7 +444,8 @@ export default function HomePage() {
   }, [summaries, sort]);
 
   // Convert total requests over range → requests per minute
-  const rangeMinutes = relativeTimeMs(range) / 60_000;
+  const rangeMs = relativeTimeMs(range);
+  const rangeMinutes = rangeMs / 60_000;
   function reqPerMin(totalRequests: number): number {
     return rangeMinutes > 0 ? totalRequests / rangeMinutes : 0;
   }
@@ -510,6 +597,66 @@ export default function HomePage() {
                       >
                         <span className={s.svcDot} style={{ background: color }} />
                         <span className={s.svcName}>{svc.service}</span>
+                        {(() => {
+                          // Stale-row indicator: when the newest span
+                          // for this service is older than ~25% of
+                          // the lookback window, the row is showing
+                          // residue, not live data. Pin a small
+                          // "last seen Ns ago" pill so the user knows
+                          // they're looking at a snapshot of a
+                          // service that's stopped reporting.
+                          const stale = staleAge(svc.lastSeenMs, rangeMs, lastRefresh);
+                          if (!stale) return null;
+                          return (
+                            <span
+                              className={s.stalePill}
+                              title={
+                                'This service has not emitted a span recently — the row is residue from earlier in the window. ' +
+                                'Click in for the per-minute timeline.'
+                              }
+                            >
+                              last seen {fmtAgo(stale.ageMs)}
+                            </span>
+                          );
+                        })()}
+                        {(() => {
+                          // Root-cause hint: only show when this row
+                          // is itself anomalous (warn / critical) AND
+                          // there's a downstream edge with meaningful
+                          // errors. Without the row-level gate every
+                          // service that calls anything erroring
+                          // would carry a hint and the column gets
+                          // noisy.
+                          const noisy =
+                            health.bucket === 'warn' ||
+                            health.bucket === 'critical' ||
+                            health.bucket === 'traffic_drop' ||
+                            health.bucket === 'silent';
+                          if (!noisy) return null;
+                          const hint = rootCauseHints.get(svc.service);
+                          if (!hint) return null;
+                          // Don't suggest the row's own service.
+                          if (hint.child === svc.service) return null;
+                          const pct = (hint.errorRate * 100).toFixed(1);
+                          return (
+                            <span
+                              className={s.rootCauseHint}
+                              title={
+                                `Outgoing calls from ${svc.service} to ${hint.child} are erroring at ${pct}% — ` +
+                                `this row is likely red because of a downstream cascade. Click ${hint.child} to drill in.`
+                              }
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                navigate(
+                                  `/service/${encodeURIComponent(hint.child)}${drillSuffix}`,
+                                );
+                              }}
+                            >
+                              → likely {hint.child}
+                            </span>
+                          );
+                        })()}
                       </Link>
                     </td>
                     <td className={s.num}>
@@ -517,7 +664,7 @@ export default function HomePage() {
                       <DeltaChip
                         curr={reqPerMin(svc.requests)}
                         prev={prevReqPerMin}
-                        mode="relNeutral"
+                        mode="rateDrop"
                         threshold={25}
                       />
                     </td>

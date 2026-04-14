@@ -95,6 +95,14 @@ export interface ServiceSummary {
   p50Us: number;
   p95Us: number;
   p99Us: number;
+  /** Epoch ms of the most-recent span we saw for this service in the
+   *  current window. Drives the "last seen Ns ago" stale-row pill on
+   *  the Home catalog: when a service has been silent for more than
+   *  ~25% of the lookback window the row is showing residue rather
+   *  than live data, and the user needs to know. Optional so existing
+   *  callers (cached panel reads, scheduled-search consumers) keep
+   *  working without immediate schema updates. */
+  lastSeenMs?: number;
 }
 
 /** One time bucket of per-service aggregates; drives sparklines + RED charts. */

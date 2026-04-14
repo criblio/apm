@@ -179,7 +179,8 @@ export function serviceSummary(service?: string): string {
                 errors=countif(is_error),
                 p50_us=percentile(dur_us, 50),
                 p95_us=percentile(dur_us, 95),
-                p99_us=percentile(dur_us, 99)
+                p99_us=percentile(dur_us, 99),
+                last_seen=max(_time)
       by svc
     | extend error_rate=toreal(errors)/toreal(requests)
     | sort by requests desc`;

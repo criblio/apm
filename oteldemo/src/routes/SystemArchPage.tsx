@@ -195,25 +195,42 @@ export default function SystemArchPage() {
     return m;
   }, [buckets]);
 
-  // Summary count prefers the services we have stats for, falling back to edges
+  // Summary count: current services + edge endpoints + any
+  // prior-window service that crossed the ghost-node threshold and
+  // will be drawn on the graph below.
   const serviceNames = new Set<string>();
   for (const sv of summaries) serviceNames.add(sv.service);
   for (const e of edges) {
     serviceNames.add(e.parent);
     serviceNames.add(e.child);
   }
+  for (const sv of prevSummaries) {
+    if (sv.requests >= 50 && !servicesMap.has(sv.service)) {
+      serviceNames.add(sv.service);
+    }
+  }
 
-  // Count unhealthy services for the toolbar summary. Now covers
-  // traffic-drop services too so the count matches what the user
-  // sees visually — a kafka-lag'd service with 0 errors still
-  // counts because its halo will be purple.
-  const unhealthyCount = summaries.filter((sv) => {
-    const h = serviceHealth(sv, prevServicesMap.get(sv.service));
+  // Count unhealthy services for the toolbar summary. Includes
+  // traffic-drop and silent (ghost) services so the count matches
+  // what the user sees visually — a kafka-lag'd service with 0
+  // errors still counts because its halo is purple, and a
+  // silently-gone service still counts because it's drawn as a
+  // ghost. Silent services are computed against the union of
+  // current and prior summaries so the prior-only ghost nodes are
+  // included in the total.
+  const allSvcNames = new Set<string>([
+    ...servicesMap.keys(),
+    ...prevServicesMap.keys(),
+  ]);
+  const unhealthyCount = Array.from(allSvcNames).filter((name) => {
+    const cur = servicesMap.get(name);
+    const h = serviceHealth(cur, prevServicesMap.get(name));
     return (
       h.bucket === 'critical' ||
       h.bucket === 'warn' ||
       h.bucket === 'watch' ||
-      h.bucket === 'traffic_drop'
+      h.bucket === 'traffic_drop' ||
+      h.bucket === 'silent'
     );
   }).length;
 
