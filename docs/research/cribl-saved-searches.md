@@ -170,7 +170,7 @@ interface SavedSearch {
   token in `localStorage` under `@@auth0spajs@@::...::...`.
 - Each API call is made with `Authorization: Bearer <jwt>`.
 - **For our pack**, the iframe fetch proxy described in
-  `oteldemo/AGENTS.md` injects this header automatically. We already
+  `AGENTS.md` injects this header automatically. We already
   rely on this for `/search/jobs` — same mechanism applies to
   `/search/saved`.
 - Research limitation: `fetch()` from `page.evaluate()` in a driven
@@ -447,7 +447,7 @@ resolved.
 
 1. **Write the provisioner.** A node script under `scripts/` that:
    - Loads a declarative config (e.g.
-     `oteldemo/config/provisioned-searches.yml`) listing the
+     `config/provisioned-searches.yml`) listing the
      scheduled searches the app needs
    - Reads the Auth0 token from `localStorage` (for dev) or from
      the platform fetch proxy (at app runtime)
