@@ -1,0 +1,405 @@
+The payment service is failing on gRPC Charge calls. Investigate the root cause in the last 15 minutes.
+AI
+
+I’m going to (1) quantify how often payment spans are failing overall and specifically on gRPC Charge calls in the last 15 minutes, then (2) pull a few representative failing traces and inspect which downstream span/service is the real source of the error.
+
+Payment service gRPC method/status breakdown (errors, error rate, p95)
+-15m to now · 5 rows · 1767ms
+cribl dataset=otel | where isnotnull(end_time_unix_nano)
+| extend iso_time=strftime(_time, "%Y-%m-%dT%H:%M:%S.%LZ"),
+         svc=tostring(resource.attributes['service.name']),
+         rpc_method=tostring(attributes['rpc.method']),
+         rpc_service=tostring(attributes['rpc.service']),
+         grpc_status=tostring(attributes['rpc.grpc.status_code']),
+         is_error=(tostring(status.code)=="2"),
+         dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0
+| where svc=="payment"
+| summarize spans=count(), errors=countif(is_error), p95_us=percentile(dur_us,95) by rpc_service, rpc_method, grpc_status
+| extend error_rate=round(100.0*errors/spans,2)
+| sort by errors desc
+| limit 100
+ERROR_RATE	ERRORS	GRPC_STATUS	P95_US	RPC_METHOD	RPC_SERVICE	SPANS
+100	27		15612.928	Charge	oteldemo.PaymentService	27
+100	1	14	8531164200.192	EventStream	flagd.evaluation.v1.Service	1
+0	0	0	83782.4	ResolveFloat	flagd.evaluation.v1.Service	1
+0	0	0	7862.016	Charge	oteldemo.PaymentService	29
+0	0		8418.304			58
+AI
+
+The breakdown shows 27 error spans on payment’s gRPC `Charge` in the last 15 minutes (and 29 successful). Next I’ll pull the most recent failing Charge spans to see the exact status message/attributes and extract a few trace_ids to identify which downstream span/service is actually failing.
+
+Recent failing payment Charge spans (to pick representative trace_ids)
+-15m to now · 27 rows · 1827ms
+cribl dataset=otel | where isnotnull(end_time_unix_nano)
+| extend iso_time=strftime(_time, "%Y-%m-%dT%H:%M:%S.%LZ"),
+         svc=tostring(resource.attributes['service.name']),
+         rpc_method=tostring(attributes['rpc.method']),
+         rpc_service=tostring(attributes['rpc.service']),
+         grpc_status=tostring(attributes['rpc.grpc.status_code']),
+         is_error=(tostring(status.code)=="2"),
+         dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
+         pod=tostring(resource.attributes['k8s.pod.name']),
+         deploy=tostring(resource.attributes['k8s.deployment.name']),
+         ver=tostring(resource.attributes['service.version'])
+| where svc=="payment" and rpc_method=="Charge" and is_error
+| project iso_time, trace_id, span_id, parent_span_id, kind, dur_us, status_message=status.message, grpc_status, rpc_service, rpc_method, pod, deploy, ver, attributes
+| sort by _time desc
+| limit 50
+ATTRIBUTES	DEPLOY	DUR_US	GRPC_STATUS	ISO_TIME	KIND	PARENT_SPAN_ID	POD
+{"rpc.system":"grpc","rpc.method":"Charge","rpc.service":"oteldemo.PaymentService","app.payment.amount":"418.88","grpc.error_name":"Error","grpc.error_message":"Payment request failed. Invalid token. app.loyalty.level=gold","unsanitized_span_name":"grpc.oteldemo.PaymentService/Charge"}	payment	95687.168		2026-04-12T21:32:17.923Z	2	eeb7c82089e7d131	payment-786d4cc9bd-k56jj
+{"rpc.system":"grpc","rpc.method":"Charge","rpc.service":"oteldemo.PaymentService","app.payment.amount":"1094.70","grpc.error_name":"Error","grpc.error_message":"Payment request failed. Invalid token. app.loyalty.level=gold","unsanitized_span_name":"grpc.oteldemo.PaymentService/Charge"}	payment	3534.08		2026-04-12T21:32:33.786Z	2	06c171f645a9ca71	payment-786d4cc9bd-k56jj
+{"rpc.system":"grpc","rpc.method":"Charge","rpc.service":"oteldemo.PaymentService","app.payment.amount":"1187.52","grpc.error_name":"Error","grpc.error_message":"Payment request failed. Invalid token. app.loyalty.level=gold","unsanitized_span_name":"grpc.oteldemo.PaymentService/Charge"}	payment	8787.712		2026-04-12T21:32:44.423Z	2	95fa2e274fbfd07a	payment-786d4cc9bd-k56jj
+{"rpc.system":"grpc","rpc.method":"Charge","rpc.service":"oteldemo.PaymentService","app.payment.amount":"576.58","grpc.error_name":"Error","grpc.error_message":"Payment request failed. Invalid token. app.loyalty.level=gold","unsanitized_span_name":"grpc.oteldemo.PaymentService/Charge"}	payment	6756.608		2026-04-12T21:33:15.343Z	2	ae51890e206b4367	payment-786d4cc9bd-k56jj
+{"rpc.system":"grpc","rpc.method":"Charge","rpc.service":"oteldemo.PaymentService","app.payment.amount":"110.95","grpc.error_name":"Error","grpc.error_message":"Payment request failed. Invalid token. app.loyalty.level=gold","unsanitized_span_name":"grpc.oteldemo.PaymentService/Charge"}	payment	4529.152		2026-04-12T21:33:21.774Z	2	d1c65c468dffedd9	payment-786d4cc9bd-k56jj
+{"rpc.system":"grpc","rpc.method":"Charge","rpc.service":"oteldemo.PaymentService","app.payment.amount":"933.96","grpc.error_name":"Error","grpc.error_message":"Payment request failed. Invalid token. app.loyalty.level=gold","unsanitized_span_name":"grpc.oteldemo.PaymentService/Charge"}	payment	15612.928		2026-04-12T21:33:34.619Z	2	0c7316da2999b767	payment-786d4cc9bd-k56jj
+{"rpc.system":"grpc","rpc.method":"Charge","rpc.service":"oteldemo.PaymentService","app.payment.amount":"499.78","grpc.error_name":"Error","grpc.error_message":"Payment request failed. Invalid token. app.loyalty.level=gold","unsanitized_span_name":"grpc.oteldemo.PaymentService/Charge"}	payment	4918.528		2026-04-12T21:33:34.619Z	2	14364b23fb846e2b	payment-786d4cc9bd-k56jj
+{"rpc.system":"grpc","rpc.method":"Charge","rpc.service":"oteldemo.PaymentService","app.payment.amount":"583.52","grpc.error_name":"Error","grpc.error_message":"Payment request failed. Invalid token. app.loyalty.level=gold","unsanitized_span_name":"grpc.oteldemo.PaymentService/Charge"}	payment	6411.008		2026-04-12T21:34:07.744Z	2	31368af3874ea315	payment-786d4cc9bd-k56jj
+{"rpc.system":"grpc","rpc.method":"Charge","rpc.service":"oteldemo.PaymentService","app.payment.amount":"437.88","grpc.error_name":"Error","grpc.error_message":"Payment request failed. Invalid token. app.loyalty.level=gold","unsanitized_span_name":"grpc.oteldemo.PaymentService/Charge"}	payment	7471.104		2026-04-12T21:34:26.022Z	2	2cb6c51dc3a191cd	payment-786d4cc9bd-k56jj
+{"rpc.system":"grpc","rpc.method":"Charge","rpc.service":"oteldemo.PaymentService","app.payment.amount":"1440.97","grpc.error_name":"Error","grpc.error_message":"Payment request failed. Invalid token. app.loyalty.level=gold","unsanitized_span_name":"grpc.oteldemo.PaymentService/Charge"}	payment	2216.96		2026-04-12T21:34:31.441Z	2	c319d28a918797d8	payment-786d4cc9bd-k56jj
+{"rpc.system":"grpc","rpc.method":"Charge","rpc.service":"oteldemo.PaymentService","app.payment.amount":"1475.68","grpc.error_name":"Error","grpc.error_message":"Payment request failed. Invalid token. app.loyalty.level=gold","unsanitized_span_name":"grpc.oteldemo.PaymentService/Charge"}	payment	6384.384		2026-04-12T21:34:41.688Z	2	27aab81b4f8ee5b6	payment-786d4cc9bd-k56jj
+{"rpc.system":"grpc","rpc.method":"Charge","rpc.service":"oteldemo.PaymentService","app.payment.amount":"756.13","grpc.error_name":"Error","grpc.error_message":"Payment request failed. Invalid token. app.loyalty.level=gold","unsanitized_span_name":"grpc.oteldemo.PaymentService/Charge"}	payment	14326.272		2026-04-12T21:34:54.740Z	2	3c24e9b911f140ba	payment-786d4cc9bd-k56jj
+{"rpc.system":"grpc","rpc.method":"Charge","rpc.service":"oteldemo.PaymentService","app.payment.amount":"1344.15","grpc.error_name":"Error","grpc.error_message":"Payment request failed. Invalid token. app.loyalty.level=gold","unsanitized_span_name":"grpc.oteldemo.PaymentService/Charge"}	payment	10600.192		2026-04-12T21:35:24.647Z	2	08d95a8f42f1d0a1	payment-786d4cc9bd-k56jj
+{"rpc.system":"grpc","rpc.method":"Charge","rpc.service":"oteldemo.PaymentService","app.payment.amount":"357.51","grpc.error_name":"Error","grpc.error_message":"Payment request failed. Invalid token. app.loyalty.level=gold","unsanitized_span_name":"grpc.oteldemo.PaymentService/Charge"}	payment	3408.64		2026-04-12T21:35:49.934Z	2	5e1c103257afa404	payment-786d4cc9bd-k56jj
+{"rpc.system":"grpc","rpc.method":"Charge","rpc.service":"oteldemo.PaymentService","app.payment.amount":"371.85","grpc.error_name":"Error","grpc.error_message":"Payment request failed. Invalid token. app.loyalty.level=gold","unsanitized_span_name":"grpc.oteldemo.PaymentService/Charge"}	payment	4321.536		2026-04-12T21:35:55.960Z	2	c63be5d083d28b2b	payment-786d4cc9bd-k56jj
+{"rpc.system":"grpc","rpc.method":"Charge","rpc.service":"oteldemo.PaymentService","app.payment.amount":"49.90","grpc.error_name":"Error","grpc.error_message":"Payment request failed. Invalid token. app.loyalty.level=gold","unsanitized_span_name":"grpc.oteldemo.PaymentService/Charge"}	payment	8907.008		2026-04-12T21:37:37.739Z	2	644b6d1067dc16c8	payment-786d4cc9bd-k56jj
+{"rpc.system":"grpc","rpc.method":"Charge","rpc.service":"oteldemo.PaymentService","app.payment.amount":"694.70","grpc.error_name":"Error","grpc.error_message":"Payment request failed. Invalid token. app.loyalty.level=gold","unsanitized_span_name":"grpc.oteldemo.PaymentService/Charge"}	payment	1996.544		2026-04-12T21:37:53.396Z	2	3a558343b186421e	payment-786d4cc9bd-k56jj
+{"rpc.system":"grpc","rpc.method":"Charge","rpc.service":"oteldemo.PaymentService","app.payment.amount":"7403.80","grpc.error_name":"Error","grpc.error_message":"Payment request failed. Invalid token. app.loyalty.level=gold","unsanitized_span_name":"grpc.oteldemo.PaymentService/Charge"}	payment	8039.424		2026-04-12T21:38:16.279Z	2	2bba535e41d59122	payment-786d4cc9bd-k56jj
+{"rpc.system":"grpc","rpc.method":"Charge","rpc.service":"oteldemo.PaymentService","app.payment.amount":"1395.53","grpc.error_name":"Error","grpc.error_message":"Payment request failed. Invalid token. app.loyalty.level=gold","unsanitized_span_name":"grpc.oteldemo.PaymentService/Charge"}	payment	7317.248		2026-04-12T21:39:56.064Z	2	1a1b13cc642d7a01	payment-786d4cc9bd-k56jj
+{"rpc.system":"grpc","rpc.method":"Charge","rpc.service":"oteldemo.PaymentService","app.payment.amount":"1869.51","grpc.error_name":"Error","grpc.error_message":"Payment request failed. Invalid token. app.loyalty.level=gold","unsanitized_span_name":"grpc.oteldemo.PaymentService/Charge"}	payment	3837.952		2026-04-12T21:40:01.484Z	2	7f5d0322fcd17738	payment-786d4cc9bd-k56jj
+… 7 more rows
+AI
+
+I’ve confirmed the failures are concentrated on payment gRPC Charge spans, and the error attributes repeatedly mention “Invalid token”. Next I’ll inspect one representative failing trace end-to-end to see where that invalid token is introduced (upstream caller vs. payment vs. downstream dependency), then I’ll render that trace waterfall.
+
+Spans within a representative failing trace_id (inspect error origin)
+-15m to now · 43 rows · 1554ms
+cribl dataset=otel | where isnotnull(end_time_unix_nano)
+| extend iso_time=strftime(_time, "%Y-%m-%dT%H:%M:%S.%LZ"),
+         svc=tostring(resource.attributes['service.name']),
+         is_error=(tostring(status.code)=="2"),
+         kind=tostring(kind),
+         rpc_method=tostring(attributes['rpc.method']),
+         rpc_service=tostring(attributes['rpc.service']),
+         dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0
+| where trace_id=="f9402d17e82fa2990d74951a2da7858f"
+| project iso_time, svc, name, kind, is_error, dur_us, span_id, parent_span_id, status_message=status.message, rpc_service, rpc_method, attributes
+| sort by _time asc
+| limit 100
+ATTRIBUTES	DUR_US	IS_ERROR	ISO_TIME	KIND	NAME	PARENT_SPAN_ID	RPC_METHOD
+{"rpc.system":"grpc","rpc.service":"oteldemo.CurrencyService","rpc.method":"Convert","rpc.grpc.status_code":0,"app.currency.conversion.from":"USD","app.currency.conversion.to":"USD","unsanitized_span_name":"Currency/Convert"}	8980.992	false	2026-04-12T21:32:12.709Z	2	oteldemo.CurrencyService/Convert	b9d1aa7729086e22	Convert
+{"rpc.system":"grpc","rpc.service":"oteldemo.CurrencyService","rpc.method":"Convert","rpc.grpc.status_code":0,"app.currency.conversion.from":"USD","app.currency.conversion.to":"USD","unsanitized_span_name":"Currency/Convert"}	603.392	false	2026-04-12T21:32:12.709Z	2	oteldemo.CurrencyService/Convert	ddc3a30113c2588e	Convert
+{"rpc.system":"grpc","rpc.service":"oteldemo.CurrencyService","rpc.method":"Convert","rpc.grpc.status_code":0,"app.currency.conversion.from":"USD","app.currency.conversion.to":"USD","unsanitized_span_name":"Currency/Convert"}	766.72	false	2026-04-12T21:32:12.709Z	2	oteldemo.CurrencyService/Convert	514a227cff7a1a96	Convert
+{"rpc.system":"grpc","rpc.service":"oteldemo.CurrencyService","rpc.method":"Convert","rpc.grpc.status_code":0,"app.currency.conversion.from":"USD","app.currency.conversion.to":"USD","unsanitized_span_name":"Currency/Convert"}	894.208	false	2026-04-12T21:32:12.908Z	2	oteldemo.CurrencyService/Convert	2bbb3913b844d849	Convert
+{"http.method":"POST","http.url":"http://frontend-proxy:8080/api/checkout","user_agent.original":"python-requests/2.32.5","http.status_code":500}	391945.472	true	2026-04-12T21:32:13.310Z	3	POST	4c4790a50ea639e0	
+{"user.id":"1171e2be-36b7-11f1-a171-0a1f448df8d9","item.count":3}	437961.728	false	2026-04-12T21:32:13.311Z	1	user_checkout_multi		
+{"server.address":"cart","server.port":8080,"http.request.method":"POST","url.scheme":"http","url.path":"/oteldemo.CartService/GetCart","network.protocol.version":"2","user_agent.original":"grpc-go/1.78.0","grpc.method":"/oteldemo.CartService/GetCart","app.user.id":"1171e2be-36b7-11f1-a171-0a1f448df8d9","app.cart.items.count":5,"grpc.status_code":"0","http.route":"/oteldemo.CartService/GetCart","http.response.status_code":200}	465.408	false	2026-04-12T21:32:14.304Z	2	POST /oteldemo.CartService/GetCart	f17c131c3ab42754	
+{}	998.4	false	2026-04-12T21:32:14.314Z	1	resolveFloat	8cced3763e8d5e29	
+{"feature_flag.key":"paymentFailure","feature_flag.result.variant":"50%","feature_flag.provider.name":"flagd"}	5755.648	false	2026-04-12T21:32:14.314Z	2	resolveFloat	39c537a4b8958ae5	
+{"net.peer.name":"10.244.1.7","net.peer.port":43634,"rpc.system":"grpc","rpc.service":"flagd.evaluation.v1.Service","rpc.method":"ResolveFloat","rpc.grpc.status_code":0}	6297.6	false	2026-04-12T21:32:14.314Z	2	flagd.evaluation.v1.Service/ResolveFloat	02f70b6dcff7e9f3	ResolveFloat
+{"http.protocol":"HTTP/1.1","upstream_address":"10.96.203.238:8080","peer.address":"10.96.203.238:8080","component":"proxy","upstream_cluster":"frontend","upstream_cluster.name":"frontend","http.status_code":"500","response_flags":"-","error":"true"}	389101.056	true	2026-04-12T21:32:14.918Z	3	router frontend egress	6b75de59ce33f7fe	
+{"node_id":"","zone":"","guid:x-request-id":"80e544db-9e69-9fc9-9e6e-f3574f3685e5","http.url":"http://frontend-proxy:8080/api/checkout","http.method":"POST","downstream_cluster":"-","user_agent":"python-requests/2.32.5","http.protocol":"HTTP/1.1","peer.address":"10.244.2.4","request_size":"404","response_size":"21","component":"proxy","upstream_cluster":"frontend","upstream_cluster.name":"frontend","http.status_code":"500","response_flags":"-","error":"true","unsanitized_span_name":"ingress"}	389294.08	true	2026-04-12T21:32:14.918Z	2	POST	30b71c8e02c33ef5	
+{"rpc.service":"oteldemo.CartService","rpc.method":"GetCart","rpc.system":"grpc","server.address":"10.96.16.160","server.port":8080,"rpc.grpc.status_code":0}	11890.176	false	2026-04-12T21:32:15.107Z	3	oteldemo.CartService/GetCart	a57827b804b73a5e	GetCart
+{"rpc.service":"oteldemo.ProductCatalogService","rpc.method":"GetProduct","rpc.system":"grpc","server.address":"10.96.31.125","server.port":8080,"rpc.grpc.status_code":0}	1848.32	false	2026-04-12T21:32:15.108Z	3	oteldemo.ProductCatalogService/GetProduct	a57827b804b73a5e	GetProduct
+{"rpc.service":"oteldemo.CurrencyService","rpc.method":"Convert","rpc.system":"grpc","server.address":"10.96.141.127","server.port":8080,"rpc.grpc.status_code":0}	40212.992	false	2026-04-12T21:32:15.108Z	3	oteldemo.CurrencyService/Convert	a57827b804b73a5e	Convert
+{"rpc.service":"oteldemo.ProductCatalogService","rpc.method":"GetProduct","rpc.system":"grpc","server.address":"10.96.31.125","server.port":8080,"rpc.grpc.status_code":0}	2161.408	false	2026-04-12T21:32:15.108Z	3	oteldemo.ProductCatalogService/GetProduct	a57827b804b73a5e	GetProduct
+{"rpc.service":"oteldemo.CurrencyService","rpc.method":"Convert","rpc.system":"grpc","server.address":"10.96.141.127","server.port":8080,"rpc.grpc.status_code":0}	1409.28	false	2026-04-12T21:32:15.108Z	3	oteldemo.CurrencyService/Convert	a57827b804b73a5e	Convert
+{"rpc.service":"oteldemo.ProductCatalogService","rpc.method":"GetProduct","rpc.system":"grpc","server.address":"10.96.31.125","server.port":8080,"rpc.grpc.status_code":0}	652.288	false	2026-04-12T21:32:15.108Z	3	oteldemo.ProductCatalogService/GetProduct	a57827b804b73a5e	GetProduct
+{"rpc.service":"oteldemo.CurrencyService","rpc.method":"Convert","rpc.system":"grpc","server.address":"10.96.141.127","server.port":8080,"rpc.grpc.status_code":0}	1415.424	false	2026-04-12T21:32:15.108Z	3	oteldemo.CurrencyService/Convert	a57827b804b73a5e	Convert
+{"rpc.service":"oteldemo.CurrencyService","rpc.method":"Convert","rpc.system":"grpc","server.address":"10.96.141.127","server.port":8080,"rpc.grpc.status_code":0}	13373.952	false	2026-04-12T21:32:15.108Z	3	oteldemo.CurrencyService/Convert	a57827b804b73a5e	Convert
+… 23 more rows
+AI
+
+Next I’ll test whether these payment Charge failures correlate with the paymentFailure feature flag (served by flagd) by joining payment Charge spans to flagd resolveFloat spans on the same trace_id and summarizing outcomes by flag variant.Next I’ll test whether these failures correlate with the paymentFailure feature flag evaluation (the trace we inspected shows flagd resolveFloat for paymentFailure variant “50%”). If errors align to that variant, it strongly suggests an intentional failure path rather than an external dependency outage.
+
+Correlate payment Charge errors with flagd paymentFailure feature-flag variant
+-15m to now · 3 rows · 1996ms
+cribl dataset=otel | where isnotnull(end_time_unix_nano)
+| extend svc=tostring(resource.attributes['service.name']),
+         rpc_method=tostring(attributes['rpc.method']),
+         is_error=(tostring(status.code)=="2")
+| where svc=="payment" and rpc_method=="Charge"
+| project trace_id, outcome=iff(is_error,"error","success")
+| join kind=leftouter (
+    cribl dataset=otel | where isnotnull(end_time_unix_nano)
+    | extend svc=tostring(resource.attributes['service.name']),
+             flag_key=tostring(attributes['feature_flag.key']),
+             flag_variant=tostring(attributes['feature_flag.result.variant']),
+             span_name=tostring(name)
+    | where svc=="flagd" and span_name=="resolveFloat" and flag_key=="paymentFailure"
+    | project trace_id, flag_variant
+  ) on trace_id
+| summarize traces=count() by outcome, flag_variant
+| sort by traces desc
+| limit 100
+OUTCOME	TRACES	FLAG_VARIANT
+error	26	
+success	22	
+error	1	50%
+AI
+
+That correlation is inconclusive because many payment Charge traces don’t have the paymentFailure feature-flag annotation on a flagd span (the flag evaluation may be happening in a different span/service). Next I’ll re-run the correlation by looking for any span in the trace that carries feature_flag.key="paymentFailure" and join that back to payment Charge outcomes.
+
+Correlate payment Charge errors with any paymentFailure feature-flag variant in the trace
+-15m to now · 3 rows · 1929ms
+cribl dataset=otel | where isnotnull(end_time_unix_nano)
+| extend svc=tostring(resource.attributes['service.name']),
+         rpc_method=tostring(attributes['rpc.method']),
+         is_error=(tostring(status.code)=="2")
+| where svc=="payment" and rpc_method=="Charge"
+| project trace_id, outcome=iff(is_error,"error","success")
+| join kind=leftouter (
+    cribl dataset=otel | where isnotnull(end_time_unix_nano)
+    | extend flag_key=tostring(attributes['feature_flag.key']),
+             flag_variant=tostring(attributes['feature_flag.result.variant'])
+    | where flag_key=="paymentFailure"
+    | project trace_id, flag_variant
+  ) on trace_id
+| summarize traces=count() by outcome, flag_variant
+| sort by traces desc
+| limit 100
+OUTCOME	TRACES	FLAG_VARIANT
+error	26	
+success	21	
+error	1	50%
+AI
+
+I’m going to (1) confirm whether the failures are isolated to a specific payment pod/version (canary-style issue) and (2) check for any payment log records mentioning “Invalid token” in the same window to validate the cause beyond span attributes.
+
+Payment Charge success/error split by pod and service.version
+-15m to now · 1 rows · 1702ms
+cribl dataset=otel | where isnotnull(end_time_unix_nano)
+| extend iso_time=strftime(_time, "%Y-%m-%dT%H:%M:%S.%LZ"),
+         svc=tostring(resource.attributes['service.name']),
+         pod=tostring(resource.attributes['k8s.pod.name']),
+         ver=tostring(resource.attributes['service.version']),
+         rpc_method=tostring(attributes['rpc.method']),
+         is_error=(tostring(status.code)=="2")
+| where svc=="payment" and rpc_method=="Charge"
+| summarize spans=count(), errors=countif(is_error) by pod, ver
+| extend error_rate=round(100.0*errors/spans,2)
+| sort by errors desc
+| limit 100
+ERROR_RATE	ERRORS	POD	SPANS	VER
+56.25	27	payment-786d4cc9bd-k56jj	48	2.2.0
+Payment logs containing 'Invalid token' (if logs are present in otel)
+-15m to now · 0 rows · 90ms
+cribl dataset=otel | where isnotnull(body)
+| extend iso_time=strftime(_time, "%Y-%m-%dT%H:%M:%S.%LZ"),
+         svc=tostring(resource.attributes['service.name'])
+| where svc=="payment" and tostring(body) != ""
+| where tostring(body) == "Invalid token" or tostring(body) like "%Invalid token%"
+| project iso_time, trace_id, span_id, body
+| sort by _time desc
+| limit 100
+Search job creation failed (400): {"status":"error","message":"{\"message\":\"mismatched input 'like' expecting {<EOF>, ';'}; token: like; line: 5 column: 60\",\"name\":\"KustoError\",\"line\":5,\"column\":60}"}
+AI
+
+The pod/version split is striking: all Charge traffic in the last 15 minutes is on a single pod payment-786d4cc9bd-k56jj running service.version=2.2.0, with an elevated error rate (27/48 = 56.25%).
+
+My attempt to search logs for “Invalid token” needs a small syntax adjustment (I’ll switch to an explicit string function rather than like).I found a strong signal that all Charge errors are coming from a single payment pod/version, which points to a canary or a bad instance. I attempted to search payment logs for “Invalid token,” but the string operator I used isn’t supported in this KQL dialect—so I’ll pivot to what we can reliably query: the span attributes/status messages that already contain “Invalid token,” and quantify which pod/version those come from. Next I’ll also identify the upstream caller service(s) that are receiving the propagated failure (likely checkout/frontend) and pick a representative failing trace to render.
+
+Top status.message values for failing payment Charge spans
+-15m to now · 1 rows · 1940ms
+cribl dataset=otel | where isnotnull(end_time_unix_nano)
+| extend iso_time=strftime(_time, "%Y-%m-%dT%H:%M:%S.%LZ"),
+         svc=tostring(resource.attributes['service.name']),
+         rpc_method=tostring(attributes['rpc.method']),
+         rpc_service=tostring(attributes['rpc.service']),
+         is_error=(tostring(status.code)=="2"),
+         status_message=tostring(status.message)
+| where svc=="payment" and rpc_method=="Charge" and is_error
+| summarize errors=count() by status_message, rpc_service
+| sort by errors desc
+| limit 20
+ERRORS	RPC_SERVICE	STATUS_MESSAGE
+27	oteldemo.PaymentService	
+AI
+
+Next I’m going to extract the actual gRPC error message fields from the failing payment Charge spans (the error text appears to live in span attributes, not status.message), quantify the dominant error, then render a representative failing trace waterfall to show how it propagates upstream.
+
+Error message distribution for failing payment Charge spans (grpc.error_message)
+-15m to now · 1 rows · 1959ms
+cribl dataset=otel | where isnotnull(end_time_unix_nano)
+| extend svc=tostring(resource.attributes['service.name']),
+         rpc_method=tostring(attributes['rpc.method']),
+         is_error=(tostring(status.code)=="2"),
+         grpc_error_message=tostring(attributes['grpc.error_message']),
+         grpc_error_name=tostring(attributes['grpc.error_name'])
+| where svc=="payment" and rpc_method=="Charge" and is_error
+| summarize errors=count() by grpc_error_name, grpc_error_message
+| sort by errors desc
+| limit 20
+ERRORS	GRPC_ERROR_MESSAGE	GRPC_ERROR_NAME
+27	Payment request failed. Invalid token. app.loyalty.level=gold	Error
+AI
+
+All observed payment Charge failures share the same error message: “Payment request failed. Invalid token. app.loyalty.level=gold”.
+
+Now I’ll identify which upstream service is calling payment/Charge and receiving the error by finding parent spans (same trace_id + parent_span_id) and summarizing the parent service names for the failing Charge spans.
+
+Upstream caller services for failing payment Charge spans (via parent span join)
+-15m to now · 1 rows · 2613ms
+cribl dataset=otel | where isnotnull(end_time_unix_nano)
+| extend svc=tostring(resource.attributes['service.name']),
+         rpc_method=tostring(attributes['rpc.method']),
+         is_error=(tostring(status.code)=="2"),
+         parent=tostring(parent_span_id)
+| where svc=="payment" and rpc_method=="Charge" and is_error and parent != "" and isnotempty(parent)
+| project trace_id, parent
+| join kind=inner (
+    cribl dataset=otel | where isnotnull(end_time_unix_nano)
+    | extend psvc=tostring(resource.attributes['service.name']),
+             psid=tostring(span_id),
+             pname=tostring(name)
+    | project trace_id, psid, psvc, pname
+  ) on trace_id, $left.parent == $right.psid
+| summarize error_calls=count() by caller_service=psvc, caller_span=pname
+| sort by error_calls desc
+| limit 20
+CALLER_SERVICE	CALLER_SPAN	ERROR_CALLS
+checkout	oteldemo.PaymentService/Charge	27
+AI
+
+So the failures propagate directly back to checkout, which is making the PaymentService/Charge call.
+
+Next I’ll render a representative failing trace waterfall (the trace_id we already inspected), since it shows the flagd paymentFailure evaluation and the failing payment Charge span with “Invalid token.”
+
+🧵 Trace: Representative failing checkout → payment Charge trace showing invalid token error and flag evaluation
+f9402d17e82fa2990d74951a2da7858f · 43 spans · 438.0ms · 10 errors
+Service / Operation
+0 μs
+87.59 ms
+175.18 ms
+262.78 ms
+350.37 ms
+437.96 ms
+load-generator
+user_checkout_multi
+437.96 ms
+load-generator
+POST
+391.95 ms
+frontend-proxy
+POST
+389.29 ms
+frontend-proxy
+router frontend egress
+389.10 ms
+frontend
+POST /api/checkout
+386.55 ms
+frontend
+POST /api/checkout
+386.21 ms
+frontend
+executing api route (pages) /api/checkout
+377.03 ms
+frontend
+oteldemo.CheckoutService/PlaceOrder
+339.84 ms
+checkout
+oteldemo.CheckoutService/PlaceOrder
+294.52 ms
+checkout
+prepareOrderItemsAndShippingQuoteFromCart
+152.66 ms
+checkout
+oteldemo.CartService/GetCart
+cart
+POST /oteldemo.CartService/GetCart
+cart
+valkey-cart:6379
+checkout
+oteldemo.ProductCatalogService/GetProduct
+product-catalog
+oteldemo.ProductCatalogService/GetProduct
+product-catalog
+postgresql
+checkout
+oteldemo.CurrencyService/Convert
+40.21 ms
+currency
+oteldemo.CurrencyService/Convert
+checkout
+oteldemo.ProductCatalogService/GetProduct
+product-catalog
+oteldemo.ProductCatalogService/GetProduct
+product-catalog
+postgresql
+checkout
+oteldemo.CurrencyService/Convert
+currency
+oteldemo.CurrencyService/Convert
+checkout
+oteldemo.ProductCatalogService/GetProduct
+product-catalog
+oteldemo.ProductCatalogService/GetProduct
+product-catalog
+postgresql
+checkout
+oteldemo.CurrencyService/Convert
+currency
+oteldemo.CurrencyService/Convert
+checkout
+POST
+53.03 ms
+shipping
+POST /get-quote
+shipping
+POST
+quote
+POST /getquote
+quote
+{closure}
+quote
+calculate-quote
+checkout
+oteldemo.CurrencyService/Convert
+currency
+oteldemo.CurrencyService/Convert
+checkout
+oteldemo.PaymentService/Charge
+116.17 ms
+payment
+oteldemo.PaymentService/Charge
+95.69 ms
+payment
+charge
+92.18 ms
+payment
+flagd.evaluation.v1.Service/ResolveFloat
+83.78 ms
+flagd
+flagd.evaluation.v1.Service/ResolveFloat
+flagd
+resolveFloat
+flagd
+resolveFloat
+AI
+
+I have enough evidence to explain the current failure mode: - Errors are confined to payment gRPC Charge with a consistent “Invalid token” error message. - All Charge traffic (and all Charge errors) is on a single pod/version (payment 2.2.0, payment-786d4cc9bd-k56jj), consistent with a bad rollout or single-instance configuration/secret issue. - The error propagates back to checkout as the direct caller, and a representative trace shows flag evaluation + the failing Charge.
+
+I’m going to summarize findings and the most likely root cause hypothesis.
+
+📋 Investigation summary
+ERROR SCOPE (LAST 15 MINUTES)
+
+- payment gRPC rpc.method=Charge: 56 total spans, 27 error spans (≈48.21% error rate) - Failures propagate to the direct caller `checkout` (parent span join shows 27/27 failing Charge spans have parent service checkout, span oteldemo.PaymentService/Charge).
+
+FAILURE SIGNATURE
+
+- All failing payment Charge spans share the same error fields: - attributes['grpc.error_name'] = "Error" - attributes['grpc.error_message'] = "Payment request failed. Invalid token. app.loyalty.level=gold" - status.message is empty on these spans; the actionable error text is in span attributes.
+
+INSTANCE / ROLLOUT CONCENTRATION
+
+- Charge traffic is concentrated on a single instance: - k8s.pod.name: `payment-786d4cc9bd-k56jj` - service.version: `2.2.0` - On that pod/version: 48 Charge spans, 27 errors (≈56.25% error rate) - This strongly suggests a bad rollout / bad instance configuration (e.g., wrong/missing token secret, misconfigured auth env var) rather than a broad dependency outage.
+
+REPRESENTATIVE FAILING TRACE
+
+- Rendered trace: f9402d17e82fa2990d74951a2da7858f - Shows checkout calling payment Charge and receiving the “Invalid token” failure; also includes a flagd resolveFloat span for feature flag paymentFailure variant 50% within the same trace (useful for validating any intentional-failure path).
+
+CONCLUSION
+
+In the last 15 minutes, payment failures are isolated to gRPC Charge calls and consistently fail with an “Invalid token” error. Because all Charge traffic/errors are concentrated on a single payment pod running service.version=2.2.0, the most likely root cause is a misconfiguration or bad rollout on that instance (e.g., incorrect/rotated auth token/secret), with the error propagating upstream to checkout.
+
+AI

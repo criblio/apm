@@ -1,0 +1,552 @@
+[
+  {
+    "ts": "2026-04-12T15:59:57.621Z",
+    "method": "GET",
+    "url": "/api/v1/cloudConfig",
+    "postData": null,
+    "response": {
+      "status": 200,
+      "body": "{\"auth0Audience\":\"https://manage.cribl-staging.cloud\",\"auth0ClientId\":\"K2Zm9xEMIUTvyclZAGTXI9tUQ3nPlE8o\",\"auth0Domain\":\"login.cribl-staging.cloud\",\"authClient\":{\"audience\":\"https://manage.cribl-staging.cloud\",\"authority\":\"https://login.cribl-staging.cloud\",\"clientId\":\"K2Zm9xEMIUTvyclZAGTXI9tUQ3nPlE8o\",\"scope\":\"openid profile email offline_access\"},\"flagClientId\":\"6103141460c3fa280016b7bc\"}"
+    }
+  },
+  {
+    "ts": "2026-04-12T15:59:57.810Z",
+    "method": "GET",
+    "url": "/api/v1/system/info/cribl",
+    "postData": null,
+    "response": {
+      "status": 200,
+      "body": "{\"items\":[{\"apiPort\":9000,\"BUILD\":{\"VERSION\":\"4.18.0-dev-nightly.20260412T0356-710d2bce\",\"BRANCH\":\"dev\",\"TIMESTAMP\":\"2026-04-12T04:06:13.924Z\"},\"distMode\":\"master\",\"onlineDiag\":true,\"guid\":\"e484cee7-9328-41c3-9ac0-e54ac79e2d26\",\"license\":{\"type\":\"prod\",\"isRegistered\":false,\"limits\":{\"lake_access_groups\":1,\"sds\":1},\"isSplunkApp\":false},\"isCriblSandbox\":false,\"isFipsEnabled\":false,\"hasCloudWorkspace\":false,\"openssl\":{},\"isFedRampEnabled\":false,\"insightsEnabled\":true}],\"count\":1}"
+    }
+  },
+  {
+    "ts": "2026-04-12T15:59:57.909Z",
+    "method": "GET",
+    "url": "/api/v1/authorize/policy",
+    "postData": null,
+    "response": {
+      "status": 200,
+      "body": "{\"items\":[{\"object\":\"/products/edge/*\",\"actions\":[\"*\"]},{\"object\":\"/products/edge/*/\",\"actions\":[\"*\"]},{\"object\":\"/master/summary\",\"actions\":[\"GET\"]},{\"object\":\"/products/edge/*/summary\",\"actions\":[\"GET\"]},{\"object\":\"/master/summary/workers\",\"actions\":[\"GET\"]},{\"object\":\"/products/edge/*/summary/workers\",\"actions\":[\"GET\"]},{\"object\":\"/system/info\",\"actions\":[\"GET\"]},{\"object\":\"/system/settings/conf\",\"actions\":[\"GET\",\"PATCH\"]},{\"object\":\"/system/users\",\"actions\":[\"GET\"]},{\"object\":\"/system/banners\",\"actions\":[\"GET\"]},{\"object\":\"/system/banners/*\",\"actions\":[\"GET\"]},{\"object\":\"/system/credentials\",\"actions\":[\"GET\"]},{\"object\":\"/system/credentials/*\",\"actions\":[\"GET\"]},{\"object\":\"/clui\",\"actions\":[\"GET\"]},{\"object\":\"/settings/features\",\"actions\":[\"GET\"]},{\"object\":\"/settings/features/*\",\"actions\":[\"GET\"]},{\"object\":\"/ai/consent*\",\"actions\":[\"GET\"]},{\"object\":\"/ai/settings/*\",\"actions\":[\"GET\"]},{\"object\":\"/ai/q/*\",\"actions\":[\"GET\",\"POST\"]},{\"object\":\"/ai/guard/findings\",\"actions\":[\"GET\",\"POST\"]},{\"object\":\"/ai/guard/findings/ignore\",\"actions\":[\"GET\",\"POST\",\"DELETE\"]},{\"object\":\"/ai/guard/bundle/*\",\"actions\":[\"GET\"]},{\"object\":\"/ui/*\",\"actions\":[\"PATCH\",\"GET\"]},{\"object\":\"/products/edge/m/*\",\"actions\":[\"*\"]},{\"object\":\"/products/edge/m/*/\",\"actions\":[\"*\"]},{\"object\":\"/products/edge/m/*/summary\",\"actions\":[\"GET\"]},{\"object\":\"/products/edge/m/*/summary/workers\",\"actions\":[\"GET\"]},{\"object\":\"/system/saas-limits\",\"actions\":[\"GET\"]},{\"object\":\"/master/groups\",\"actions\":[\"*\"]},{\"object\":\"/products/*/groups\",\"actions\":[\"GET\"]},{\"object\":\"/master/workers\",\"actions\":[\"*\"]},{\"object\":\"/products/edge/workers\",\"actions\":[\"*\"]},{\"object\":\"/products/stream/workers\",\"actions\":[\"*\"]},{\"object\":\"/conditions\",\"actions\":[\"GET\"]},{\"object\":\"/conditions/*\",\"actions\":[\"GET\"]},{\"object\":\"/m/*/routes/*\",\"actions\":[\"GET\"]},{\"object\":\"/notification-targets\",\"actions\":[\"*\"]},{\"object\":\"/notifications\",\"actions\":[\"*\"]},{\"object\":\"/notification-templates\",\"actions\":[\"GET\"]},{\"object\":\"/system/authentication\",\"actions\":[\"GET\"]},{\"object\":\"/system/licenses\",\"actions\":[\"GET\"]},{\"object\":\"/system/logs\",\"actions\":[\"GET\"]},{\"object\":\"/system/logs/search\",\"actions\":[\"GET\"]},{\"object\":\"/system/messages\",\"actions\":[\"GET\"]},{\"object\":\"/functions\",\"actions\":[\"GET\"]},{\"object\":\"/functions/*\",\"actions\":[\"GET\"]},{\"object\":\"/system/metrics/query\",\"actions\":[\"POST\"]},{\"object\":\"/master/workers/*\",\"actions\":[\"GET\"]},{\"object\":\"/products/edge/workers/*\",\"actions\":[\"GET\"]},{\"object\":\"/system/instance/*\",\"actions\":[\"GET\"]},{\"object\":\"/notification-targets/*\",\"actions\":[\"*\"]},{\"object\":\"/notifications/*\",\"actions\":[\"*\"]},{\"object\":\"/system/teams\",\"actions\":[\"GET\"]},{\"object\":\"/admin/products/edge/*\",\"actions\":[\"*\"]},{\"object\":\"/system/monitoring/health\",\"actions\":[\"GET\"]},{\"object\":\"/products/edge/groups\",\"actions\":[\"*\"]},{\"object\":\"/w/*\",\"actions\":[\"*\"]},{\"object\":\"/products/edge/users\",\"actions\":[\"GET\"]},{\"object\":\"/products/edge/users/*\",\"actions\":[\"GET\"]},{\"object\":\"/system/policies\",\"actions\":[\""
+    }
+  },
+  {
+    "ts": "2026-04-12T15:59:57.909Z",
+    "method": "GET",
+    "url": "/api/v1/authorize/roles",
+    "postData": null,
+    "response": {
+      "status": 200,
+      "body": "{\"items\":[\"edge_admin\",\"search_admin\",\"stream_admin\",\"lake_admin\",\"org_owner\",\"ws_owner\"],\"count\":6}"
+    }
+  },
+  {
+    "ts": "2026-04-12T15:59:57.988Z",
+    "method": "GET",
+    "url": "/api/v1/system/authentication",
+    "postData": null,
+    "response": {
+      "status": 200,
+      "body": "{\"items\":[{\"loginUrl\":\"https://objective-shirley-sho21r7.cribl-staging.cloud\",\"tenantId\":\"objective-shirley-sho21r7\",\"type\":\"saas\",\"canChangePassword\":false}],\"count\":1}"
+    }
+  },
+  {
+    "ts": "2026-04-12T15:59:58.026Z",
+    "method": "GET",
+    "url": "/api/v1/products/stream/groups",
+    "postData": null,
+    "response": {
+      "status": 200,
+      "body": "{\"items\":[{\"configVersion\":\"e241145\",\"name\":\"default\",\"estimatedIngestRate\":3072,\"onPrem\":false,\"provisioned\":true,\"cloud\":{\"provider\":\"aws\",\"region\":\"us-west-2\"},\"lookupDeployments\":[],\"type\":\"stream\",\"id\":\"default\"},{\"description\":\"Default Hybrid Worker Group\",\"tags\":\"default\",\"onPrem\":true,\"id\":\"defaultHybrid\",\"type\":\"stream\"},{\"onPrem\":true,\"isFleet\":false,\"workerRemoteAccess\":false,\"isSearch\":false,\"configVersion\":\"9c14a33\",\"id\":\"homeHybrid\",\"type\":\"stream\"},{\"name\":\"search\",\"type\":\"local_search\",\"onPrem\":false,\"configVersion\":\"1775968946611\",\"streamtags\":[],\"workerRemoteAccess\":true,\"provisioned\":true,\"cloud\":{\"provider\":\"aws\",\"region\":\"us-west-2\"},\"estimatedIngestRate\":1024,\"id\":\"search\"}],\"count\":4}"
+    }
+  },
+  {
+    "ts": "2026-04-12T15:59:58.027Z",
+    "method": "GET",
+    "url": "/api/v1/products/edge/groups",
+    "postData": null,
+    "response": {
+      "status": 200,
+      "body": "{\"items\":[{\"description\":\"Default Fleet\",\"tags\":\"default\",\"isFleet\":true,\"configVersion\":\"ea07a7c\",\"id\":\"default_fleet\",\"type\":\"edge\",\"workerRemoteAccess\":true,\"onPrem\":true},{\"isFleet\":true,\"workerRemoteAccess\":true,\"isSearch\":false,\"configVersion\":\"c560103\",\"id\":\"homek8s\",\"type\":\"edge\",\"onPrem\":true},{\"isFleet\":true,\"workerRemoteAccess\":true,\"isSearch\":false,\"configVersion\":\"b9707f1\",\"upgradeVersion\":\"4.13.1-stage-hourly.20250803T1101-87a878ea\",\"lookupDeployments\":[],\"id\":\"home\",\"type\":\"edge\",\"onPrem\":true},{\"isFleet\":true,\"workerRemoteAccess\":true,\"isSearch\":false,\"inherits\":\"home\",\"configVersion\":\"b8a8cc1-5fa414d7b8443c23599c245aa1ab7a7acd19e8fb\",\"lookupDeployments\":[],\"id\":\"home-latencymonitor\",\"type\":\"edge\",\"onPrem\":true},{\"isFleet\":true,\"workerRemoteAccess\":true,\"isSearch\":false,\"inherits\":\"home\",\"configVersion\":\"b8a8cc1-5fa414d7b8443c23599c245aa1ab7a7acd19e8fb\",\"lookupDeployments\":[],\"id\":\"home-minio\",\"type\":\"edge\",\"onPrem\":true},{\"onPrem\":true,\"isFleet\":true,\"workerRemoteAccess\":true,\"isSearch\":false,\"configVersion\":\"d8c74a1\",\"id\":\"windows\",\"type\":\"edge\"},{\"onPrem\":true,\"isFleet\":true,\"workerRemoteAccess\":true,\"isSearch\":false,\"estimatedIngestRate\":100,\"id\":\"mac\",\"type\":\"edge\"}],\"count\":7}"
+    }
+  },
+  {
+    "ts": "2026-04-12T15:59:58.027Z",
+    "method": "GET",
+    "url": "/api/v1/products/search/groups",
+    "postData": null,
+    "response": {
+      "status": 200,
+      "body": "{\"items\":[{\"description\":\"Search group\",\"tags\":\"default\",\"isSearch\":true,\"onPrem\":false,\"id\":\"default_search\",\"type\":\"search\"}],\"count\":1}"
+    }
+  },
+  {
+    "ts": "2026-04-12T15:59:58.028Z",
+    "method": "GET",
+    "url": "/api/v1/products/outpost/groups",
+    "postData": null,
+    "response": {
+      "status": 200,
+      "body": "{\"items\":[{\"description\":\"Default Outpost Group\",\"tags\":\"default\",\"onPrem\":true,\"type\":\"outpost\",\"id\":\"default_outpost\"}],\"count\":1}"
+    }
+  },
+  {
+    "ts": "2026-04-12T15:59:58.041Z",
+    "method": "GET",
+    "url": "/api/v1/system/info?fields=os",
+    "postData": null,
+    "response": {
+      "status": 200,
+      "body": "{\"items\":[{\"BUILD\":{\"VERSION\":\"4.18.0-dev-nightly.20260412T0356-710d2bce\",\"BRANCH\":\"dev\",\"TIMESTAMP\":\"2026-04-12T04:06:13.924Z\"},\"distMode\":\"master\",\"installPath\":\"/opt/cribl/bin\",\"configPath\":\"/opt/cribl_config\",\"startTime\":1775968847405,\"uptime\":159067.02,\"hostname\":\"ip-10-255-5-49-main-objective-shirley-sho21r7\",\"loadavg\":[0.59,0.67,0.72],\"memory\":{\"free\":2110660608,\"total\":8140279808},\"os\":{\"platform\":\"linux\",\"arch\":\"arm64\",\"endianness\":\"LE\",\"release\":\"6.8.0-1050-aws\",\"type\":\"Linux\"},\"apiPort\":9000,\"diskUsage\":{\"diskPath\":\"/opt/cribl_config\",\"totalDiskSize\":31029854208,\"bytesAvailable\":20435234816,\"bytesUsed\":10577842176},\"onlineDiag\":true,\"guid\":\"e484cee7-9328-41c3-9ac0-e54ac79e2d26\",\"workerProcesses\":0,\"license\":{\"type\":\"prod\",\"isRegistered\":false,\"limits\":{\"lake_access_groups\":1,\"sds\":1},\"isSplunkApp\":false},\"cpus\":[{\"model\":\"unknown\",\"speed\":0,\"times\":{\"user\":10879740,\"nice\":4240,\"sys\":2601650,\"idle\":143034360,\"irq\":0}},{\"model\":\"unknown\",\"speed\":0,\"times\":{\"user\":10797900,\"nice\":2510,\"sys\":2599950,\"idle\":143063470,\"irq\":0}},{\"model\":\"unknown\",\"speed\":0,\"times\":{\"user\":10849540,\"nice\":5950,\"sys\":2588450,\"idle\":143123530,\"irq\":0}},{\"model\":\"unknown\",\"speed\":0,\"times\":{\"user\":10801760,\"nice\":8160,\"sys\":2604250,\"idle\":143021490,\"irq\":0}}],\"net\":{\"lo\":[{\"address\":\"127.0.0.1\",\"netmask\":\"255.0.0.0\",\"family\":\"IPv4\",\"mac\":\"00:00:00:00:00:00\",\"internal\":true,\"cidr\":\"127.0.0.1/8\"},{\"address\":\"::1\",\"netmask\":\"ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff\",\"family\":\"IPv6\",\"mac\":\"00:00:00:00:00:00\",\"internal\":true,\"cidr\":\"::1/128\",\"scopeid\":0}],\"ens5\":[{\"address\":\"10.255.5.49\",\"netmask\":\"255.255.252.0\",\"family\":\"IPv4\",\"mac\":\"02:5a:5f:38:88:eb\",\"internal\":false,\"cidr\":\"10.255.5.49/22\"},{\"address\":\"2600:1f13:f82:c401:7465:62f2:a8ee:764c\",\"netmask\":\"ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff\",\"family\":\"IPv6\",\"mac\":\"02:5a:5f:38:88:eb\",\"internal\":false,\"cidr\":\"2600:1f13:f82:c401:7465:62f2:a8ee:764c/128\",\"scopeid\":0},{\"address\":\"fe80::5a:5fff:fe38:88eb\",\"netmask\":\"ffff:ffff:ffff:ffff::\",\"family\":\"IPv6\",\"mac\":\"02:5a:5f:38:88:eb\",\"internal\":false,\"cidr\":\"fe80::5a:5fff:fe38:88eb/64\",\"scopeid\":2}]},\"isCriblSandbox\":false,\"isFipsEnabled\":false,\"hasCloudWorkspace\":false,\"openssl\":{},\"isFedRampEnabled\":false}],\"count\":1}"
+    }
+  },
+  {
+    "ts": "2026-04-12T15:59:58.041Z",
+    "method": "GET",
+    "url": "/api/v1/readonly",
+    "postData": null,
+    "response": {
+      "status": 200,
+      "body": "{\"readonly\":false}"
+    }
+  },
+  {
+    "ts": "2026-04-12T15:59:58.042Z",
+    "method": "GET",
+    "url": "/api/v1/version/current-branch",
+    "postData": null,
+    "response": {
+      "status": 200,
+      "body": "{\"branch\":\"master\"}"
+    }
+  },
+  {
+    "ts": "2026-04-12T15:59:58.042Z",
+    "method": "GET",
+    "url": "/api/v1/system/info/cribl",
+    "postData": null,
+    "response": {
+      "status": 200,
+      "body": "{\"items\":[{\"apiPort\":9000,\"BUILD\":{\"VERSION\":\"4.18.0-dev-nightly.20260412T0356-710d2bce\",\"BRANCH\":\"dev\",\"TIMESTAMP\":\"2026-04-12T04:06:13.924Z\"},\"distMode\":\"master\",\"onlineDiag\":true,\"guid\":\"e484cee7-9328-41c3-9ac0-e54ac79e2d26\",\"license\":{\"type\":\"prod\",\"isRegistered\":false,\"limits\":{\"lake_access_groups\":1,\"sds\":1},\"isSplunkApp\":false},\"isCriblSandbox\":false,\"isFipsEnabled\":false,\"hasCloudWorkspace\":false,\"openssl\":{},\"isFedRampEnabled\":false,\"insightsEnabled\":true}],\"count\":1}"
+    }
+  },
+  {
+    "ts": "2026-04-12T15:59:58.044Z",
+    "method": "GET",
+    "url": "/api/v1/settings/features",
+    "postData": null,
+    "response": {
+      "status": 200,
+      "body": "{\"items\":[{\"disabled\":true,\"id\":\"aggregation-global-memory-limit-enabled\"},{\"disabled\":false,\"id\":\"ai-service\"},{\"disabled\":false,\"id\":\"api-features\"},{\"disabled\":false,\"id\":\"api-leader-resiliency\"},{\"disabled\":true,\"id\":\"auto-rate-limit-worker-ingest\"},{\"disabled\":false,\"id\":\"aws-par-telemetry\"},{\"disabled\":false,\"id\":\"awssdk-v3-integ-aws-kms\"},{\"disabled\":false,\"id\":\"awssdk-v3-integ-kinesis\"},{\"disabled\":false,\"id\":\"awssdk-v3-integ-prometheus-in\"},{\"disabled\":false,\"id\":\"awssdk-v3-integ-rpc-credentials-in\"},{\"disabled\":false,\"id\":\"awssdk-v3-integ-s3-collector\"},{\"disabled\":false,\"id\":\"awssdk-v3-integ-s3-in\"},{\"disabled\":false,\"id\":\"awssdk-v3-integ-s3-in-client-cache\"},{\"disabled\":false,\"id\":\"awssdk-v3-integ-s3-out\"},{\"disabled\":false,\"id\":\"awssdk-v3-integ-sqs-in\"},{\"disabled\":false,\"id\":\"awssdk-v3-integ-sqs-out\"},{\"disabled\":false,\"id\":\"awssdk-v3-integ-vault-kms\"},{\"disabled\":false,\"id\":\"awssdk-v3-platform-secrets-manager\"},{\"disabled\":false,\"id\":\"awssdk-v3-platform-sns\"},{\"disabled\":false,\"id\":\"awssdk-v3-search-lambda\"},{\"disabled\":false,\"id\":\"awssdk-v3-search-other\"},{\"disabled\":false,\"id\":\"awssdk-v3-search-s3\"},{\"disabled\":false,\"id\":\"cache-leader-migrations\"},{\"disabled\":true,\"id\":\"cache-migrations\"},{\"disabled\":false,\"id\":\"cloud-pq-revival-v2\"},{\"disabled\":false,\"id\":\"collector-azure-blob\"},{\"disabled\":false,\"id\":\"collector-database\"},{\"disabled\":false,\"id\":\"collector-filesystem\"},{\"disabled\":false,\"id\":\"collector-google-cloud-storage\"},{\"disabled\":true,\"id\":\"collector-jobs-ha\"},{\"disabled\":false,\"id\":\"collector-rest\"},{\"disabled\":false,\"id\":\"collector-s3\"},{\"disabled\":true,\"id\":\"collector-script\"},{\"disabled\":false,\"id\":\"collector-splunk\"},{\"disabled\":false,\"id\":\"connection-proxy\"},{\"disabled\":false,\"id\":\"destination-cloudflare-r2\"},{\"disabled\":false,\"id\":\"destination-cribl-http\"},{\"disabled\":false,\"id\":\"destination-cribl-lake\"},{\"disabled\":false,\"id\":\"destination-cribl-tcp\"},{\"disabled\":false,\"id\":\"destination-databricks\"},{\"disabled\":false,\"id\":\"destination-datadog-traces\"},{\"disabled\":false,\"id\":\"destination-disk-spool\"},{\"disabled\":false,\"id\":\"destination-exabeam\"},{\"disabled\":false,\"id\":\"destination-filesystem\"},{\"disabled\":false,\"id\":\"destination-filesystem-stage-path\"},{\"disabled\":true,\"id\":\"destination-kafka-protobuf\"},{\"disabled\":false,\"id\":\"destination-wiz-hec\"},{\"disabled\":false,\"id\":\"destination-xsiam\"},{\"disabled\":false,\"id\":\"edge-metricpacket-agg\"},{\"disabled\":true,\"id\":\"ephemeral-connections\"},{\"disabled\":true,\"id\":\"feature-adx-shared-ingestion-resources\"},{\"disabled\":false,\"id\":\"feature-app-platform\"},{\"disabled\":false,\"id\":\"feature-authz-teams\"},{\"disabled\":true,\"id\":\"feature-authz-unification\"},{\"disabled\":false,\"id\":\"feature-auto-profile\"},{\"disabled\":true,\"id\":\"feature-copilot-chat\"},{\"disabled\":true,\"id\":\"feature-credential-centralization\"},{\"disabled\":false,\"id\":\"feature-custom-command\"},{\"disabled\":true,\"id\":\"feature-custom-monitors\"},{\"disabled\":true,\"id\":\"feature-customer-metrics\"},{\"disabled\":false,\"id\":\"feature-"
+    }
+  },
+  {
+    "ts": "2026-04-12T15:59:58.045Z",
+    "method": "GET",
+    "url": "/api/v1/settings/features",
+    "postData": null,
+    "response": {
+      "status": 200,
+      "body": "{\"items\":[{\"disabled\":true,\"id\":\"aggregation-global-memory-limit-enabled\"},{\"disabled\":false,\"id\":\"ai-service\"},{\"disabled\":false,\"id\":\"api-features\"},{\"disabled\":false,\"id\":\"api-leader-resiliency\"},{\"disabled\":true,\"id\":\"auto-rate-limit-worker-ingest\"},{\"disabled\":false,\"id\":\"aws-par-telemetry\"},{\"disabled\":false,\"id\":\"awssdk-v3-integ-aws-kms\"},{\"disabled\":false,\"id\":\"awssdk-v3-integ-kinesis\"},{\"disabled\":false,\"id\":\"awssdk-v3-integ-prometheus-in\"},{\"disabled\":false,\"id\":\"awssdk-v3-integ-rpc-credentials-in\"},{\"disabled\":false,\"id\":\"awssdk-v3-integ-s3-collector\"},{\"disabled\":false,\"id\":\"awssdk-v3-integ-s3-in\"},{\"disabled\":false,\"id\":\"awssdk-v3-integ-s3-in-client-cache\"},{\"disabled\":false,\"id\":\"awssdk-v3-integ-s3-out\"},{\"disabled\":false,\"id\":\"awssdk-v3-integ-sqs-in\"},{\"disabled\":false,\"id\":\"awssdk-v3-integ-sqs-out\"},{\"disabled\":false,\"id\":\"awssdk-v3-integ-vault-kms\"},{\"disabled\":false,\"id\":\"awssdk-v3-platform-secrets-manager\"},{\"disabled\":false,\"id\":\"awssdk-v3-platform-sns\"},{\"disabled\":false,\"id\":\"awssdk-v3-search-lambda\"},{\"disabled\":false,\"id\":\"awssdk-v3-search-other\"},{\"disabled\":false,\"id\":\"awssdk-v3-search-s3\"},{\"disabled\":false,\"id\":\"cache-leader-migrations\"},{\"disabled\":true,\"id\":\"cache-migrations\"},{\"disabled\":false,\"id\":\"cloud-pq-revival-v2\"},{\"disabled\":false,\"id\":\"collector-azure-blob\"},{\"disabled\":false,\"id\":\"collector-database\"},{\"disabled\":false,\"id\":\"collector-filesystem\"},{\"disabled\":false,\"id\":\"collector-google-cloud-storage\"},{\"disabled\":true,\"id\":\"collector-jobs-ha\"},{\"disabled\":false,\"id\":\"collector-rest\"},{\"disabled\":false,\"id\":\"collector-s3\"},{\"disabled\":true,\"id\":\"collector-script\"},{\"disabled\":false,\"id\":\"collector-splunk\"},{\"disabled\":false,\"id\":\"connection-proxy\"},{\"disabled\":false,\"id\":\"destination-cloudflare-r2\"},{\"disabled\":false,\"id\":\"destination-cribl-http\"},{\"disabled\":false,\"id\":\"destination-cribl-lake\"},{\"disabled\":false,\"id\":\"destination-cribl-tcp\"},{\"disabled\":false,\"id\":\"destination-databricks\"},{\"disabled\":false,\"id\":\"destination-datadog-traces\"},{\"disabled\":false,\"id\":\"destination-disk-spool\"},{\"disabled\":false,\"id\":\"destination-exabeam\"},{\"disabled\":false,\"id\":\"destination-filesystem\"},{\"disabled\":false,\"id\":\"destination-filesystem-stage-path\"},{\"disabled\":true,\"id\":\"destination-kafka-protobuf\"},{\"disabled\":false,\"id\":\"destination-wiz-hec\"},{\"disabled\":false,\"id\":\"destination-xsiam\"},{\"disabled\":false,\"id\":\"edge-metricpacket-agg\"},{\"disabled\":true,\"id\":\"ephemeral-connections\"},{\"disabled\":true,\"id\":\"feature-adx-shared-ingestion-resources\"},{\"disabled\":false,\"id\":\"feature-app-platform\"},{\"disabled\":false,\"id\":\"feature-authz-teams\"},{\"disabled\":true,\"id\":\"feature-authz-unification\"},{\"disabled\":false,\"id\":\"feature-auto-profile\"},{\"disabled\":true,\"id\":\"feature-copilot-chat\"},{\"disabled\":true,\"id\":\"feature-credential-centralization\"},{\"disabled\":false,\"id\":\"feature-custom-command\"},{\"disabled\":true,\"id\":\"feature-custom-monitors\"},{\"disabled\":true,\"id\":\"feature-customer-metrics\"},{\"disabled\":false,\"id\":\"feature-"
+    }
+  },
+  {
+    "ts": "2026-04-12T15:59:58.082Z",
+    "method": "GET",
+    "url": "/api/v1/system/settings/cribl",
+    "postData": null,
+    "response": {
+      "status": 200,
+      "body": "{\"items\":[{\"intercom\":true,\"apiProtocol\":\"http2\",\"isRegistered\":false}],\"count\":1}"
+    }
+  },
+  {
+    "ts": "2026-04-12T15:59:58.112Z",
+    "method": "GET",
+    "url": "/api/v1/ai/consent/",
+    "postData": null,
+    "response": {
+      "status": 200,
+      "body": "{\"items\":[{\"id\":\"6e89bb6c-56a5-4965-93df-04362ceefeb2\",\"accepted\":true,\"initialized\":true}]}"
+    }
+  },
+  {
+    "ts": "2026-04-12T15:59:58.155Z",
+    "method": "GET",
+    "url": "/api/v1/system/banners",
+    "postData": null,
+    "response": {
+      "status": 200,
+      "body": "{\"items\":[],\"count\":0}"
+    }
+  },
+  {
+    "ts": "2026-04-12T15:59:58.156Z",
+    "method": "GET",
+    "url": "/api/v1/system/settings/git-settings",
+    "postData": null,
+    "response": {
+      "status": 200,
+      "body": "{\"items\":[{\"timeout\":600000,\"commitDeploySingleAction\":true,\"defaultCommitMessage\":\"default commit message\",\"gitOps\":\"none\",\"branch\":\"master\"}],\"count\":1}"
+    }
+  },
+  {
+    "ts": "2026-04-12T15:59:58.156Z",
+    "method": "GET",
+    "url": "/api/v1/version/info",
+    "postData": null,
+    "response": {
+      "status": 200,
+      "body": "{\"items\":[{\"versioning\":true,\"remote\":\"\"}],\"count\":1}"
+    }
+  },
+  {
+    "ts": "2026-04-12T15:59:58.156Z",
+    "method": "GET",
+    "url": "/api/v1/system/settings",
+    "postData": null,
+    "response": {
+      "status": 200,
+      "body": "{\"items\":[{\"api\":{\"host\":\"0.0.0.0\",\"port\":9000,\"protocol\":\"http2\",\"disabled\":false,\"loginRateLimit\":\"2/second\",\"ssoRateLimit\":\"2/second\",\"ssl\":{\"disabled\":false,\"privKeyPath\":\"$CRIBL_CLOUD_KEY\",\"certPath\":\"$CRIBL_CLOUD_CRT\"}},\"system\":{\"upgrade\":\"api\",\"intercom\":true},\"workers\":{\"count\":-2,\"minimum\":2,\"memory\":2048},\"tls\":{},\"proxy\":{\"useEnvVars\":true},\"customLogo\":{},\"upgradeSettings\":{\"disableAutomaticUpgrade\":true},\"upgradeGroupSettings\":{},\"rollback\":{},\"backups\":{},\"sockets\":{},\"shutdown\":{\"drainTimeout\":10},\"sni\":{},\"pii\":{},\"support\":{\"logFileMaxSize\":\"5MB\"},\"auth\":{\"loginUrl\":\"https://objective-shirley-sho21r7.cribl-staging.cloud\",\"tenantId\":\"objective-shirley-sho21r7\",\"type\":\"saas\",\"filter_type\":\"email_whitelist\"},\"git\":{\"timeout\":600000,\"commitDeploySingleAction\":true,\"defaultCommitMessage\":\"default commit message\",\"gitOps\":\"none\",\"branch\":\"master\"},\"limits\":{\"samples\":{\"maxSize\":\"256KB\"},\"minFreeSpace\":\"5 GB\",\"metricsGCPeriod\":\"60s\",\"maxMetrics\":1000000,\"workerMaxMetrics\":1000000,\"metricsMaxCardinality\":1000,\"metricsMaxDiskSpace\":\"64GB\",\"metricsWorkerIdBlacklist\":[\"host.*\",\"source.*\",\"sourcetype.*\",\"index.*\"],\"metricsNeverDropList\":[\"total.*\",\"system.*\"],\"metricsFieldsBlacklist\":[\"host\",\"source\",\"sourcetype\",\"index\",\"project\"],\"eventsMetadataSources\":[],\"enableMetricsPersistence\":true,\"defaultHeartbeatSeconds\":10,\"maxPQSize\":\"1TB\",\"edgeNodesCount\":0,\"enableWorkerInMemory\":false,\"kvStoreEnableWAL\":false,\"kvStoreWALMaxBytes\":5242880,\"bundleDownloadTimeoutSeconds\":600,\"minReconnectInterval\":\"2s\",\"maxReconnectInterval\":\"1m\",\"randomReconnectInterval\":\"0s\",\"enableProcessInfoUsingWindowsTools\":false,\"lookupMaxSize\":\"500MB\",\"lookupMaxTotalSize\":\"2GB\",\"largeEventsThreshold\":\"1MB\",\"maxEPs\":0},\"jobLimits\":{\"concurrentJobLimit\":10,\"concurrentTaskLimit\":2,\"taskPollTimeoutMs\":60000,\"jobArtifactsReaperPeriod\":\"30m\",\"finishedJobArtifactsLimit\":100,\"finishedTaskArtifactsLimit\":500},\"searchLimits\":{\"maxConcurrentSearches\":\"50%\",\"maxExecutorsPerSearch\":50,\"searchQueueLength\":\"500%\",\"warmPoolSize\":\"auto\",\"maxSearchDuration\":\"420m\",\"maxResultsPerSearch\":50000,\"searchHistoryTTL\":\"7d\",\"searchHistoryMaxJobs\":1000,\"fieldSummaryMaxNestedDepth\":3,\"fieldSummaryMaxFields\":200,\"objectCacheTTL\":\"5m\",\"compressObjectCacheArtifact\":false},\"redisLimits\":{\"connections\":{\"disabled\":true}},\"redisCacheLimits\":{\"keyTTLSecs\":600,\"maxNumKeys\":0,\"maxCacheSize\":0,\"servicePeriodSecs\":30,\"enableServerAssist\":false,\"clientTrackingMechanism\":\"default\"},\"servicesLimits\":{\"connections\":{\"procs\":1,\"memoryLimit\":\"2GB\"},\"metrics\":{\"procs\":1,\"memoryLimit\":\"2GB\"},\"notifications\":{\"procs\":1,\"memoryLimit\":\"2GB\"},\"stream_connections\":{\"autoScale\":true,\"procs\":1,\"memoryLimit\":\"2GB\"},\"edge_connections\":{\"autoScale\":true,\"procs\":1,\"memoryLimit\":\"2GB\"},\"connection_proxy\":{\"procs\":1,\"recvBufferSize\":4096,\"memoryLimit\":\"2GB\"},\"jobs\":{\"procs\":1,\"memoryLimit\":\"2GB\"},\"outpost\":{\"procs\":-2},\"warmprocess\":{\"procs\":2},\"events\":{\"memoryLimit\":\"2GB\",\"output\":{\"messageGroupId\":\"C.env.TENANT_ID\",\"onBackpress"
+    }
+  },
+  {
+    "ts": "2026-04-12T15:59:58.158Z",
+    "method": "GET",
+    "url": "/api/v1/ai/consent/",
+    "postData": null,
+    "response": {
+      "status": 200,
+      "body": "{\"items\":[{\"id\":\"6e89bb6c-56a5-4965-93df-04362ceefeb2\",\"accepted\":true,\"initialized\":true}]}"
+    }
+  },
+  {
+    "ts": "2026-04-12T15:59:58.158Z",
+    "method": "GET",
+    "url": "/api/v1/ai/settings/disabled",
+    "postData": null,
+    "response": {
+      "status": 200,
+      "body": "{\"disabled\":false}"
+    }
+  },
+  {
+    "ts": "2026-04-12T15:59:58.159Z",
+    "method": "GET",
+    "url": "/api/v1/packs",
+    "postData": null,
+    "response": {
+      "status": 200,
+      "body": "{\"items\":[{\"version\":\"1.0.0\",\"author\":\"Clint Sharp\",\"description\":\"Application performance monitoring on top of Cribl Search — traces, logs, and metrics from the OpenTelemetry demo.\",\"displayName\":\"Cribl APM\",\"navItems\":[{\"path\":\"/\",\"label\":\"Home\"},{\"path\":\"/search\",\"label\":\"Search\"},{\"path\":\"/architecture\",\"label\":\"System Architecture\"},{\"path\":\"/compare\",\"label\":\"Compare\"},{\"path\":\"/service/:serviceName\",\"label\":\"Service Detail\",\"hidden\":true},{\"path\":\"/trace/:traceId\",\"label\":\"Trace Detail\",\"hidden\":true}],\"id\":\"oteldemo\",\"source\":\"file:/opt/cribl_config/state/packs/oteldemo-1.0.0.XRZJrbL.tgz\"},{\"version\":\"1.0.0\",\"author\":\"Clint Sharp\",\"description\":\"Visualize data from the OpenTelemetry demo\",\"displayName\":\"__dev__OpenTelemetry Demo\",\"navItems\":[{\"path\":\"/\",\"label\":\"Home\"},{\"path\":\"/search\",\"label\":\"Search\"},{\"path\":\"/architecture\",\"label\":\"System Architecture\"},{\"path\":\"/compare\",\"label\":\"Compare\"},{\"path\":\"/service/:serviceName\",\"label\":\"Service Detail\",\"hidden\":true},{\"path\":\"/trace/:traceId\",\"label\":\"Trace Detail\",\"hidden\":true}],\"id\":\"__dev__oteldemo\",\"source\":\"file:/opt/cribl_config/state/packs/package-1775862773919.0XhTZ2Y.tgz\"}],\"count\":2}"
+    }
+  },
+  {
+    "ts": "2026-04-12T15:59:58.160Z",
+    "method": "GET",
+    "url": "/api/v1/ai/consent/",
+    "postData": null,
+    "response": {
+      "status": 200,
+      "body": "{\"items\":[{\"id\":\"6e89bb6c-56a5-4965-93df-04362ceefeb2\",\"accepted\":true,\"initialized\":true}]}"
+    }
+  },
+  {
+    "ts": "2026-04-12T15:59:58.161Z",
+    "method": "GET",
+    "url": "/api/v1/ai/settings/disabled",
+    "postData": null,
+    "response": {
+      "status": 200,
+      "body": "{\"disabled\":false}"
+    }
+  },
+  {
+    "ts": "2026-04-12T15:59:58.174Z",
+    "method": "GET",
+    "url": "/api/v1/system/messages",
+    "postData": null,
+    "response": {
+      "status": 200,
+      "body": "{\"items\":[{\"severity\":\"warn\",\"title\":\"Notification\",\"text\":\"Date: 2026-04-12T15:00:17.140Z\\n\\nA notification was triggered for the scheduled search: tailscale_offline.1776006001058.GcsS5w,\\nTenant ID: objective-shirley-sho21r7\\nSearch ID: tailscale_offline\\nNotification: tailscale_offline_Notification_1\\nResults URL: https://main-objective-shirley-sho21r7.cribl-staging.cloud/search/tailscale_offline.1776006001058.GcsS5w\\nResults: \\n\",\"time\":1776006017140,\"group\":\"default_search\",\"metadata\":[{\"itemType\":\"link\",\"groupId\":\"\",\"product\":\"search\",\"id\":\"tailscale_offline.1776006001058.GcsS5w\",\"type\":\"search\"}],\"id\":\"tailscale_offline_Notification_1\"},{\"severity\":\"warn\",\"title\":\"Notification\",\"text\":\"Destination cribl_tcp:cloud_stream_tcp in group home is unhealthy in the last 60s\",\"time\":1775989440000,\"group\":\"home\",\"metadata\":[{\"itemType\":\"link\",\"groupId\":\"home\",\"product\":\"edge\",\"type\":\"output\",\"id\":\"cloud_stream_tcp\",\"subType\":\"cribl_tcp\"}],\"id\":\"cloud_stream_tcp_unhealthy\"},{\"severity\":\"warn\",\"title\":\"Notification\",\"text\":\"Destination cribl_tcp:cloud_stream_tcp in group homek8s is unhealthy in the last 60s\",\"time\":1775883000000,\"group\":\"homek8s\",\"metadata\":[{\"itemType\":\"link\",\"groupId\":\"homek8s\",\"product\":\"edge\",\"type\":\"output\",\"id\":\"cloud_stream_tcp\",\"subType\":\"cribl_tcp\"}],\"id\":\"cloud_stream_tcp_unhealthy2\"}],\"count\":3}"
+    }
+  },
+  {
+    "ts": "2026-04-12T15:59:58.191Z",
+    "method": "DELETE",
+    "url": "/api/v1/system/messages/NEW_VERSION",
+    "postData": "{\"id\":\"NEW_VERSION\"}",
+    "response": {
+      "status": 200,
+      "body": "{\"items\":[],\"count\":0}"
+    }
+  },
+  {
+    "ts": "2026-04-12T15:59:58.192Z",
+    "method": "GET",
+    "url": "/api/v1/ai/consent/",
+    "postData": null,
+    "response": {
+      "status": 200,
+      "body": "{\"items\":[{\"id\":\"6e89bb6c-56a5-4965-93df-04362ceefeb2\",\"accepted\":true,\"initialized\":true}]}"
+    }
+  },
+  {
+    "ts": "2026-04-12T15:59:58.194Z",
+    "method": "GET",
+    "url": "/api/v1/ai/settings/disabled",
+    "postData": null,
+    "response": {
+      "status": 200,
+      "body": "{\"disabled\":false}"
+    }
+  },
+  {
+    "ts": "2026-04-12T15:59:58.327Z",
+    "method": "GET",
+    "url": "/api/v1/settings/features",
+    "postData": null,
+    "response": {
+      "status": 200,
+      "body": "{\"items\":[{\"disabled\":true,\"id\":\"aggregation-global-memory-limit-enabled\"},{\"disabled\":false,\"id\":\"ai-service\"},{\"disabled\":false,\"id\":\"api-features\"},{\"disabled\":false,\"id\":\"api-leader-resiliency\"},{\"disabled\":true,\"id\":\"auto-rate-limit-worker-ingest\"},{\"disabled\":false,\"id\":\"aws-par-telemetry\"},{\"disabled\":false,\"id\":\"awssdk-v3-integ-aws-kms\"},{\"disabled\":false,\"id\":\"awssdk-v3-integ-kinesis\"},{\"disabled\":false,\"id\":\"awssdk-v3-integ-prometheus-in\"},{\"disabled\":false,\"id\":\"awssdk-v3-integ-rpc-credentials-in\"},{\"disabled\":false,\"id\":\"awssdk-v3-integ-s3-collector\"},{\"disabled\":false,\"id\":\"awssdk-v3-integ-s3-in\"},{\"disabled\":false,\"id\":\"awssdk-v3-integ-s3-in-client-cache\"},{\"disabled\":false,\"id\":\"awssdk-v3-integ-s3-out\"},{\"disabled\":false,\"id\":\"awssdk-v3-integ-sqs-in\"},{\"disabled\":false,\"id\":\"awssdk-v3-integ-sqs-out\"},{\"disabled\":false,\"id\":\"awssdk-v3-integ-vault-kms\"},{\"disabled\":false,\"id\":\"awssdk-v3-platform-secrets-manager\"},{\"disabled\":false,\"id\":\"awssdk-v3-platform-sns\"},{\"disabled\":false,\"id\":\"awssdk-v3-search-lambda\"},{\"disabled\":false,\"id\":\"awssdk-v3-search-other\"},{\"disabled\":false,\"id\":\"awssdk-v3-search-s3\"},{\"disabled\":false,\"id\":\"cache-leader-migrations\"},{\"disabled\":true,\"id\":\"cache-migrations\"},{\"disabled\":false,\"id\":\"cloud-pq-revival-v2\"},{\"disabled\":false,\"id\":\"collector-azure-blob\"},{\"disabled\":false,\"id\":\"collector-database\"},{\"disabled\":false,\"id\":\"collector-filesystem\"},{\"disabled\":false,\"id\":\"collector-google-cloud-storage\"},{\"disabled\":true,\"id\":\"collector-jobs-ha\"},{\"disabled\":false,\"id\":\"collector-rest\"},{\"disabled\":false,\"id\":\"collector-s3\"},{\"disabled\":true,\"id\":\"collector-script\"},{\"disabled\":false,\"id\":\"collector-splunk\"},{\"disabled\":false,\"id\":\"connection-proxy\"},{\"disabled\":false,\"id\":\"destination-cloudflare-r2\"},{\"disabled\":false,\"id\":\"destination-cribl-http\"},{\"disabled\":false,\"id\":\"destination-cribl-lake\"},{\"disabled\":false,\"id\":\"destination-cribl-tcp\"},{\"disabled\":false,\"id\":\"destination-databricks\"},{\"disabled\":false,\"id\":\"destination-datadog-traces\"},{\"disabled\":false,\"id\":\"destination-disk-spool\"},{\"disabled\":false,\"id\":\"destination-exabeam\"},{\"disabled\":false,\"id\":\"destination-filesystem\"},{\"disabled\":false,\"id\":\"destination-filesystem-stage-path\"},{\"disabled\":true,\"id\":\"destination-kafka-protobuf\"},{\"disabled\":false,\"id\":\"destination-wiz-hec\"},{\"disabled\":false,\"id\":\"destination-xsiam\"},{\"disabled\":false,\"id\":\"edge-metricpacket-agg\"},{\"disabled\":true,\"id\":\"ephemeral-connections\"},{\"disabled\":true,\"id\":\"feature-adx-shared-ingestion-resources\"},{\"disabled\":false,\"id\":\"feature-app-platform\"},{\"disabled\":false,\"id\":\"feature-authz-teams\"},{\"disabled\":true,\"id\":\"feature-authz-unification\"},{\"disabled\":false,\"id\":\"feature-auto-profile\"},{\"disabled\":true,\"id\":\"feature-copilot-chat\"},{\"disabled\":true,\"id\":\"feature-credential-centralization\"},{\"disabled\":false,\"id\":\"feature-custom-command\"},{\"disabled\":true,\"id\":\"feature-custom-monitors\"},{\"disabled\":true,\"id\":\"feature-customer-metrics\"},{\"disabled\":false,\"id\":\"feature-"
+    }
+  },
+  {
+    "ts": "2026-04-12T15:59:58.329Z",
+    "method": "GET",
+    "url": "/api/v1/settings/features",
+    "postData": null,
+    "response": {
+      "status": 200,
+      "body": "{\"items\":[{\"disabled\":true,\"id\":\"aggregation-global-memory-limit-enabled\"},{\"disabled\":false,\"id\":\"ai-service\"},{\"disabled\":false,\"id\":\"api-features\"},{\"disabled\":false,\"id\":\"api-leader-resiliency\"},{\"disabled\":true,\"id\":\"auto-rate-limit-worker-ingest\"},{\"disabled\":false,\"id\":\"aws-par-telemetry\"},{\"disabled\":false,\"id\":\"awssdk-v3-integ-aws-kms\"},{\"disabled\":false,\"id\":\"awssdk-v3-integ-kinesis\"},{\"disabled\":false,\"id\":\"awssdk-v3-integ-prometheus-in\"},{\"disabled\":false,\"id\":\"awssdk-v3-integ-rpc-credentials-in\"},{\"disabled\":false,\"id\":\"awssdk-v3-integ-s3-collector\"},{\"disabled\":false,\"id\":\"awssdk-v3-integ-s3-in\"},{\"disabled\":false,\"id\":\"awssdk-v3-integ-s3-in-client-cache\"},{\"disabled\":false,\"id\":\"awssdk-v3-integ-s3-out\"},{\"disabled\":false,\"id\":\"awssdk-v3-integ-sqs-in\"},{\"disabled\":false,\"id\":\"awssdk-v3-integ-sqs-out\"},{\"disabled\":false,\"id\":\"awssdk-v3-integ-vault-kms\"},{\"disabled\":false,\"id\":\"awssdk-v3-platform-secrets-manager\"},{\"disabled\":false,\"id\":\"awssdk-v3-platform-sns\"},{\"disabled\":false,\"id\":\"awssdk-v3-search-lambda\"},{\"disabled\":false,\"id\":\"awssdk-v3-search-other\"},{\"disabled\":false,\"id\":\"awssdk-v3-search-s3\"},{\"disabled\":false,\"id\":\"cache-leader-migrations\"},{\"disabled\":true,\"id\":\"cache-migrations\"},{\"disabled\":false,\"id\":\"cloud-pq-revival-v2\"},{\"disabled\":false,\"id\":\"collector-azure-blob\"},{\"disabled\":false,\"id\":\"collector-database\"},{\"disabled\":false,\"id\":\"collector-filesystem\"},{\"disabled\":false,\"id\":\"collector-google-cloud-storage\"},{\"disabled\":true,\"id\":\"collector-jobs-ha\"},{\"disabled\":false,\"id\":\"collector-rest\"},{\"disabled\":false,\"id\":\"collector-s3\"},{\"disabled\":true,\"id\":\"collector-script\"},{\"disabled\":false,\"id\":\"collector-splunk\"},{\"disabled\":false,\"id\":\"connection-proxy\"},{\"disabled\":false,\"id\":\"destination-cloudflare-r2\"},{\"disabled\":false,\"id\":\"destination-cribl-http\"},{\"disabled\":false,\"id\":\"destination-cribl-lake\"},{\"disabled\":false,\"id\":\"destination-cribl-tcp\"},{\"disabled\":false,\"id\":\"destination-databricks\"},{\"disabled\":false,\"id\":\"destination-datadog-traces\"},{\"disabled\":false,\"id\":\"destination-disk-spool\"},{\"disabled\":false,\"id\":\"destination-exabeam\"},{\"disabled\":false,\"id\":\"destination-filesystem\"},{\"disabled\":false,\"id\":\"destination-filesystem-stage-path\"},{\"disabled\":true,\"id\":\"destination-kafka-protobuf\"},{\"disabled\":false,\"id\":\"destination-wiz-hec\"},{\"disabled\":false,\"id\":\"destination-xsiam\"},{\"disabled\":false,\"id\":\"edge-metricpacket-agg\"},{\"disabled\":true,\"id\":\"ephemeral-connections\"},{\"disabled\":true,\"id\":\"feature-adx-shared-ingestion-resources\"},{\"disabled\":false,\"id\":\"feature-app-platform\"},{\"disabled\":false,\"id\":\"feature-authz-teams\"},{\"disabled\":true,\"id\":\"feature-authz-unification\"},{\"disabled\":false,\"id\":\"feature-auto-profile\"},{\"disabled\":true,\"id\":\"feature-copilot-chat\"},{\"disabled\":true,\"id\":\"feature-credential-centralization\"},{\"disabled\":false,\"id\":\"feature-custom-command\"},{\"disabled\":true,\"id\":\"feature-custom-monitors\"},{\"disabled\":true,\"id\":\"feature-customer-metrics\"},{\"disabled\":false,\"id\":\"feature-"
+    }
+  },
+  {
+    "ts": "2026-04-12T15:59:58.348Z",
+    "method": "GET",
+    "url": "/api/v1/system/messages",
+    "postData": null,
+    "response": {
+      "status": 200,
+      "body": "{\"items\":[{\"severity\":\"warn\",\"title\":\"Notification\",\"text\":\"Date: 2026-04-12T15:00:17.140Z\\n\\nA notification was triggered for the scheduled search: tailscale_offline.1776006001058.GcsS5w,\\nTenant ID: objective-shirley-sho21r7\\nSearch ID: tailscale_offline\\nNotification: tailscale_offline_Notification_1\\nResults URL: https://main-objective-shirley-sho21r7.cribl-staging.cloud/search/tailscale_offline.1776006001058.GcsS5w\\nResults: \\n\",\"time\":1776006017140,\"group\":\"default_search\",\"metadata\":[{\"itemType\":\"link\",\"groupId\":\"\",\"product\":\"search\",\"id\":\"tailscale_offline.1776006001058.GcsS5w\",\"type\":\"search\"}],\"id\":\"tailscale_offline_Notification_1\"},{\"severity\":\"warn\",\"title\":\"Notification\",\"text\":\"Destination cribl_tcp:cloud_stream_tcp in group home is unhealthy in the last 60s\",\"time\":1775989440000,\"group\":\"home\",\"metadata\":[{\"itemType\":\"link\",\"groupId\":\"home\",\"product\":\"edge\",\"type\":\"output\",\"id\":\"cloud_stream_tcp\",\"subType\":\"cribl_tcp\"}],\"id\":\"cloud_stream_tcp_unhealthy\"},{\"severity\":\"warn\",\"title\":\"Notification\",\"text\":\"Destination cribl_tcp:cloud_stream_tcp in group homek8s is unhealthy in the last 60s\",\"time\":1775883000000,\"group\":\"homek8s\",\"metadata\":[{\"itemType\":\"link\",\"groupId\":\"homek8s\",\"product\":\"edge\",\"type\":\"output\",\"id\":\"cloud_stream_tcp\",\"subType\":\"cribl_tcp\"}],\"id\":\"cloud_stream_tcp_unhealthy2\"}],\"count\":3}"
+    }
+  },
+  {
+    "ts": "2026-04-12T15:59:58.392Z",
+    "method": "GET",
+    "url": "/api/v1/ai/settings/features",
+    "postData": null,
+    "response": {
+      "status": 200,
+      "body": "{\"schematizer\":true,\"background_detection\":false,\"agentic_search\":true,\"web_search\":true}"
+    }
+  },
+  {
+    "ts": "2026-04-12T15:59:58.408Z",
+    "method": "GET",
+    "url": "/api/v1/version",
+    "postData": null,
+    "response": {
+      "status": 200,
+      "body": "{\"items\":[{\"hash\":\"e2411459f325756305197bc107fb5b22b7c80c31\",\"date\":\"2026-04-08 20:41:50 +0000\",\"message\":\"Clint Sharp: updating search destination\",\"refs\":\"HEAD -> master\",\"body\":\"\",\"author_name\":\"Cribl System\",\"author_email\":\"cribl@ip-10-255-6-154-main-objective-shirley-sho21r7\"},{\"hash\":\"828b2c534d372c17171abfb3c23e1604151d8199\",\"date\":\"2026-02-28 17:09:27 +0000\",\"message\":\"Clint Sharp: Fixing hostname\",\"refs\":\"\",\"body\":\"\",\"author_name\":\"Cribl System\",\"author_email\":\"cribl@ip-10-255-8-71-main-objective-shirley-sho21r7\"},{\"hash\":\"619efa560aac30d4a02e7a91e06bfcb866673449\",\"date\":\"2026-02-28 17:04:26 +0000\",\"message\":\"Clint Sharp: Adding Cribl Search destiination\",\"refs\":\"\",\"body\":\"\",\"author_name\":\"Cribl System\",\"author_email\":\"cribl@ip-10-255-8-71-main-objective-shirley-sho21r7\"},{\"hash\":\"26f5a8b7a69d7dfd2e02260cc0d45eb8191dff81\",\"date\":\"2026-01-18 02:26:17 +0000\",\"message\":\"Clint Sharp: enabling auth token and stock cribl updates.\",\"refs\":\"\",\"body\":\"\",\"author_name\":\"Cribl System\",\"author_email\":\"cribl@ip-10-255-10-164-main-objective-shirley-sho21r7\"},{\"hash\":\"6d7999067843eb17385922db01d51dd402cc668b\",\"date\":\"2026-01-16 05:39:12 +0000\",\"message\":\"create group default_outpost\",\"refs\":\"\",\"body\":\"\",\"author_name\":\"Cribl System\",\"author_email\":\"cribl@ip-10-255-10-164-main-objective-shirley-sho21r7\"},{\"hash\":\"731a048b64f2c243aa4182a2134339e2322208dd\",\"date\":\"2025-11-07 05:33:16 +0000\",\"message\":\"Cribl Admin: remove instance specific files\",\"refs\":\"\",\"body\":\"\",\"author_name\":\"Cribl System\",\"author_email\":\"cribl@ip-10-255-0-220-main-objective-shirley-sho21r7\"},{\"hash\":\"58a2bcd00afa36eeeb85f49b03374efb4b280b49\",\"date\":\"2025-08-04 19:22:11 +0000\",\"message\":\"Clint Sharp: changing file open time limit on Cribl Lake\",\"refs\":\"\",\"body\":\"\",\"author_name\":\"Cribl Admin\",\"author_email\":\"admin@cribl.cloud\"},{\"hash\":\"b9707f19c097fe2fe5f9b60aee5a38d850266b1a\",\"date\":\"2025-08-03 19:03:23 +0000\",\"message\":\"Clint Sharp: committing latest default changes\",\"refs\":\"\",\"body\":\"\",\"author_name\":\"Cribl Admin\",\"author_email\":\"admin@cribl.cloud\"},{\"hash\":\"70fc11985326139ff47db4a80178d8ee418eaf17\",\"date\":\"2025-02-05 19:50:57 +0000\",\"message\":\"Aaron Zamora: default commit message\",\"refs\":\"\",\"body\":\"\",\"author_name\":\"Cribl Admin\",\"author_email\":\"admin@cribl.cloud\"},{\"hash\":\"b8a8cc15e3e5cee5a2abdb1d838e1a4a58218cfb\",\"date\":\"2025-02-05 03:55:03 +0000\",\"message\":\"Aaron Zamora: default commit message\",\"refs\":\"\",\"body\":\"\",\"author_name\":\"Cribl Admin\",\"author_email\":\"admin@cribl.cloud\"},{\"hash\":\"c56010382aa81570c7964d7f22bbe3932a2d2e04\",\"date\":\"2025-01-10 05:01:46 +0000\",\"message\":\"Clint Sharp: Dropping a few additional metrics\",\"refs\":\"\",\"body\":\"\",\"author_name\":\"Cribl Admin\",\"author_email\":\"admin@cribl.cloud\"},{\"hash\":\"defafd3e1fb37258c44d723241fe60b842fe99ec\",\"date\":\"2025-01-10 04:46:40 +0000\",\"message\":\"Clint Sharp: Droping blkio metrics\",\"refs\":\"\",\"body\":\"\",\"author_name\":\"Cribl Admin\",\"author_email\":\"admin@cribl.cloud\"},{\"hash\":\"91b86dcf8440044ca36e08e42b03cb344fb51723\",\"date\":\"2025-01-10"
+    }
+  },
+  {
+    "ts": "2026-04-12T15:59:58.441Z",
+    "method": "GET",
+    "url": "/api/v1/changelog/viewed",
+    "postData": null,
+    "response": {
+      "status": 200,
+      "body": "{\"items\":[{}],\"count\":1}"
+    }
+  },
+  {
+    "ts": "2026-04-12T15:59:58.462Z",
+    "method": "GET",
+    "url": "/api/v1/ui/recentActions",
+    "postData": null,
+    "response": {
+      "status": 200,
+      "body": "{\"items\":[{\"group\":[{\"action\":\"update\",\"entityId\":\"default_search\",\"timestamp\":1775950246309,\"context\":\"stream\",\"type\":\"group\",\"key\":\"-default_search\",\"author\":\"Clint Sharp\"},{\"action\":\"update\",\"entityId\":\"default\",\"timestamp\":1775691498525,\"context\":\"stream\",\"type\":\"group\",\"key\":\"-default\",\"author\":\"Clint Sharp\"},{\"action\":\"update\",\"entityId\":\"local_search\",\"timestamp\":1771366378161,\"context\":\"stream\",\"type\":\"group\",\"key\":\"-local_search\",\"author\":\"Rishi Mohan\"},{\"action\":\"update\",\"entityId\":\"home\",\"timestamp\":1768427316989,\"context\":\"edge\",\"type\":\"group\",\"key\":\"-home\",\"author\":\"Clint Sharp\"},{\"action\":\"update\",\"entityId\":\"homek8s\",\"timestamp\":1738729364016,\"context\":\"edge\",\"type\":\"group\",\"key\":\"-homek8s\",\"author\":\"Aaron Zamora\"}],\"input\":[{\"action\":\"update\",\"subType\":\"http\",\"entityId\":\"http\",\"groupId\":\"default\",\"timestamp\":1768703121739,\"context\":\"stream\",\"type\":\"input\",\"key\":\"http-http\",\"author\":\"Clint Sharp\"},{\"action\":\"update\",\"subType\":\"appscope\",\"entityId\":\"in_appscope\",\"groupId\":\"home\",\"timestamp\":1754248012944,\"context\":\"edge\",\"type\":\"input\",\"key\":\"appscope-in_appscope\",\"author\":\"Clint Sharp\"},{\"action\":\"update\",\"subType\":\"edge_prometheus\",\"entityId\":\"in_k8s_cadvisor\",\"groupId\":\"homek8s\",\"timestamp\":1736484389739,\"context\":\"edge\",\"type\":\"input\",\"key\":\"edge_prometheus-in_k8s_cadvisor\",\"author\":\"Clint Sharp\"},{\"action\":\"update\",\"subType\":\"system_metrics\",\"entityId\":\"in_system_metrics\",\"groupId\":\"home\",\"timestamp\":1735674523642,\"context\":\"edge\",\"type\":\"input\",\"key\":\"system_metrics-in_system_metrics\",\"author\":\"Clint Sharp\"},{\"action\":\"update\",\"subType\":\"file\",\"entityId\":\"in_file_varlog\",\"groupId\":\"home\",\"timestamp\":1735674385786,\"context\":\"edge\",\"type\":\"input\",\"key\":\"file-in_file_varlog\",\"author\":\"Clint Sharp\"}],\"pipeline\":[{\"action\":\"update\",\"entityId\":\"cribl_search\",\"groupId\":\"default\",\"timestamp\":1772298244265,\"context\":\"stream\",\"type\":\"pipeline\",\"key\":\"-cribl_search\",\"author\":\"Clint Sharp\"},{\"action\":\"update\",\"entityId\":\"cadvisor\",\"groupId\":\"homek8s\",\"timestamp\":1736485297766,\"context\":\"edge\",\"type\":\"pipeline\",\"key\":\"-cadvisor\",\"author\":\"Clint Sharp\"},{\"action\":\"update\",\"entityId\":\"truncate_timestamps\",\"groupId\":\"default\",\"timestamp\":1734467377407,\"context\":\"stream\",\"type\":\"pipeline\",\"key\":\"-truncate_timestamps\",\"author\":\"Clint Sharp\"},{\"action\":\"update\",\"entityId\":\"clean\",\"groupId\":\"home\",\"timestamp\":1709010764099,\"context\":\"edge\",\"type\":\"pipeline\",\"key\":\"-clean\",\"author\":\"Clint Sharp\"},{\"action\":\"update\",\"entityId\":\"prometheus_metrics\",\"groupId\":\"default\",\"timestamp\":1693277109762,\"context\":\"stream\",\"type\":\"pipeline\",\"key\":\"-prometheus_metrics\",\"author\":\"\"}],\"output\":[{\"action\":\"update\",\"subType\":\"cribl_search_engine\",\"entityId\":\"search\",\"groupId\":\"default\",\"timestamp\":1775680899537,\"context\":\"stream\",\"type\":\"output\",\"key\":\"cribl_search_engine-search\",\"author\":\"Clint Sharp\"},{\"action\":\"update\",\"subType\":\"cribl_lake\",\"entityId\":\"typhoon\",\"groupId\":\"default\",\"timestamp\":1754335303152,\"context\":\"stream\",\"type\":\"output\",\"key\":\"cribl_lake-ty"
+    }
+  },
+  {
+    "ts": "2026-04-12T15:59:58.463Z",
+    "method": "GET",
+    "url": "/api/v1/products/stream/groups?fields=workerCount&product=stream",
+    "postData": null,
+    "response": {
+      "status": 200,
+      "body": "{\"items\":[{\"configVersion\":\"e241145\",\"name\":\"default\",\"estimatedIngestRate\":3072,\"onPrem\":false,\"provisioned\":true,\"cloud\":{\"provider\":\"aws\",\"region\":\"us-west-2\"},\"lookupDeployments\":[],\"type\":\"stream\",\"id\":\"default\",\"workerCount\":3},{\"description\":\"Default Hybrid Worker Group\",\"tags\":\"default\",\"onPrem\":true,\"id\":\"defaultHybrid\",\"type\":\"stream\",\"workerCount\":0},{\"onPrem\":true,\"isFleet\":false,\"workerRemoteAccess\":false,\"isSearch\":false,\"configVersion\":\"9c14a33\",\"id\":\"homeHybrid\",\"type\":\"stream\",\"workerCount\":0},{\"name\":\"search\",\"type\":\"local_search\",\"onPrem\":false,\"configVersion\":\"1775968946611\",\"streamtags\":[],\"workerRemoteAccess\":true,\"provisioned\":true,\"cloud\":{\"provider\":\"aws\",\"region\":\"us-west-2\"},\"estimatedIngestRate\":1024,\"id\":\"search\",\"workerCount\":2}],\"count\":4}"
+    }
+  },
+  {
+    "ts": "2026-04-12T15:59:58.464Z",
+    "method": "GET",
+    "url": "/api/v1/system/saas-limits",
+    "postData": null,
+    "response": {
+      "status": 200,
+      "body": "{\"items\":[{\"cloudGroups\":10,\"fleets\":250}],\"count\":1}"
+    }
+  },
+  {
+    "ts": "2026-04-12T15:59:58.464Z",
+    "method": "GET",
+    "url": "/api/v1/admin/products/stream/mappings",
+    "postData": null,
+    "response": {
+      "status": 200,
+      "body": "{\"items\":[{\"conf\":{\"functions\":[{\"filter\":\"isSaasWorker\",\"id\":\"eval\",\"description\":\"Default Mappings\",\"disabled\":false,\"final\":true,\"conf\":{\"add\":[{\"name\":\"groupId\",\"value\":\"'default'\"}]}}]},\"id\":\"default\",\"active\":true}],\"count\":1}"
+    }
+  },
+  {
+    "ts": "2026-04-12T15:59:58.475Z",
+    "method": "GET",
+    "url": "/api/v1/products/stream/groups",
+    "postData": null,
+    "response": {
+      "status": 200,
+      "body": "{\"items\":[{\"configVersion\":\"e241145\",\"name\":\"default\",\"estimatedIngestRate\":3072,\"onPrem\":false,\"provisioned\":true,\"cloud\":{\"provider\":\"aws\",\"region\":\"us-west-2\"},\"lookupDeployments\":[],\"type\":\"stream\",\"id\":\"default\"},{\"description\":\"Default Hybrid Worker Group\",\"tags\":\"default\",\"onPrem\":true,\"id\":\"defaultHybrid\",\"type\":\"stream\"},{\"onPrem\":true,\"isFleet\":false,\"workerRemoteAccess\":false,\"isSearch\":false,\"configVersion\":\"9c14a33\",\"id\":\"homeHybrid\",\"type\":\"stream\"},{\"name\":\"search\",\"type\":\"local_search\",\"onPrem\":false,\"configVersion\":\"1775968946611\",\"streamtags\":[],\"workerRemoteAccess\":true,\"provisioned\":true,\"cloud\":{\"provider\":\"aws\",\"region\":\"us-west-2\"},\"estimatedIngestRate\":1024,\"id\":\"search\"}],\"count\":4}"
+    }
+  },
+  {
+    "ts": "2026-04-12T15:59:58.493Z",
+    "method": "GET",
+    "url": "/api/v1/products/stream/groups",
+    "postData": null,
+    "response": {
+      "status": 200,
+      "body": "{\"items\":[{\"configVersion\":\"e241145\",\"name\":\"default\",\"estimatedIngestRate\":3072,\"onPrem\":false,\"provisioned\":true,\"cloud\":{\"provider\":\"aws\",\"region\":\"us-west-2\"},\"lookupDeployments\":[],\"type\":\"stream\",\"id\":\"default\"},{\"description\":\"Default Hybrid Worker Group\",\"tags\":\"default\",\"onPrem\":true,\"id\":\"defaultHybrid\",\"type\":\"stream\"},{\"onPrem\":true,\"isFleet\":false,\"workerRemoteAccess\":false,\"isSearch\":false,\"configVersion\":\"9c14a33\",\"id\":\"homeHybrid\",\"type\":\"stream\"},{\"name\":\"search\",\"type\":\"local_search\",\"onPrem\":false,\"configVersion\":\"1775968946611\",\"streamtags\":[],\"workerRemoteAccess\":true,\"provisioned\":true,\"cloud\":{\"provider\":\"aws\",\"region\":\"us-west-2\"},\"estimatedIngestRate\":1024,\"id\":\"search\"}],\"count\":4}"
+    }
+  },
+  {
+    "ts": "2026-04-12T15:59:58.547Z",
+    "method": "GET",
+    "url": "/api/v1/products/stream/summary/workers?filter=%7B%22field%22%3A%22disconnected%22%2C%22op%22%3A%22!%3D%22%2C%22value%22%3Atrue%7D",
+    "postData": null,
+    "response": {
+      "status": 200,
+      "body": "{\"items\":[5],\"count\":1}"
+    }
+  },
+  {
+    "ts": "2026-04-12T15:59:58.551Z",
+    "method": "GET",
+    "url": "/api/v1/products/stream/summary/workers?filter=%7B%22field%22%3A%22disconnected%22%2C%22op%22%3A%22!%3D%22%2C%22value%22%3Atrue%7D",
+    "postData": null,
+    "response": {
+      "status": 200,
+      "body": "{\"items\":[5],\"count\":1}"
+    }
+  },
+  {
+    "ts": "2026-04-12T15:59:58.574Z",
+    "method": "GET",
+    "url": "/api/v1/version/count",
+    "postData": null,
+    "response": {
+      "status": 200,
+      "body": "{\"items\":[{\"count\":2233}],\"count\":1}"
+    }
+  },
+  {
+    "ts": "2026-04-12T15:59:58.581Z",
+    "method": "POST",
+    "url": "/api/v1/system/metrics/query",
+    "postData": "{\"where\":\"__dist_mode == 'worker' && !!__worker_group\",\"earliest\":\"120s\",\"aggs\":{\"aggregations\":[\"max('health.inputs').as('inputHealth')\",\"max('health.outputs').as('outputHealth')\"],\"splitBys\":[\"input\",\"output\",\"__worker_group\"],\"cumulative\":true}}",
+    "response": {
+      "status": 200,
+      "body": "{\"results\":[{\"eventsIn\":790453,\"eventsOut\":1896268,\"bytesIn\":1011098054,\"bytesOut\":1846242017}],\"metrics\":{\"metrics_aggregator.referenced_metrics\":5,\"metrics_reader.execution_time\":1,\"metrics_reader.matched\":1476,\"metrics_reader.invalid_series\":0,\"metrics_aggregator.matched\":300,\"metrics_aggregator.points\":300,\"metrics_aggregator.results\":1,\"metrics_aggregator.execution_time\":3},\"info\":{}}"
+    }
+  },
+  {
+    "ts": "2026-04-12T15:59:58.582Z",
+    "method": "GET",
+    "url": "/api/v1/system/saas-limits",
+    "postData": null,
+    "response": {
+      "status": 200,
+      "body": "{\"items\":[{\"cloudGroups\":10,\"fleets\":250}],\"count\":1}"
+    }
+  },
+  {
+    "ts": "2026-04-12T15:59:58.582Z",
+    "method": "GET",
+    "url": "/api/v1/admin/products/stream/mappings",
+    "postData": null,
+    "response": {
+      "status": 200,
+      "body": "{\"items\":[{\"conf\":{\"functions\":[{\"filter\":\"isSaasWorker\",\"id\":\"eval\",\"description\":\"Default Mappings\",\"disabled\":false,\"final\":true,\"conf\":{\"add\":[{\"name\":\"groupId\",\"value\":\"'default'\"}]}}]},\"id\":\"default\",\"active\":true}],\"count\":1}"
+    }
+  },
+  {
+    "ts": "2026-04-12T15:59:58.593Z",
+    "method": "GET",
+    "url": "/api/v1/products/stream/workers?filter=%7B%22field%22%3A%22disconnected%22%2C%22op%22%3A%22!%3D%22%2C%22value%22%3Atrue%7D",
+    "postData": null,
+    "response": {
+      "status": 200,
+      "body": "{\"items\":[{\"id\":\"2b06790d-5a9b-4751-9688-7902762b27bd\",\"status\":\"healthy\",\"group\":\"search\",\"info\":{\"hostname\":\"ip-10-255-2-130-main-objective-shirley-sho21r7\",\"platform\":\"linux\",\"architecture\":\"arm64\",\"release\":\"6.8.0-1050-aws\",\"cpus\":4,\"totalmem\":8140279808,\"node\":\"v22.22.0\",\"env\":{\"CRIBL_DIST_MASTER_URL\":\"REDACTED\",\"CRIBL_WORKSPACE_NAME\":\"main\",\"CRIBL_SEARCH_URI\":\"https://main-search-objective-shirley-sho21r7.cribl-staging.cloud:4200\",\"CRIBL_CLOUD_TENANT_CONFIG\":\"s3://tenant-config-cribl-staging-cloud-us-west-2/515007186714/objective-shirley-sho21r7/main\",\"CRIBL_SERVICE\":\"1\",\"CRIBL_INSTALL_TYPE\":\"CONTAINER\",\"CRIBL_VOLUME_DIR\":\"/opt/cribl_config\",\"CRIBL_TAIL_LOGS\":\"false\",\"CRIBL_CLOUD_CRT\":\"REDACTED\",\"CRIBL_LD_SDK_KEY\":\"REDACTED\",\"CRIBL_UID\":\"1001\",\"CRIBL_SAAS_GOAT\":\"1\",\"CRIBL_BEFORE_SU_CMD_1\":\"ln -sf /usr/local/aws-cli/v2/current/bin/aws /usr/local/bin\",\"CRIBL_BEFORE_SU_CMD_2\":\"touch /var/log/sysgoatent\",\"CRIBL_CLOUD_KEY\":\"REDACTED\",\"CRIBL_GID\":\"1001\",\"CRIBL_CLOUD_PROVIDER\":\"aws\",\"CRIBL_CLOUD_LEADER_REGION\":\"us-west-2\",\"CRIBL_WORKER_VOLUME\":\"/opt/cribl_data\",\"CRIBL_CLOUD_REGION\":\"us-west-2\",\"CRIBL_LEADER_COMMS_OVER_HTTP2\":\"1\",\"CRIBL_DIST_MODE\":\"worker\",\"CRIBL_CLOUD_DOMAIN\":\"cribl-staging.cloud\",\"CRIBL_HOME\":\"/opt/cribl_config\",\"CRIBL_INTERACTIVE\":\"0\",\"CRIBL_DIST_LEADER_URL\":\"REDACTED\",\"CRIBL_CONF_DIR\":\"/opt/cribl_config\",\"CRIBL_INSTANCE_HOME\":\"/opt/cribl_config\",\"CRIBL_ROLE\":\"undefined\",\"CRIBL_STATE_DIR\":\"/opt/cribl_config/state\",\"CRIBL_EDGE_FS_ROOT\":\"/\"},\"cribl\":{\"config\":{\"featuresRev\":\"iM+BLhdLqGXrjXaS5BdmRiPh4/IMDrKKw8FV45i531Y=\",\"hbPeriodSeconds\":10,\"version\":\"1775968946611\",\"logStreamEnv\":\"master\"},\"pid\":51,\"startTime\":1775968917217,\"guid\":\"2b06790d-5a9b-4751-9688-7902762b27bd\",\"master\":{\"host\":\"logstream-objective-shirley-sho21r7.cribl-staging.cloud\",\"port\":4200,\"tls\":true,\"servername\":\"stream\"},\"distMode\":\"worker\",\"installType\":\"CONTAINER\",\"group\":\"search\",\"tags\":[],\"disableSNIRouting\":false,\"socksEnabled\":false,\"version\":\"4.18.0-dev-nightly.20260412T0356-710d2bce\",\"lookupVersions\":{}},\"isSaasWorker\":true,\"apiPort\":9000,\"apiScheme\":\"https\",\"isCaptain\":false,\"conn_ip\":\"54.214.104.130\",\"totalDiskSpace\":31029854208,\"freeDiskSpace\":20950593536,\"localTime\":1776009594},\"workerProcesses\":3,\"lastMsgTime\":1776009594798,\"deployable\":true,\"firstMsgTime\":1775969114328,\"disconnected\":false,\"connectionProtocol\":\"http2\"},{\"id\":\"9b49a252-a073-47d8-9dd9-41f2a3617b21\",\"status\":\"healthy\",\"group\":\"default\",\"info\":{\"hostname\":\"ip-10-255-0-203-main-objective-shirley-sho21r7\",\"platform\":\"linux\",\"architecture\":\"arm64\",\"release\":\"6.8.0-1050-aws\",\"cpus\":4,\"totalmem\":8140283904,\"node\":\"v22.22.0\",\"env\":{\"CRIBL_DIST_MASTER_URL\":\"REDACTED\",\"CRIBL_WORKSPACE_NAME\":\"main\",\"CRIBL_SEARCH_URI\":\"https://main-default-objective-shirley-sho21r7.cribl-staging.cloud:4200\",\"CRIBL_CLOUD_TENANT_CONFIG\":\"s3://tenant-config-cribl-staging-cloud-us-west-2/515007186714/objective-shirley-sho21r7/main\",\"CRIBL_SERVICE\":\"1\",\"CRIBL_INSTALL_TYPE\":\"CONTAINER\",\"CRIBL_VOLUME_DIR\":\"/opt/cribl_co"
+    }
+  },
+  {
+    "ts": "2026-04-12T15:59:58.593Z",
+    "method": "GET",
+    "url": "/api/v1/products/stream/workers?filter=%7B%22field%22%3A%22disconnected%22%2C%22op%22%3A%22!%3D%22%2C%22value%22%3Atrue%7D",
+    "postData": null,
+    "response": {
+      "status": 200,
+      "body": "{\"items\":[{\"id\":\"2b06790d-5a9b-4751-9688-7902762b27bd\",\"status\":\"healthy\",\"group\":\"search\",\"info\":{\"hostname\":\"ip-10-255-2-130-main-objective-shirley-sho21r7\",\"platform\":\"linux\",\"architecture\":\"arm64\",\"release\":\"6.8.0-1050-aws\",\"cpus\":4,\"totalmem\":8140279808,\"node\":\"v22.22.0\",\"env\":{\"CRIBL_DIST_MASTER_URL\":\"REDACTED\",\"CRIBL_WORKSPACE_NAME\":\"main\",\"CRIBL_SEARCH_URI\":\"https://main-search-objective-shirley-sho21r7.cribl-staging.cloud:4200\",\"CRIBL_CLOUD_TENANT_CONFIG\":\"s3://tenant-config-cribl-staging-cloud-us-west-2/515007186714/objective-shirley-sho21r7/main\",\"CRIBL_SERVICE\":\"1\",\"CRIBL_INSTALL_TYPE\":\"CONTAINER\",\"CRIBL_VOLUME_DIR\":\"/opt/cribl_config\",\"CRIBL_TAIL_LOGS\":\"false\",\"CRIBL_CLOUD_CRT\":\"REDACTED\",\"CRIBL_LD_SDK_KEY\":\"REDACTED\",\"CRIBL_UID\":\"1001\",\"CRIBL_SAAS_GOAT\":\"1\",\"CRIBL_BEFORE_SU_CMD_1\":\"ln -sf /usr/local/aws-cli/v2/current/bin/aws /usr/local/bin\",\"CRIBL_BEFORE_SU_CMD_2\":\"touch /var/log/sysgoatent\",\"CRIBL_CLOUD_KEY\":\"REDACTED\",\"CRIBL_GID\":\"1001\",\"CRIBL_CLOUD_PROVIDER\":\"aws\",\"CRIBL_CLOUD_LEADER_REGION\":\"us-west-2\",\"CRIBL_WORKER_VOLUME\":\"/opt/cribl_data\",\"CRIBL_CLOUD_REGION\":\"us-west-2\",\"CRIBL_LEADER_COMMS_OVER_HTTP2\":\"1\",\"CRIBL_DIST_MODE\":\"worker\",\"CRIBL_CLOUD_DOMAIN\":\"cribl-staging.cloud\",\"CRIBL_HOME\":\"/opt/cribl_config\",\"CRIBL_INTERACTIVE\":\"0\",\"CRIBL_DIST_LEADER_URL\":\"REDACTED\",\"CRIBL_CONF_DIR\":\"/opt/cribl_config\",\"CRIBL_INSTANCE_HOME\":\"/opt/cribl_config\",\"CRIBL_ROLE\":\"undefined\",\"CRIBL_STATE_DIR\":\"/opt/cribl_config/state\",\"CRIBL_EDGE_FS_ROOT\":\"/\"},\"cribl\":{\"config\":{\"featuresRev\":\"iM+BLhdLqGXrjXaS5BdmRiPh4/IMDrKKw8FV45i531Y=\",\"hbPeriodSeconds\":10,\"version\":\"1775968946611\",\"logStreamEnv\":\"master\"},\"pid\":51,\"startTime\":1775968917217,\"guid\":\"2b06790d-5a9b-4751-9688-7902762b27bd\",\"master\":{\"host\":\"logstream-objective-shirley-sho21r7.cribl-staging.cloud\",\"port\":4200,\"tls\":true,\"servername\":\"stream\"},\"distMode\":\"worker\",\"installType\":\"CONTAINER\",\"group\":\"search\",\"tags\":[],\"disableSNIRouting\":false,\"socksEnabled\":false,\"version\":\"4.18.0-dev-nightly.20260412T0356-710d2bce\",\"lookupVersions\":{}},\"isSaasWorker\":true,\"apiPort\":9000,\"apiScheme\":\"https\",\"isCaptain\":false,\"conn_ip\":\"54.214.104.130\",\"totalDiskSpace\":31029854208,\"freeDiskSpace\":20950593536,\"localTime\":1776009594},\"workerProcesses\":3,\"lastMsgTime\":1776009594798,\"deployable\":true,\"firstMsgTime\":1775969114328,\"disconnected\":false,\"connectionProtocol\":\"http2\"},{\"id\":\"9b49a252-a073-47d8-9dd9-41f2a3617b21\",\"status\":\"healthy\",\"group\":\"default\",\"info\":{\"hostname\":\"ip-10-255-0-203-main-objective-shirley-sho21r7\",\"platform\":\"linux\",\"architecture\":\"arm64\",\"release\":\"6.8.0-1050-aws\",\"cpus\":4,\"totalmem\":8140283904,\"node\":\"v22.22.0\",\"env\":{\"CRIBL_DIST_MASTER_URL\":\"REDACTED\",\"CRIBL_WORKSPACE_NAME\":\"main\",\"CRIBL_SEARCH_URI\":\"https://main-default-objective-shirley-sho21r7.cribl-staging.cloud:4200\",\"CRIBL_CLOUD_TENANT_CONFIG\":\"s3://tenant-config-cribl-staging-cloud-us-west-2/515007186714/objective-shirley-sho21r7/main\",\"CRIBL_SERVICE\":\"1\",\"CRIBL_INSTALL_TYPE\":\"CONTAINER\",\"CRIBL_VOLUME_DIR\":\"/opt/cribl_co"
+    }
+  },
+  {
+    "ts": "2026-04-12T15:59:58.655Z",
+    "method": "POST",
+    "url": "/api/v1/system/metrics/query",
+    "postData": "{\"where\":\"(has_no_dimensions) && (__dist_mode==\\\"worker\\\")\",\"aggs\":{\"aggregations\":[\"sum(\\\"total.in_events\\\").as(\\\"eventsIn\\\")\",\"sum(\\\"total.out_events\\\").as(\\\"eventsOut\\\")\",\"sum(\\\"total.in_bytes\\\").as(\\\"bytesIn\\\")\",\"sum(\\\"total.out_bytes\\\").as(\\\"bytesOut\\\")\"],\"timeWindowSeconds\":-1},\"earliest\":\"900s\",\"latest\":1776009598464}",
+    "response": {
+      "status": 200,
+      "body": "{\"results\":[{\"eventsIn\":790453,\"eventsOut\":1896268,\"bytesIn\":1011098054,\"bytesOut\":1846242017}],\"metrics\":{\"metrics_aggregator.referenced_metrics\":5,\"metrics_reader.execution_time\":1,\"metrics_reader.matched\":1476,\"metrics_reader.invalid_series\":0,\"metrics_aggregator.matched\":300,\"metrics_aggregator.points\":300,\"metrics_aggregator.results\":1,\"metrics_aggregator.execution_time\":4},\"info\":{}}"
+    }
+  },
+  {
+    "ts": "2026-04-12T15:59:58.656Z",
+    "method": "POST",
+    "url": "/api/v1/system/metrics/query",
+    "postData": "{\"where\":\"(has_no_dimensions) && (__dist_mode==\\\"worker\\\")\",\"aggs\":{\"aggregations\":[\"sum(\\\"total.in_events\\\").as(\\\"eventsIn\\\")\",\"sum(\\\"total.out_events\\\").as(\\\"eventsOut\\\")\",\"sum(\\\"total.in_bytes\\\").as(\\\"bytesIn\\\")\",\"sum(\\\"total.out_bytes\\\").as(\\\"bytesOut\\\")\"],\"timeWindowSeconds\":-1},\"earliest\":\"900s\",\"latest\":1776009598489}",
+    "response": {
+      "status": 200,
+      "body": "{\"results\":[{\"inputHealth\":0,\"input\":\"cribl_http:in_cribl_http\",\"__worker_group\":\"search\"},{\"inputHealth\":0,\"input\":\"cribl_http:in_cribl_http\",\"__worker_group\":\"default\"},{\"inputHealth\":0,\"input\":\"splunk_hec:in_splunk_hec\",\"__worker_group\":\"search\"},{\"inputHealth\":0,\"input\":\"splunk_hec:in_splunk_hec\",\"__worker_group\":\"default\"},{\"inputHealth\":0,\"input\":\"open_telemetry:opentelemetry-demo\",\"__worker_group\":\"search\"},{\"inputHealth\":0,\"input\":\"cribl:CriblMetrics\",\"__worker_group\":\"default\"},{\"inputHealth\":0,\"input\":\"http:http\",\"__worker_group\":\"default\"},{\"inputHealth\":0,\"input\":\"appscope:in_appscope_tcp\",\"__worker_group\":\"default\"},{\"inputHealth\":0,\"input\":\"appscope:in_appscope_tls\",\"__worker_group\":\"default\"},{\"inputHealth\":0,\"input\":\"cribl_tcp:in_cribl_tcp\",\"__worker_group\":\"default\"},{\"inputHealth\":0,\"input\":\"elastic:in_elastic\",\"__worker_group\":\"default\"},{\"inputHealth\":0,\"input\":\"splunk:in_splunk_tcp\",\"__worker_group\":\"default\"},{\"inputHealth\":0,\"input\":\"syslog:in_syslog\",\"__worker_group\":\"default\"},{\"inputHealth\":0,\"input\":\"syslog:in_syslog:udp\",\"__worker_group\":\"default\"},{\"inputHealth\":0,\"input\":\"syslog:in_syslog:tcp\",\"__worker_group\":\"default\"},{\"inputHealth\":0,\"input\":\"syslog:in_syslog_tls\",\"__worker_group\":\"default\"},{\"inputHealth\":0,\"input\":\"syslog:in_syslog_tls:tcp\",\"__worker_group\":\"default\"},{\"inputHealth\":0,\"input\":\"tcp:in_tcp\",\"__worker_group\":\"default\"},{\"inputHealth\":0,\"input\":\"tcpjson:in_tcp_json\",\"__worker_group\":\"default\"},{\"inputHealth\":0,\"input\":\"open_telemetry:open_telemetry\",\"__worker_group\":\"default\"},{\"inputHealth\":0,\"input\":\"subscription:datagen:Datagen\",\"__worker_group\":\"default\"},{\"outputHealth\":0,\"output\":\"devnull:devnull\",\"__worker_group\":\"search\"},{\"outputHealth\":0,\"output\":\"devnull:devnull\",\"__worker_group\":\"default\"},{\"outputHealth\":0,\"output\":\"router:engine_router\",\"__worker_group\":\"search\"},{\"outputHealth\":0,\"output\":\"local_search_storage:engine_homelab\",\"__worker_group\":\"search\"},{\"outputHealth\":0,\"output\":\"s3:typhoonLogsS3\",\"__worker_group\":\"default\"},{\"outputHealth\":0,\"output\":\"dl_s3:typhoon-cribllake\",\"__worker_group\":\"default\"},{\"outputHealth\":0,\"output\":\"grafana_cloud:grafana\",\"__worker_group\":\"default\"},{\"outputHealth\":0,\"output\":\"router:outputrouter\",\"__worker_group\":\"default\"},{\"outputHealth\":0,\"output\":\"dl_s3:typhoon-parquet\",\"__worker_group\":\"default\"},{\"outputHealth\":0,\"output\":\"cribl_lake:typhoon\",\"__worker_group\":\"default\"},{\"outputHealth\":0,\"output\":\"tcpjson:criblcloud\",\"__worker_group\":\"default\"},{\"outputHealth\":0,\"output\":\"cribl_search_engine:search\",\"__worker_group\":\"default\"},{\"outputHealth\":0,\"output\":\"subscription:datagen\",\"__worker_group\":\"default\"}],\"metrics\":{\"metrics_aggregator.referenced_metrics\":3,\"metrics_reader.execution_time\":4,\"metrics_reader.matched\":3270,\"metrics_reader.invalid_series\":0,\"metrics_aggregator.matched\":288,\"metrics_aggregator.points\":288,\"metrics_aggregator.results\":34,\"metrics_aggregator.execution_time\":7},\"info\":{}}"
+    }
+  },
+  {
+    "ts": "2026-04-12T15:59:58.720Z",
+    "method": "POST",
+    "url": "/api/v1/system/metrics/query",
+    "postData": "{\"where\":\"(has_no_dimensions) && (__dist_mode==\\\"worker\\\")\",\"aggs\":{\"aggregations\":[\"sum(\\\"total.in_events\\\").as(\\\"eventsIn\\\")\",\"sum(\\\"total.out_events\\\").as(\\\"eventsOut\\\")\",\"sum(\\\"total.in_bytes\\\").as(\\\"bytesIn\\\")\",\"sum(\\\"total.out_bytes\\\").as(\\\"bytesOut\\\")\"],\"cumulative\":true},\"earliest\":\"900s\",\"latest\":1776009598464}",
+    "response": {
+      "status": 200,
+      "body": "{\"results\":[{\"eventsIn\":51070,\"eventsOut\":123109,\"bytesIn\":62240934,\"bytesOut\":118525995,\"starttime\":1776008640,\"endtime\":1776008700},{\"eventsIn\":52723,\"eventsOut\":126568,\"bytesIn\":66404446,\"bytesOut\":122438156,\"starttime\":1776008700,\"endtime\":1776008760},{\"eventsIn\":52803,\"eventsOut\":126574,\"bytesIn\":66955214,\"bytesOut\":123034175,\"starttime\":1776008760,\"endtime\":1776008820},{\"eventsIn\":53652,\"eventsOut\":128599,\"bytesIn\":73318462,\"bytesOut\":126894599,\"starttime\":1776008820,\"endtime\":1776008880},{\"eventsIn\":52678,\"eventsOut\":126883,\"bytesIn\":69185458,\"bytesOut\":123263078,\"starttime\":1776008880,\"endtime\":1776008940},{\"eventsIn\":52166,\"eventsOut\":124503,\"bytesIn\":62762077,\"bytesOut\":120665559,\"starttime\":1776008940,\"endtime\":1776009000},{\"eventsIn\":52791,\"eventsOut\":127484,\"bytesIn\":66970016,\"bytesOut\":123747316,\"starttime\":1776009000,\"endtime\":1776009060},{\"eventsIn\":53016,\"eventsOut\":126256,\"bytesIn\":66744698,\"bytesOut\":123098570,\"starttime\":1776009060,\"endtime\":1776009120},{\"eventsIn\":52708,\"eventsOut\":126644,\"bytesIn\":71322412,\"bytesOut\":124559757,\"starttime\":1776009120,\"endtime\":1776009180},{\"eventsIn\":53048,\"eventsOut\":127485,\"bytesIn\":68543731,\"bytesOut\":124219785,\"starttime\":1776009180,\"endtime\":1776009240},{\"eventsIn\":52459,\"eventsOut\":125036,\"bytesIn\":62712806,\"bytesOut\":121383135,\"starttime\":1776009240,\"endtime\":1776009300},{\"eventsIn\":51305,\"eventsOut\":124473,\"bytesIn\":64518841,\"bytesOut\":120158761,\"starttime\":1776009300,\"endtime\":1776009360},{\"eventsIn\":53743,\"eventsOut\":127498,\"bytesIn\":67449616,\"bytesOut\":124062461,\"starttime\":1776009360,\"endtime\":1776009420},{\"eventsIn\":53014,\"eventsOut\":127299,\"bytesIn\":72753220,\"bytesOut\":125372270,\"starttime\":1776009420,\"endtime\":1776009480},{\"eventsIn\":53277,\"eventsOut\":127857,\"bytesIn\":69216123,\"bytesOut\":124818400,\"starttime\":1776009480,\"endtime\":1776009540}],\"metrics\":{\"metrics_aggregator.referenced_metrics\":5,\"metrics_reader.execution_time\":1,\"metrics_reader.matched\":1476,\"metrics_reader.invalid_series\":0,\"metrics_aggregator.matched\":300,\"metrics_aggregator.points\":300,\"metrics_aggregator.results\":15,\"metrics_aggregator.execution_time\":18},\"info\":{\"timeWindowSeconds\":60}}"
+    }
+  },
+  {
+    "ts": "2026-04-12T15:59:58.741Z",
+    "method": "POST",
+    "url": "/api/v1/system/metrics/query",
+    "postData": "{\"where\":\"(has_no_dimensions) && (__dist_mode==\\\"worker\\\")\",\"aggs\":{\"aggregations\":[\"sum(\\\"total.in_events\\\").as(\\\"eventsIn\\\")\",\"sum(\\\"total.out_events\\\").as(\\\"eventsOut\\\")\",\"sum(\\\"total.in_bytes\\\").as(\\\"bytesIn\\\")\",\"sum(\\\"total.out_bytes\\\").as(\\\"bytesOut\\\")\"],\"cumulative\":true},\"earliest\":\"900s\",\"latest\":1776009598489}",
+    "response": {
+      "status": 200,
+      "body": "{\"results\":[{\"eventsIn\":51070,\"eventsOut\":123109,\"bytesIn\":62240934,\"bytesOut\":118525995,\"starttime\":1776008640,\"endtime\":1776008700},{\"eventsIn\":52723,\"eventsOut\":126568,\"bytesIn\":66404446,\"bytesOut\":122438156,\"starttime\":1776008700,\"endtime\":1776008760},{\"eventsIn\":52803,\"eventsOut\":126574,\"bytesIn\":66955214,\"bytesOut\":123034175,\"starttime\":1776008760,\"endtime\":1776008820},{\"eventsIn\":53652,\"eventsOut\":128599,\"bytesIn\":73318462,\"bytesOut\":126894599,\"starttime\":1776008820,\"endtime\":1776008880},{\"eventsIn\":52678,\"eventsOut\":126883,\"bytesIn\":69185458,\"bytesOut\":123263078,\"starttime\":1776008880,\"endtime\":1776008940},{\"eventsIn\":52166,\"eventsOut\":124503,\"bytesIn\":62762077,\"bytesOut\":120665559,\"starttime\":1776008940,\"endtime\":1776009000},{\"eventsIn\":52791,\"eventsOut\":127484,\"bytesIn\":66970016,\"bytesOut\":123747316,\"starttime\":1776009000,\"endtime\":1776009060},{\"eventsIn\":53016,\"eventsOut\":126256,\"bytesIn\":66744698,\"bytesOut\":123098570,\"starttime\":1776009060,\"endtime\":1776009120},{\"eventsIn\":52708,\"eventsOut\":126644,\"bytesIn\":71322412,\"bytesOut\":124559757,\"starttime\":1776009120,\"endtime\":1776009180},{\"eventsIn\":53048,\"eventsOut\":127485,\"bytesIn\":68543731,\"bytesOut\":124219785,\"starttime\":1776009180,\"endtime\":1776009240},{\"eventsIn\":52459,\"eventsOut\":125036,\"bytesIn\":62712806,\"bytesOut\":121383135,\"starttime\":1776009240,\"endtime\":1776009300},{\"eventsIn\":51305,\"eventsOut\":124473,\"bytesIn\":64518841,\"bytesOut\":120158761,\"starttime\":1776009300,\"endtime\":1776009360},{\"eventsIn\":53743,\"eventsOut\":127498,\"bytesIn\":67449616,\"bytesOut\":124062461,\"starttime\":1776009360,\"endtime\":1776009420},{\"eventsIn\":53014,\"eventsOut\":127299,\"bytesIn\":72753220,\"bytesOut\":125372270,\"starttime\":1776009420,\"endtime\":1776009480},{\"eventsIn\":53277,\"eventsOut\":127857,\"bytesIn\":69216123,\"bytesOut\":124818400,\"starttime\":1776009480,\"endtime\":1776009540}],\"metrics\":{\"metrics_aggregator.referenced_metrics\":5,\"metrics_reader.execution_time\":1,\"metrics_reader.matched\":1476,\"metrics_reader.invalid_series\":0,\"metrics_aggregator.matched\":300,\"metrics_aggregator.points\":300,\"metrics_aggregator.results\":15,\"metrics_aggregator.execution_time\":21},\"info\":{\"timeWindowSeconds\":60}}"
+    }
+  },
+  {
+    "ts": "2026-04-12T15:59:59.453Z",
+    "method": "GET",
+    "url": "/api/v1/system/authentication/info",
+    "postData": null,
+    "response": {
+      "status": 200,
+      "body": "{\"items\":[{\"canChangePassword\":false}],\"count\":1}"
+    }
+  }
+]

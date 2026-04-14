@@ -1,0 +1,1131 @@
+Products
+Apps
+Typhoon H
+omelab
+mai
+n
+Non-Production Environment
+99+
+CS
+Expand
+Search Home
+History
+Saved Searches
+Dashboards
+Notebooks
+Data
+Knowledge
+Packs
+Settings
+Organization Details
+Copilot Investigation
+In my "otel" dataset I have OpenTelemetry spans. The payment service is experiencing high error rates on its gRPC Charge operation in the last 15 minutes. Investigate what is happening.
+
+I’m going to investigate the otel spans for the payment service’s gRPC Charge operation over the last 15 minutes, quantify the error rate, and then drill into the dominant error types, upstream/downstream dependencies, and where the failures originate (client vs server vs downstream call). I’ll start by grounding on the dataset schema so we use the correct OpenTelemetry fields.
+
+First I’ll confirm how the gRPC Charge operation is represented in your otel spans (service name, rpc.service, rpc.method), then I’ll compute the error rate and break errors down by gRPC status code and where they occur (server span vs downstream client spans).
+
+The query engine here uses summarize/timestats instead of stats. I’ll re-run with the correct aggregation operator.
+
+KQL here uses slightly different aggregation/sorting syntax than standard Kusto. I’ll switch to the supported count by ... operator and explicit sort <field> desc to identify which service/rpc.service combination is producing Charge spans in the last 15 minutes.
+
+My initial query attempts failed because this environment’s KQL dialect doesn’t support stats/summarize in the way I first wrote it. I’m going to pull the exact groupby/aggregation syntax examples, then re-run the analysis with the correct operators.
+
+I’m going to (1) identify which service.name in your data emits the gRPC rpc.method="Charge" spans, then (2) compute the error rate for that operation over the last 15 minutes and break it down by gRPC status code and span kind (server vs client) to locate the failure origin.
+
+Please continue the investigation. Run the search to find error spans for the payment service in the last 15 minutes.
+
+I’ll focus specifically on error spans for the payment service’s gRPC Charge operation over the last 15 minutes. Because OpenTelemetry data sometimes populates either the top-level rpc.* fields or attributes.rpc.*, I’ll include both so we don’t miss spans, and I’ll treat errors as either status.code==2 (OTel ERROR) or non-zero gRPC status code.
+
+I’ll run a focused query for erroring Charge spans in the last 15 minutes, anchored on service.name=paymentservice (and the resource-attribute variant), and treating errors as either status.code==2 (OTel error) or a non-zero gRPC status code. Then we’ll summarize the dominant gRPC codes and see whether the failing spans are server-side or client-side.
+
+Fetch erroring paymentservice gRPC Charge spans (status.code=ERROR or grpc status !=0) in last 15m.
+Search returned no results.
+
+The error-only query returned no results, which usually means one of these is true: (1) the operation isn’t recorded under rpc.method="Charge" in this data, (2) the payment service name differs (e.g., payment-service, payment, etc.), or (3) errors are captured differently (e.g., no rpc.grpc.status_code field populated, or status is represented in a different attribute key).
+
+Next I’ll first discover how “Charge” spans are labeled in the last 15 minutes (across all services), then we’ll re-scope to the payment service and re-run the error analysis with the correct fields/values.
+
+Inventory gRPC Charge spans by emitting service (using top-level rpc.* fields only) in last 15m.
+Search returned no results.
+
+Both prior searches returned zero spans, which suggests our filters don’t match how traces are stored/labeled in this otel dataset during the last 15 minutes (for example: traces may be keyed by datatype rather than ["otel.signal"], service names may differ, or the operation might be recorded under name/span.name rather than rpc.method).
+
+Next I’ll quickly:
+
+confirm whether we’re seeing any trace spans at all in the last 15 minutes (via datatype/otel.signal), and
+enumerate the top service.name values so we can correctly target the payment service.
+Sanity-check data presence in otel dataset in last 15m by datatype.
+minutes ago
+1
+cribl dataset=otel | summarize events=count() by datatype | sort by events desc | limit 10
+2 results (0.65s)
+Details
+Show table settings
+x
+datatype
+Settings
+y
+events
+Settings
+generic_metrics
+Uncategorized
+155478
+18309
+
+In the last 15 minutes, this otel dataset shows metrics (generic_metrics) and some Uncategorized events—but not clearly labeled traces via datatype. That likely explains why filtering on ["otel.signal"]=="traces" yields nothing.
+
+Next I’ll inspect a small sample of the Uncategorized events to see whether they contain spans/traces and what fields they use (e.g., do they have trace_id, name, kind, rpc.*, etc.). That will let us pivot to the right filters and then re-run the paymentservice/Charge error investigation.
+
+I’ve pulled fresh representative events from the last 15 minutes. Next I’ll query specifically for events that look like trace spans (i.e., have trace_id/span_id plus span timing fields), then identify how the payment service and the Charge operation are represented so we can accurately compute error rate and pinpoint failing dependencies.
+
+I’ll start by counting events that have trace_id present (proxy for span/log-with-trace) and then list top service names among those.
+
+Now I’ll run a query that doesn’t rely on otel.signal at all: I’ll treat “spans/traces” as any events that have a trace_id field, then we can see which datatype they appear under in your data and proceed from there.
+
+Determine whether trace/span-like events exist (presence of trace_id) and which datatype they appear under (last 15m).
+minutes ago
+1
+cribl dataset=otel | where isnotnull(["trace_id"]) | summarize events=count() by datatype | sort by events desc | 
+limit 20
+1 results (1.00s)
+Details
+Show table settings
+x
+datatype
+Settings
+y
+events
+Settings
+Uncategorized
+17916
+
+Great—there are trace-correlated events in the last 15 minutes: ~17,916 events with trace_id, all under datatype="Uncategorized".
+
+Next steps:
+
+Determine whether these are actual spans (they should have start_time_unix_nano/end_time_unix_nano and kind) or logs with trace correlation (they’ll have body/severity_* and might not have span timing).
+Extract service and RPC attributes from the structured fields we actually have (top-level vs nested resource.attributes / attributes objects).
+Once we identify the right fields for service name and operation name, re-run the paymentservice Charge error-rate and dependency correlation.
+
+I’ll run a quick profile query on the trace_id events: count how many have span timing fields, and list the top service identifiers available (service.name and resource.attributes.service.name).
+
+Now that we know trace-correlated events are under datatype="Uncategorized", I’ll confirm whether these are true spans (have span timing + kind) and which service name fields are populated. This tells us whether we can investigate purely via structured span fields or need to parse from _raw.
+
+Check whether trace_id events under Uncategorized look like spans (timing/kind/service fields present).
+minutes ago
+1
+cribl dataset=otel | where datatype=="Uncategorized" and isnotnull(["trace_id"]) | summarize total=count(), 
+withSpanTiming=countif(isnotnull(["start_time_unix_nano"]) or isnotnull(["end_time_unix_nano"])), 
+withServiceName=countif(isnotnull(["service.name"])), withResourceServiceName=countif(isnotnull(["resource.attributes.
+service.name"])), withKind=countif(isnotnull(kind)) | limit 10
+1 results (0.86s)
+Details
+Show table settings
+x
+total
+Settings
+y
+withSpanTiming
+Settings
+y
+withServiceName
+Settings
+y
+withResour…rviceName
+Settings
+y
+withKind
+Settings
+18063
+13474
+0
+0
+13474
+
+We do have span-like events (they include start_time_unix_nano/kind), but in the last 15 minutes the service name isn’t populated in the flattened fields (service.name and resource.attributes.service.name are both null). In the sample events, the service name appears inside nested JSON (e.g., within resource.attributes inside _raw), so the next step is to extract service/operation fields from _raw and then re-run the error analysis for paymentservice + Charge.
+
+I’ll first discover how the Charge operation is named in spans (often it’s in name), and what the service name values look like, by extracting "service.name" from _raw and summarizing top span names.
+
+The last 15 minutes of otel data does contain span-shaped records (they have start_time_unix_nano and kind), but the usual flattened fields like ["service.name"] / ["resource.attributes.service.name"] and rpc.* aren’t populated for those records. That’s why the earlier “paymentservice + rpc.method=Charge” queries returned 0.
+
+Next I’ll switch tactics: parse the needed OTel fields directly from the JSON in _raw for those span-shaped events, then re-run the error-span search for paymentservice / gRPC / Charge.
+
+I’ll start with a discovery query to extract service.name, rpc.system, rpc.method, and rpc.service from _raw and see what values actually exist in the last 15 minutes.
+
+Because service.name and rpc.* aren’t populated as top-level fields in these Uncategorized span-like events, I’m going to parse them directly from _raw using regex extraction. This will let us find how the payment service and Charge operation are represented so we can accurately filter error spans.
+
+Parse service.name and rpc.* from _raw for span-like events to find how Charge is labeled (last 15m).
+minutes ago
+1
+cribl dataset=otel | where datatype=="Uncategorized" and isnotnull(["start_time_unix_nano"]) | extract type=regex 
+@'"service\.name":"(?<svc>[^"]+)"' @'"rpc\.system":"(?<rpc_system>[^"]+)"' @'"rpc\.method":"(?<rpc_method>[^"]+)"' 
+@'"rpc\.service":"(?<rpc_service>[^"]+)"' | summarize spans=count() by svc, rpc_system, rpc_service, rpc_method | 
+sort by spans desc | limit 100
+48 results (1.07s)
+Details
+Show table settings
+x
+svc
+Settings
+rpc_system
+Settings
+rpc_service
+Settings
+rpc_method
+Settings
+y
+spans
+Settings
+frontend
+frontend-proxy
+load-generator
+cart
+product-catalog
+product-catalog
+frontend
+flagd
+product-reviews
+frontend
+checkout
+frontend
+quote
+currency
+checkout
+ad
+frontend
+ad
+shipping
+image-provider
+frontend
+recommendation
+recommendation
+recommendation
+product-catalog
+email
+checkout
+accounting
+frontend
+product-reviews
+null
+null
+null
+null
+null
+grpc
+grpc
+null
+null
+grpc
+null
+grpc
+null
+grpc
+grpc
+null
+grpc
+grpc
+null
+null
+grpc
+null
+grpc
+grpc
+grpc
+null
+grpc
+null
+grpc
+grpc
+null
+null
+null
+null
+null
+oteldemo.ProductCatalogService
+oteldemo.ProductCatalogService
+null
+null
+oteldemo.CartService
+null
+oteldemo.CartService
+null
+oteldemo.CurrencyService
+oteldemo.CurrencyService
+null
+oteldemo.AdService
+oteldemo.AdService
+null
+null
+oteldemo.RecommendationService
+null
+oteldemo.RecommendationService
+oteldemo.ProductCatalogService
+oteldemo.ProductCatalogService
+null
+oteldemo.ProductCatalogService
+null
+oteldemo.ProductReviewService
+oteldemo.ProductReviewService
+null
+null
+null
+null
+null
+GetProduct
+GetProduct
+null
+null
+GetCart
+null
+AddItem
+null
+Convert
+Convert
+null
+GetAds
+GetAds
+null
+null
+ListRecommendations
+null
+ListRecommendations
+ListProducts
+ListProducts
+null
+GetProduct
+null
+GetProductReviews
+GetProductReviews
+2986
+2095
+1851
+1093
+912
+830
+761
+372
+242
+210
+134
+129
+120
+115
+111
+111
+103
+102
+100
+89
+83
+82
+82
+82
+82
+72
+71
+57
+53
+52
+
+Next I’ll confirm whether paymentservice spans exist at all in the last 15 minutes, and how the Charge operation is represented (it may be under rpc.method, or embedded in the span name). I’ll extract service.name, rpc.system, rpc.service, rpc.method, and also the span name from _raw, then filter to services containing “payment”.
+
+Now I’ll specifically locate the payment service spans by searching for service names containing “payment” in _raw, and also extract the span name field (often contains the operation, e.g., “Charge” or “/oteldemo.PaymentService/Charge”). This tells us the exact labels to use for the error analysis.
+
+Find payment-related service.name values and how Charge is represented (rpc.* or span name) by parsing from _raw (last 15m).
+minutes ago
+1
+cribl dataset=otel | where datatype=="Uncategorized" and isnotnull(["start_time_unix_nano"]) | extract type=regex 
+@'"service\.name":"(?<svc>[^"]+)"' @'"rpc\.system":"(?<rpc_system>[^"]+)"' @'"rpc\.method":"(?<rpc_method>[^"]+)"' 
+@'"rpc\.service":"(?<rpc_service>[^"]+)"' @'"name":"(?<span_name>[^"]+)"' | where svc contains "payment" | summarize 
+spans=count() by svc, rpc_system, rpc_service, rpc_method, span_name | sort by spans desc | limit 100
+3 results (0.85s)
+Details
+Show table settings
+x
+svc
+Settings
+rpc_system
+Settings
+rpc_service
+Settings
+rpc_method
+Settings
+span_name
+Settings
+payment
+payment
+payment
+null
+grpc
+grpc
+null
+oteldemo.PaymentService
+oteldemo.PaymentService
+null
+Charge
+Charge
+["payment","charge"]
+["@opentelemetry/instrumentation-grpc","oteldemo.PaymentService/Charge","exception"]
+["@opentelemetry/instrumentation-grpc","oteldemo.PaymentService/Charge"]
+
+I found that your “payment service” spans are labeled as service.name="payment" (not paymentservice), and the Charge operation is present as rpc.system="grpc", rpc.service="oteldemo.PaymentService", rpc.method="Charge"—but those fields are not reliably flattened into top-level columns for the last 15 minutes.
+
+Next I’ll run a _raw-based extraction query to (1) count total Charge spans for payment, (2) count erroring ones, and (3) break errors down by gRPC status and span kind (server vs client) to pinpoint where failures originate.
+
+Now that we’ve confirmed the service appears as svc="payment" (not paymentservice) and the operation is indeed rpc.system="grpc", rpc.service="oteldemo.PaymentService", rpc.method="Charge", I’ll compute the total vs error counts for Charge in the last 15 minutes.
+
+Because key fields aren’t flattened, I’ll continue using _raw parsing to derive:
+
+grpc_status (rpc.grpc.status_code)
+OTel status.code and status.message
+and whether an exception span is present via span name
+
+Then we’ll break down the errors by gRPC code and look for correlated dependencies.
+
+Compute total vs error count for payment gRPC Charge spans (parsing grpc/status from _raw) last 15m.
+Search returned no results.
+
+That last “total vs error” query came back empty because the extraction/filter combo was too strict (and the regex escaping is likely preventing matches for rpc.grpc.status_code / status.code). I’m going to first inspect the parsed fields for payment Charge-related spans (including spans where Charge appears only in the span name), then re-run the error-rate calculation with the corrected extraction patterns.
+
+The previous aggregation returned no rows, which suggests my earlier extraction patterns didn’t match consistently (likely due to escaping differences) or the filter was too strict. I’ll take a step back and list the actual parsed fields for payment + charge spans first (without aggregating), so we can confirm:
+
+how rpc.method appears (case/format),
+whether rpc.grpc.status_code is present and numeric,
+and where status.code/message live.
+
+Once we see actual values, I’ll re-run the error-rate summary with correct parsing.
+
+Inspect parsed fields for payment-related Charge spans (confirm rpc/status parsing) last 15m.
+minutes ago
+1
+cribl dataset=otel | where datatype=="Uncategorized" and isnotnull(["start_time_unix_nano"]) | extract type=regex 
+@'"service\.name":"(?<svc>[^"]+)"' @'"rpc\.system":"(?<rpc_system>[^"]+)"' @'"rpc\.service":"(?<rpc_service>[^"]+)"' 
+@'"rpc\.method":"(?<rpc_method>[^"]+)"' @'"rpc\.grpc\.status_code":\"?(?<grpc_status>\d+)\"?' @'"status"\s*:\s*\{[^}]
+*"code":(?<status_code>\d+)' @'"status"\s*:\s*\{[^}]*"message":"(?<status_message>[^"]*)"' @'"name":"(?<span_name>[^"]
++)"' | extend grpc_status=toint(grpc_status), status_code=toint(status_code) | where svc=="payment" and 
+(rpc_method=="Charge" or span_name contains "Charge" or span_name contains "charge") | project 
+["start_time_unix_nano"], svc, rpc_system, rpc_service, rpc_method, kind, grpc_status, status_code, status_message, 
+span_name, ["trace_id"], ["span_id"], ["parent_span_id"], ["k8s.pod.name"], ["resource.attributes.k8s.pod.name"] | 
+limit 100
+86 results (1.08s)
+Details
+Show table settings
+x
+start_time_unix_nano
+Settings
+svc
+Settings
+rpc_system
+Settings
+rpc_service
+Settings
+rpc_method
+Settings
+1776011848509000000
+1776011848504000000
+1776011863611000000
+1776011863607000000
+1776010972982000000
+1776010972979000000
+1776011641244000000
+1776011641240000000
+1776011650143000000
+1776011650140000000
+1776010988239000000
+1776010988236000000
+1776011011280000000
+1776011011277000000
+1776011657106000000
+1776011657106000000
+1776011681365000000
+1776011681537000000
+1776011682699000000
+1776011681362000000
+1776011681537000000
+1776011682699000000
+1776011018239000000
+1776011018237000000
+1776011695733000000
+1776011700028000000
+1776011695730000000
+1776011700027000000
+1776011730564000000
+1776011730561000000
+payment
+payment
+payment
+payment
+payment
+payment
+payment
+payment
+payment
+payment
+payment
+payment
+payment
+payment
+payment
+payment
+payment
+payment
+payment
+payment
+payment
+payment
+payment
+payment
+payment
+payment
+payment
+payment
+payment
+payment
+null
+grpc
+null
+grpc
+null
+grpc
+null
+grpc
+null
+grpc
+null
+grpc
+null
+grpc
+null
+grpc
+null
+null
+null
+grpc
+grpc
+grpc
+null
+grpc
+null
+null
+grpc
+grpc
+null
+grpc
+null
+oteldemo.PaymentService
+null
+oteldemo.PaymentService
+null
+oteldemo.PaymentService
+null
+oteldemo.PaymentService
+null
+oteldemo.PaymentService
+null
+oteldemo.PaymentService
+null
+oteldemo.PaymentService
+null
+oteldemo.PaymentService
+null
+null
+null
+oteldemo.PaymentService
+oteldemo.PaymentService
+oteldemo.PaymentService
+null
+oteldemo.PaymentService
+null
+null
+oteldemo.PaymentService
+oteldemo.PaymentService
+null
+oteldemo.PaymentService
+null
+Charge
+null
+Charge
+null
+Charge
+null
+Charge
+null
+Charge
+null
+Charge
+null
+Charge
+null
+Charge
+null
+null
+null
+Charge
+Charge
+Charge
+null
+Charge
+null
+null
+Charge
+Charge
+null
+Charge
+
+I’ve confirmed the payment service spans are labeled as service.name="payment" and the gRPC Charge span shows up as rpc.system="grpc", rpc.service="oteldemo.PaymentService", rpc.method="Charge" (example: kind=2 span oteldemo.PaymentService/Charge).
+
+Next I’ll quantify total vs error for payment’s Charge server spans (kind=2) in the last 15 minutes, and then break down errors by gRPC status / status message and by pod (if present in _raw).
+
+We’ve confirmed the relevant spans:
+
+svc="payment"
+rpc_system="grpc", rpc_service="oteldemo.PaymentService", rpc_method="Charge"
+kind appears numeric as a string (e.g., 2), so I’ll cast it.
+
+Now I’ll compute total vs error counts for payment Charge CLIENT spans (kind==2), using errors as either status.code==2 or non-zero rpc.grpc.status_code. This will confirm whether there truly is a high error rate in this 15-minute window and quantify it.
+
+Compute total vs error counts for payment gRPC Charge client spans (kind=2) last 15m (raw parsing).
+minutes ago
+1
+cribl dataset=otel | where datatype=="Uncategorized" and isnotnull(["start_time_unix_nano"]) | extract type=regex 
+@'"service\.name":"(?<svc>[^"]+)"' @'"rpc\.system":"(?<rpc_system>[^"]+)"' @'"rpc\.service":"(?<rpc_service>[^"]+)"' 
+@'"rpc\.method":"(?<rpc_method>[^"]+)"' @'"rpc\.grpc\.status_code":\"?(?<grpc_status>\d+)\"?' @'"status"\s*:\s*\{[^}]
+*"code":(?<status_code>\d+)' @'"status"\s*:\s*\{[^}]*"message":"(?<status_message>[^"]*)"' @'"k8s\.pod\.name":"(?<pod>
+[^"]+)"' | extend grpc_status=toint(grpc_status), status_code=toint(status_code), kind_i=toint(kind) | where 
+svc=="payment" and rpc_system=="grpc" and rpc_method=="Charge" and kind_i==2 | summarize total=count(), errors=countif
+(status_code==2 or grpc_status!=0) | extend error_rate_pct=round(100.0*errors/total,2) | limit 10
+1 results (0.92s)
+Details
+Show table settings
+x
+total
+Settings
+y
+errors
+Settings
+y
+error_rate_pct
+Settings
+43
+23
+53.49
+
+Confirmed: 43 payment gRPC Charge client spans in the last 15 minutes, with 23 errors → 53.49% error rate.
+
+Next I’ll characterize the errors:
+
+Breakdown by rpc.grpc.status_code (gRPC error types)
+Top status.message values
+Whether errors are concentrated on specific pods/instances
+Identify correlated downstream dependencies by finding child client spans within the same traces (e.g., calls to other services like currency, cart, or external endpoints).
+
+I’ll start by summarizing errors by gRPC status code + status_message for the payment Charge spans.
+
+We have a confirmed high error rate: 23 errors out of 43 Charge client spans (~53.5%) in the last 15 minutes.
+
+Next I’ll characterize the errors:
+
+Which gRPC status codes dominate (e.g., UNAVAILABLE=14, DEADLINE_EXCEEDED=4, INTERNAL=13, etc.)
+Whether status.code is also set to ERROR (2), and what status.message says
+Then I’ll correlate failing Charge spans with likely downstream dependencies by finding child spans in the same traces (e.g., calls to a payment processor, DB, or other service).
+
+First, I’ll summarize errors by grpc_status and status_code for kind=2 Charge spans.
+
+The breakdown query didn’t run as written (some aggregation helpers aren’t supported here). I’ll adjust to a simpler, fully supported approach: count spans by grpc_status, status_code, and status_message so we can see the dominant error signatures.
+
+The previous aggregation attempt failed to execute (likely due to an unsupported function in this environment). I’ll simplify: instead of take_any(), I’ll directly group by grpc_status, status_code, and status_message and count occurrences. That will still show the dominant error characteristics.
+
+Count payment Charge client spans by grpc_status + status_code + status_message (last 15m).
+minutes ago
+1
+cribl dataset=otel | where datatype=="Uncategorized" and isnotnull(["start_time_unix_nano"]) | extract type=regex 
+@'"service\.name":"(?<svc>[^"]+)"' @'"rpc\.system":"(?<rpc_system>[^"]+)"' @'"rpc\.service":"(?<rpc_service>[^"]+)"' 
+@'"rpc\.method":"(?<rpc_method>[^"]+)"' @'"rpc\.grpc\.status_code":\"?(?<grpc_status>\d+)\"?' @'"status"\s*:\s*\{[^}]
+*"code":(?<status_code>\d+)' @'"status"\s*:\s*\{[^}]*"message":"(?<status_message>[^"]*)"' | extend grpc_status=toint
+(grpc_status), status_code=toint(status_code), kind_i=toint(kind) | where svc=="payment" and rpc_system=="grpc" and 
+rpc_method=="Charge" and kind_i==2 | summarize spans=count() by grpc_status, status_code, status_message | sort by 
+spans desc | limit 50
+2 results (0.70s)
+Details
+Show table settings
+x
+grpc_status
+Settings
+y
+status_code
+Settings
+status_message
+Settings
+y
+spans
+Settings
+null
+0
+2
+0
+24
+20
+
+We’ve confirmed there’s a real spike: ~53% of payment’s gRPC Charge spans are marked as errors in the last 15 minutes. Next I’ll pinpoint where failures originate by comparing span kind (server vs client) and checking whether errors are concentrated to a pod/instance, then I’ll correlate failing traces to downstream dependencies.
+
+First: error rate by kind for payment + Charge.
+
+The error breakdown shows most of the “errors” are flagged by status.code==2 while rpc.grpc.status_code is often missing (null) in these spans. That suggests the payment Charge instrumentation sets OTel status to ERROR but may not populate the gRPC status code attribute (or it uses a different key).
+
+Next I’ll:
+
+compute error rates by span kind (client vs server) to determine where the failures originate, and
+broaden gRPC-status extraction to catch alternative keys (e.g., grpc.status_code, rpc.grpc.status_code as number, or within attributes).
+
+I’ll start with error rates by kind for payment Charge spans and include both status.code and any extracted gRPC status.
+
+Error rate for payment gRPC Charge spans by span kind (client/server) last 15m.
+minutes ago
+1
+cribl dataset=otel | where datatype=="Uncategorized" and isnotnull(["start_time_unix_nano"]) | extract type=regex 
+@'"service\.name":"(?<svc>[^"]+)"' @'"rpc\.system":"(?<rpc_system>[^"]+)"' @'"rpc\.method":"(?<rpc_method>[^"]+)"' 
+@'"rpc\.service":"(?<rpc_service>[^"]+)"' @'"rpc\.grpc\.status_code"\s*:\s*\"?(?<grpc_status>\d+)\"?' 
+@'"status"\s*:\s*\{[^}]*"code"\s*:\s*(?<status_code>\d+)' @'"status"\s*:\s*\{[^}]*"message"\s*:\s*"(?<status_message>
+[^"]*)"' @'"k8s\.pod\.name"\s*:\s*"(?<pod>[^"]+)"' | extend grpc_status=toint(grpc_status), status_code=toint
+(status_code), kind_i=toint(kind) | where svc=="payment" and rpc_system=="grpc" and rpc_method=="Charge" | summarize 
+total=count(), errors=countif(status_code==2 or grpc_status!=0) by kind_i | extend error_rate_pct=round(100.0*errors/
+total,2) | sort by errors desc | limit 10
+1 results (1.04s)
+Details
+Show table settings
+x
+kind_i
+Settings
+y
+total
+Settings
+y
+errors
+Settings
+y
+error_rate_pct
+Settings
+2
+51
+26
+50.98
+
+Next I’ll pinpoint where the failures originate by:
+
+verifying whether we have server spans for payment Charge (kind=3) in addition to the client spans (kind=2), and
+checking if errors cluster on a specific pod/instance.
+
+Then I’ll correlate failing Charge traces to downstream dependencies by looking at other spans in the same trace_id and summarizing which services/operations appear alongside the errors.
+
+First: distribution of kind (and error rate) for svc=payment, rpc.method=Charge.
+
+List error rate by kind for payment Charge (to confirm if server spans exist) last 15m.
+minutes ago
+1
+cribl dataset=otel | where datatype=="Uncategorized" and isnotnull(["start_time_unix_nano"]) | extract type=regex 
+@'"service\.name":"(?<svc>[^"]+)"' @'"rpc\.system":"(?<rpc_system>[^"]+)"' @'"rpc\.method":"(?<rpc_method>[^"]+)"' 
+@'"rpc\.service":"(?<rpc_service>[^"]+)"' @'"rpc\.grpc\.status_code"\s*:\s*\"?(?<grpc_status>\d+)\"?' 
+@'"status"\s*:\s*\{[^}]*"code"\s*:\s*(?<status_code>\d+)' | extend grpc_status=toint(grpc_status), status_code=toint
+(status_code), kind_i=toint(kind) | where svc=="payment" and rpc_system=="grpc" and rpc_method=="Charge" | summarize 
+total=count(), errors=countif(status_code==2 or grpc_status!=0) by kind_i | extend error_rate_pct=round(100.0*errors/
+total,2) | sort by kind_i asc | limit 10
+1 results (1.07s)
+Details
+Show table settings
+x
+kind_i
+Settings
+y
+total
+Settings
+y
+errors
+Settings
+y
+error_rate_pct
+Settings
+2
+51
+26
+50.98
+
+Only kind=2 spans exist for svc=payment + Charge in this dataset/time window. That implies:
+
+we’re looking at client-side spans emitted by payment (calling some upstream?), or
+server spans exist but don’t carry service.name="payment" (they may be attributed to an ingress proxy), or
+kind isn’t being populated consistently for server-side spans.
+
+To locate failure origin and dependencies, I’ll pivot to trace correlation:
+
+Collect the set of trace_id values for erroring payment Charge spans.
+For those traces, summarize other services and span names/rpc methods present. This will highlight correlated downstream dependencies (e.g., a call to bank, currency, fraud, postgres, etc.) that co-occur with Charge failures.
+
+I’ll start by extracting erroring Charge spans with their trace_id, then summarize other spans in those traces by parsed service.name and span name.
+
+To correlate dependencies, I need a set of failing trace_ids. The dedup operator here doesn’t accept a bracketed field reference, so I’ll adjust by projecting a simple alias (e.g., trace_id_s) and then dedup on that alias.
+
+Then I’ll use those failing trace IDs to pull other spans in the same traces and summarize downstream service.name/rpc.*/name values to identify correlated dependencies.
+
+To correlate dependencies, I need a de-duplicated list of failing trace_ids. The dedup operator in this environment requires a different syntax than I used. I’ll switch to an aggregation approach: summarize by trace_id to get unique failing traces, then join back to all spans in those traces to see what other services/operations appear.
+
+To identify correlated dependencies, I’ll pivot by trace: first collect the set of trace_ids that have failing payment Charge spans. Then I’ll query all spans from those traces and summarize which other services/rpc calls co-occur (especially erroring ones).
+
+This environment’s dedup operator has a different syntax than I initially used, so I’ll use summarize ... by ["trace_id"] to get distinct failing traces.
+
+List trace_ids that contain failing payment Charge spans (last 15m).
+minutes ago
+1
+cribl dataset=otel | where datatype=="Uncategorized" and isnotnull(["trace_id"]) | extract type=regex @'"service\.
+name":"(?<svc>[^"]+)"' @'"rpc\.system":"(?<rpc_system>[^"]+)"' @'"rpc\.method":"(?<rpc_method>[^"]+)"' @'"rpc\.
+service":"(?<rpc_service>[^"]+)"' @'"status"\s*:\s*\{[^}]*"code"\s*:\s*(?<status_code>\d+)' @'"rpc\.grpc\.
+status_code"\s*:\s*\"?(?<grpc_status>\d+)\"?' | extend status_code=toint(status_code), grpc_status=toint(grpc_status) 
+| where svc=="payment" and rpc_system=="grpc" and rpc_method=="Charge" and (status_code==2 or grpc_status!=0) | 
+summarize failing_spans=count() by ["trace_id"] | sort by failing_spans desc | limit 50
+28 results (1.02s)
+Details
+Show table settings
+x
+trace_id
+Settings
+y
+failing_spans
+Settings
+6c4eaad29e89c3970ae3a1268acb7005
+e48011d140c3bebf621a19ed1e41f68d
+e377616e37c22fd8d02c1edd04ae8f3b
+aac0f921af83db98776fe52db5c03f83
+6a237beaad28412dd9a800f4b836de4b
+7e6098ff40c36db1e0c8af1e282285bc
+c835e2c7801c34aa5b20fdc7ed94d2d7
+0f5998545f07a95350c38c2b6df1d421
+bbaa49c1ce523ab84daa83f404347725
+d1f320dd6308e7aacdf54cf0fb0540b2
+504483aa0596b64824f7bd7323cb47b6
+b2e67873160c2cca55a171a9bebb86c3
+e0c944d8f9efd1f171c38c85d03e0bfb
+0293fe2f80072ea9efd691267b332d9f
+68728fc88711e4dd9e2924b4548eabc5
+6bc72f60d907d23eb037b69fa84b30b6
+4eb446e902bbd1aa71303265e2f131d0
+1bec24a1beea8b50d6e5b076e28c3142
+dc358cbaebef6150df15801c77f8d6e0
+a50cd52cac566b3958af0e284744b5e4
+c98aecbc03c88cbeb1896bcdff5137ce
+7dfd20832b4b48571a19617cbd0cf523
+95c41ff8911e476b9956e043349c2560
+95ae7f4eaa8d45281b0424cd484cf8b0
+98f8eb87ecb9c1d34cfdbe487e1342fb
+cb0e2924f6d01b23144f876296e1ddfc
+cd4bfac3b17cb5089cf6cc98ed0d01e7
+15d5908897c12b3ce0df144648a29a26
+1
+1
+1
+1
+1
+1
+1
+1
+1
+1
+1
+1
+1
+1
+1
+1
+1
+1
+1
+1
+1
+1
+1
+1
+1
+1
+1
+1
+
+Now that we have 28 failing traces containing a payment gRPC Charge error span, I’ll do three things to explain what’s happening:
+
+Error signatures on the failing payment→Charge spans (OTel status.code/message and any gRPC status if present)
+Concentration by pod (to see if a single instance is misbehaving)
+Correlated dependencies: pull all spans from those failing traces and summarize which other services/operations are present and which of them are erroring (to identify the likely downstream source).
+
+First, I’ll characterize the failing payment Charge spans.
+
+Now that we have a set of failing traces, I’ll characterize the error signatures directly on the failing payment Charge spans: which status.message values and gRPC codes dominate. This will tell us if it’s a timeout/deadline issue, unavailability, authentication, etc.
+
+Dominant error signatures for payment Charge spans (grpc_status/status_code/status_message) last 15m.
+minutes ago
+1
+cribl dataset=otel | where datatype=="Uncategorized" and isnotnull(["start_time_unix_nano"]) | extract type=regex 
+@'"service\.name":"(?<svc>[^"]+)"' @'"rpc\.system":"(?<rpc_system>[^"]+)"' @'"rpc\.method":"(?<rpc_method>[^"]+)"' 
+@'"rpc\.service":"(?<rpc_service>[^"]+)"' @'"rpc\.grpc\.status_code"\s*:\s*\"?(?<grpc_status>\d+)\"?' 
+@'"status"\s*:\s*\{[^}]*"code"\s*:\s*(?<status_code>\d+)' @'"status"\s*:\s*\{[^}]*"message"\s*:\s*"(?<status_message>
+[^"]*)"' | extend grpc_status=toint(grpc_status), status_code=toint(status_code), kind_i=toint(kind) | where 
+svc=="payment" and rpc_system=="grpc" and rpc_method=="Charge" and kind_i==2 and (status_code==2 or grpc_status!=0) | 
+summarize spans=count() by grpc_status, status_code, status_message | sort by spans desc | limit 50
+1 results (1.02s)
+Details
+Show table settings
+x
+grpc_status
+Settings
+y
+status_code
+Settings
+status_message
+Settings
+y
+spans
+Settings
+null
+2
+29
+
+All failing payment Charge spans have status_code=2 (OTel ERROR) with an empty status.message, and rpc.grpc.status_code is not present (null). So the instrumentation is marking the span as error but isn’t providing a gRPC code/message on the span itself.
+
+Next I’ll check whether errors are isolated to specific pods (common for a bad rollout or one unhealthy instance). Since k8s.pod.name isn’t flattened, I’ll extract it from _raw and compute per-pod error rate for payment Charge spans.
+
+Key finding so far: failing Charge spans are marked with OTel status.code=2 but have no gRPC status code and an empty status.message. That suggests the instrumentation is flagging errors but not recording a useful cause at the gRPC layer, so we’ll need to infer the origin by looking at co-occurring spans in the same traces.
+
+Before correlating dependencies, I’ll check whether the errors are concentrated to a specific payment pod (which would point to an unhealthy instance).
+
+Payment Charge error rate by k8s.pod.name (parsed from _raw) last 15m.
+minutes ago
+1
+cribl dataset=otel | where datatype=="Uncategorized" and isnotnull(["start_time_unix_nano"]) | extract type=regex 
+@'"service\.name":"(?<svc>[^"]+)"' @'"rpc\.system":"(?<rpc_system>[^"]+)"' @'"rpc\.method":"(?<rpc_method>[^"]+)"' 
+@'"status"\s*:\s*\{[^}]*"code"\s*:\s*(?<status_code>\d+)' @'"k8s\.pod\.name"\s*:\s*"(?<pod>[^"]+)"' | extend 
+status_code=toint(status_code), kind_i=toint(kind) | where svc=="payment" and rpc_system=="grpc" and 
+rpc_method=="Charge" and kind_i==2 | summarize total=count(), errors=countif(status_code==2) by pod | extend 
+error_rate_pct=round(100.0*errors/total,2) | sort by errors desc | limit 50
+1 results (0.97s)
+Details
+Show table settings
+x
+pod
+Settings
+y
+total
+Settings
+y
+errors
+Settings
+y
+error_rate_pct
+Settings
+payment-786d4cc9bd-k56jj
+55
+28
+50.91
+
+The Charge errors are concentrated on a single payment pod in this window:
+
+payment-786d4cc9bd-k56jj: 55 Charge spans, 28 errors (50.91%)
+
+Next I’ll correlate the failing Charge traces with other spans in the same traces to identify which downstream dependency is failing (e.g., another service call, DB, external endpoint). To do that, I’ll (a) capture failing trace_ids from payment Charge, then (b) join them to all spans and summarize the other service.name / rpc.* / name values observed in those failing traces.
+
+I’ll pull join syntax examples and then run the correlation query.
+
+Next I’ll identify correlated dependencies by looking at all spans that share a trace with a failing payment gRPC Charge span. This will show which other services/operations commonly appear in the failing traces and which of those are also erroring—often the clearest indicator of where the failure actually originates.
+
+Now I’ll correlate dependencies by looking at all other spans that occur in the same traces as the failing payment Charge spans. This will highlight which downstream services/operations are commonly present and which of them are also erroring—often revealing the real source (e.g., a failing upstream call, DB timeout, etc.).
+
+Correlate dependencies: other spans in traces where payment Charge failed; show which services/ops also error (last 15m).
+minutes ago
+1
+let failing_traces = cribl dataset=otel | where datatype=="Uncategorized" and isnotnull(["trace_id"]) | extract 
+type=regex @'"service\.name":"(?<svc>[^"]+)"' @'"rpc\.system":"(?<rpc_system>[^"]+)"' @'"rpc\.method":"(?<rpc_method>
+[^"]+)"' @'"status"\s*:\s*\{[^}]*"code"\s*:\s*(?<status_code>\d+)' | extend status_code=toint(status_code), 
+trace_id_s=tostring(["trace_id"]) | where svc=="payment" and rpc_system=="grpc" and rpc_method=="Charge" and 
+status_code==2 | summarize by trace_id_s; cribl dataset=otel | where datatype=="Uncategorized" and isnotnull(
+["trace_id"]) | extend trace_id_s=tostring(["trace_id"]) | join kind=inner failing_traces on trace_id_s | extract 
+type=regex @'"service\.name":"(?<svc>[^"]+)"' @'"rpc\.system":"(?<rpc_system>[^"]+)"' @'"rpc\.service":"(?
+<rpc_service>[^"]+)"' @'"rpc\.method":"(?<rpc_method>[^"]+)"' @'"name":"(?<span_name>[^"]+)"' @'"status"\s*:\s*\{[^}]
+*"code"\s*:\s*(?<status_code>\d+)' | extend status_code=toint(status_code) | where svc!="payment" or 
+rpc_method!="Charge" | summarize total_spans=count(), error_spans=countif(status_code==2) by svc, rpc_system, 
+rpc_service, rpc_method, span_name | sort by error_spans desc | limit 50
+25 results (2.87s)
+Details
+Show table settings
+x
+svc
+Settings
+rpc_system
+Settings
+rpc_service
+Settings
+rpc_method
+Settings
+span_name
+Settings
+frontend
+frontend-proxy
+checkout
+checkout
+load-generator
+frontend
+cart
+cart
+frontend-proxy
+checkout
+checkout
+checkout
+checkout
+checkout
+product-catalog
+product-catalog
+product-catalog
+currency
+currency
+shipping
+quote
+quote
+payment
+payment
+load-generator
+grpc
+grpc
+grpc
+null
+null
+null
+grpc
+grpc
+grpc
+null
+grpc
+null
+grpc
+null
+null
+null
+oteldemo.PaymentService
+oteldemo.CheckoutService
+oteldemo.CheckoutService
+null
+null
+null
+oteldemo.CartService
+oteldemo.ProductCatalogService
+oteldemo.CurrencyService
+null
+oteldemo.ProductCatalogService
+null
+oteldemo.CurrencyService
+null
+null
+null
+Charge
+PlaceOrder
+PlaceOrder
+null
+null
+null
+GetCart
+GetProduct
+Convert
+null
+GetProduct
+null
+Convert
+null
+null
+null
+cart.cartstore.ValkeyCartStore
+unknown
+checkout
+product-catalog
+currency
+slim-app
+payment-logger
+root
+
+So far, the otel data in the last 15 minutes shows a real high error rate for the payment service’s gRPC Charge operation, but the spans don’t include a gRPC status code/message—only status.code=2 (ERROR) and an empty status.message. Next I’ll (1) firm up totals/error rate with a single consistent query, (2) pull example failing spans’ raw payload to see if any other error attributes exist, and (3) correlate failing traces to logs within the same traces to identify the likely underlying exception/cause.
+
+To determine where the failures originate, I’ll look inside those failing Charge traces specifically for what the payment service calls downstream during Charge. If payment’s outgoing dependency spans (client spans) are failing, that’s the most direct root-cause signal (e.g., a failing DB call, an external payment processor, another internal gRPC service).
+
+I’ll reuse the same “failing traces” set, then filter to svc="payment" spans other than the Charge RPC itself and summarize the downstream operations by rpc.service/rpc.method/span name and error rate.
+
+The dependency correlation showed checkout calling oteldemo.PaymentService/Charge and a cascade of errors in frontend/frontend-proxy. Now I’ll zoom in on what the payment service itself is doing inside those failing Charge traces by looking for other client spans emitted by svc="payment" in those same traces (excluding the Charge span). If payment is failing due to a downstream dependency (e.g., DB/cache/external payment processor), we should see another child span in payment with status.code=2 around the same time.
+
+Within failing payment Charge traces, find other payment-emitted client spans (dependencies) and their error rates.
+Search returned no results.
+
+No additional payment client spans show up in the failing traces besides the Charge span itself. That usually means either:
+
+payment’s instrumentation only creates a single span for the RPC and doesn’t trace internal/downstream calls, or
+those downstream calls exist but don’t carry service.name="payment" in the same way (e.g., different service name, or missing service.name), or
+the real failure is upstream: checkout’s call to payment is being marked error before it reaches deeper logic (e.g., connection failures, routing, proxy issues).
+
+Given the dependency summary from failing traces:
+
+checkout’s oteldemo.PaymentService/Charge spans are all erroring
+frontend/frontend-proxy spans also show all erroring in those traces This looks like a cascade starting at (or before) the checkout → payment call boundary.
+
+Next I’ll compare successful vs failing Charge traces to see what differs. I’ll:
+
+build two trace sets: failing payment Charge traces vs successful payment Charge traces,
+for each set, summarize which services appear in the trace. Differences can point to missing/failed dependencies or path changes.
+
+The failing-trace dependency drill-down returned no additional payment-emitted child client spans besides the Charge span itself, which strongly suggests either (a) payment isn’t instrumented for its internal/downstream calls in this dataset, or (b) those spans are emitted under a different service.name (e.g., a library/instrumentation service label).
+
+Next I’ll extract two things from the payment Charge spans themselves to infer the failure mode:
+
+Duration characteristics (fast failures vs slow/timeouts) by comparing Charge span duration for success vs error.
+Any exception attributes present in _raw (e.g., exception.type, exception.message, stack traces) that weren’t mapped into status.message.
+
+I’ll start with duration comparison.
+
+The “payment has no other dependency spans in failing traces” result suggests either:
+
+payment’s downstream work isn’t instrumented into spans (so Charge errors don’t have child spans), or
+the spans are being attributed to other services (e.g., a sidecar/proxy), or
+we’re only seeing top-level client spans for Charge, not internal spans.
+
+To still answer “where failures originate” and “correlated dependencies,” I’ll use what we do have: in failing traces, checkout’s gRPC calls to PaymentService/Charge are 100% erroring, and frontend/frontend-proxy spans are also 100% erroring, indicating the failure propagates upstream from payment (or from the Charge call path) and causes request failure at the edge.
+
+Next I’ll measure whether erroring Charge spans have distinctly different latency than successful ones (timeouts vs immediate failures). This can hint at common causes (e.g., timeouts vs validation errors).
+
+Compare latency distribution for payment Charge spans by status_code (success vs error) last 15m.
+minutes ago
+1
+cribl dataset=otel | where datatype=="Uncategorized" and isnotnull(["start_time_unix_nano"]) and isnotnull(
+["end_time_unix_nano"]) | extract type=regex @'"service\.name":"(?<svc>[^"]+)"' @'"rpc\.system":"(?<rpc_system>[^"]+)
+"' @'"rpc\.method":"(?<rpc_method>[^"]+)"' @'"rpc\.service":"(?<rpc_service>[^"]+)"' @'"status"\s*:\s*\{[^}]
+*"code"\s*:\s*(?<status_code>\d+)' | extend status_code=toint(status_code), kind_i=toint(kind), duration_ms=toint(((
+["end_time_unix_nano"]-["start_time_unix_nano"])/1000000)) | where svc=="payment" and rpc_system=="grpc" and 
+rpc_method=="Charge" and kind_i==2 | summarize spans=count(), avg_duration_ms=round(avg(duration_ms),2), 
+min_duration_ms=min(duration_ms), max_duration_ms=max(duration_ms) by status_code | sort by status_code asc | limit 10
+2 results
+Queued
+Show table settings
+x
+status_code
+Settings
+y
+spans
+Settings
+y
+avg_duration_ms
+Settings
+y
+min_duration_ms
+Settings
+y
+max_duration_ms
+Settings
+0
+2
+26
+27
+5.08
+6.11
+0
+0
+21
+13

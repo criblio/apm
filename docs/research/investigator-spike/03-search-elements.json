@@ -1,0 +1,1378 @@
+[
+  {
+    "tag": "A",
+    "text": "",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/search",
+    "ariaLabel": "Search Home",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "Products",
+    "href": null,
+    "ariaLabel": null,
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "Apps",
+    "href": null,
+    "ariaLabel": null,
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "Typhoon H\nomelab",
+    "href": null,
+    "ariaLabel": null,
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "mai\nn",
+    "href": null,
+    "ariaLabel": null,
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "99+",
+    "href": null,
+    "ariaLabel": null,
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "CS",
+    "href": null,
+    "ariaLabel": "Account",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "Expand",
+    "href": null,
+    "ariaLabel": "Expand",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "A",
+    "text": "Search Home",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/search",
+    "ariaLabel": null,
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "A",
+    "text": "History",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/search/history",
+    "ariaLabel": null,
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "A",
+    "text": "Saved Searches",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/search/saved",
+    "ariaLabel": null,
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "A",
+    "text": "Dashboards",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/search/dashboards",
+    "ariaLabel": null,
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "A",
+    "text": "Notebooks",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/search/notebooks",
+    "ariaLabel": null,
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "A",
+    "text": "Data",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/search/data",
+    "ariaLabel": null,
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "A",
+    "text": "Knowledge",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/search/knowledge",
+    "ariaLabel": null,
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "A",
+    "text": "Packs",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/search/p",
+    "ariaLabel": null,
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "A",
+    "text": "Settings",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/search/settings",
+    "ariaLabel": null,
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "Organization Details",
+    "href": null,
+    "ariaLabel": null,
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "A",
+    "text": "Run Investigation\nPreview",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/search/agent",
+    "ariaLabel": null,
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "Run Investigation",
+    "href": null,
+    "ariaLabel": null,
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "DIV",
+    "text": "hour ago\nPDT",
+    "href": null,
+    "ariaLabel": "Time Range Picker",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "SPAN",
+    "text": "",
+    "href": null,
+    "ariaLabel": "Increase Value",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "SPAN",
+    "text": "",
+    "href": null,
+    "ariaLabel": "Decrease Value",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "Search",
+    "href": null,
+    "ariaLabel": null,
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "Build Query",
+    "href": null,
+    "ariaLabel": null,
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "Search settings",
+    "href": null,
+    "ariaLabel": null,
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "",
+    "href": null,
+    "ariaLabel": "Sort by Default",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "Add Dataset",
+    "href": null,
+    "ariaLabel": null,
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "DIV",
+    "text": "tailscale\n27 seconds ago\n1\nDataset tailscale actions menu\nTailscale API",
+    "href": null,
+    "ariaLabel": "Select dataset tailscale",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "1",
+    "href": null,
+    "ariaLabel": "Add to favorites",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "Dataset tailscale actions menu",
+    "href": null,
+    "ariaLabel": null,
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "DIV",
+    "text": "main\n2 days ago\n1\nDataset main actions menu\nBuilt-in Local Search Dataset. Inbound will be sent to main unless otherwise specified, and under certain error conditions.",
+    "href": null,
+    "ariaLabel": "Select dataset main",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "A",
+    "text": "",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/search/data/engines/homelab",
+    "ariaLabel": "View Engine homelab",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "1",
+    "href": null,
+    "ariaLabel": "Add to favorites",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "Dataset main actions menu",
+    "href": null,
+    "ariaLabel": null,
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "DIV",
+    "text": "demo\n3 days ago\n1\nDataset demo actions menu",
+    "href": null,
+    "ariaLabel": "Select dataset demo",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "A",
+    "text": "",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/search/data/engines/homelab",
+    "ariaLabel": "View Engine homelab",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "1",
+    "href": null,
+    "ariaLabel": "Add to favorites",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "Dataset demo actions menu",
+    "href": null,
+    "ariaLabel": null,
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "DIV",
+    "text": "otel\n27 seconds ago\n0\nDataset otel actions menu\nOpenTelemetry Demo Dataset",
+    "href": null,
+    "ariaLabel": "Select dataset otel",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "A",
+    "text": "",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/search/data/engines/homelab",
+    "ariaLabel": "View Engine homelab",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "0",
+    "href": null,
+    "ariaLabel": "Add to favorites",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "Dataset otel actions menu",
+    "href": null,
+    "ariaLabel": null,
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "DIV",
+    "text": "cribl_lookups\n15 hours ago\n0\nDataset cribl_lookups actions menu\nSearch Cribl lookup tables",
+    "href": null,
+    "ariaLabel": "Select dataset cribl_lookups",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "0",
+    "href": null,
+    "ariaLabel": "Add to favorites",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "Dataset cribl_lookups actions menu",
+    "href": null,
+    "ariaLabel": null,
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "DIV",
+    "text": "default_logs\n3 days ago\n0\nDataset default_logs actions menu\nDefault dataset for capturing logs from multiple sources",
+    "href": null,
+    "ariaLabel": "Select dataset default_logs",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "0",
+    "href": null,
+    "ariaLabel": "Add to favorites",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "Dataset default_logs actions menu",
+    "href": null,
+    "ariaLabel": null,
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "DIV",
+    "text": "default_spans\n3 days ago\n0\nDataset default_spans actions menu\nDefault dataset for capturing distributed trace spans from multiple sources",
+    "href": null,
+    "ariaLabel": "Select dataset default_spans",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "0",
+    "href": null,
+    "ariaLabel": "Add to favorites",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "Dataset default_spans actions menu",
+    "href": null,
+    "ariaLabel": null,
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "DIV",
+    "text": "cribl_logs\n3 days ago\n0\nDataset cribl_logs actions menu\nInternal logs from Cribl deployments",
+    "href": null,
+    "ariaLabel": "Select dataset cribl_logs",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "0",
+    "href": null,
+    "ariaLabel": "Add to favorites",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "Dataset cribl_logs actions menu",
+    "href": null,
+    "ariaLabel": null,
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "DIV",
+    "text": "cribl_search_sample\n3 days ago\n0\nDataset cribl_search_sample actions menu\nSearch Cribl provided public sample data",
+    "href": null,
+    "ariaLabel": "Select dataset cribl_search_sample",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "0",
+    "href": null,
+    "ariaLabel": "Add to favorites",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "Dataset cribl_search_sample actions menu",
+    "href": null,
+    "ariaLabel": null,
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "DIV",
+    "text": "homelab\n4 days ago\n0\nDataset homelab actions menu\nHomelab data from Stream",
+    "href": null,
+    "ariaLabel": "Select dataset homelab",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "A",
+    "text": "",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/search/data/engines/homelab",
+    "ariaLabel": "View Engine homelab",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "0",
+    "href": null,
+    "ariaLabel": "Add to favorites",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "Dataset homelab actions menu",
+    "href": null,
+    "ariaLabel": null,
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "DIV",
+    "text": "typhoon\n4 days ago\n0\nDataset typhoon actions menu",
+    "href": null,
+    "ariaLabel": "Select dataset typhoon",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "A",
+    "text": "",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/lake/lakehouses/typhoonlh",
+    "ariaLabel": "View lakehouse typhoonlh",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "0",
+    "href": null,
+    "ariaLabel": "Add to favorites",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "Dataset typhoon actions menu",
+    "href": null,
+    "ariaLabel": null,
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "DIV",
+    "text": "cribl_metrics\n4 days ago\n0\nDataset cribl_metrics actions menu\nInternal metrics from Cribl deployments",
+    "href": null,
+    "ariaLabel": "Select dataset cribl_metrics",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "0",
+    "href": null,
+    "ariaLabel": "Add to favorites",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "Dataset cribl_metrics actions menu",
+    "href": null,
+    "ariaLabel": null,
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "DIV",
+    "text": "cribl_internal_logs\n6 days ago\n0\nDataset cribl_internal_logs actions menu\nSearch Cribl internal logs",
+    "href": null,
+    "ariaLabel": "Select dataset cribl_internal_logs",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "0",
+    "href": null,
+    "ariaLabel": "Add to favorites",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "Dataset cribl_internal_logs actions menu",
+    "href": null,
+    "ariaLabel": null,
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "DIV",
+    "text": "datalake_v2\n1 month ago\n0\nDataset datalake_v2 actions menu\nTyphoon Datalake",
+    "href": null,
+    "ariaLabel": "Select dataset datalake_v2",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "0",
+    "href": null,
+    "ariaLabel": "Add to favorites",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "Dataset datalake_v2 actions menu",
+    "href": null,
+    "ariaLabel": null,
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "DIV",
+    "text": "datalake\n1 month ago\n0\nDataset datalake actions menu\nTyphoon Datalake",
+    "href": null,
+    "ariaLabel": "Select dataset datalake",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "0",
+    "href": null,
+    "ariaLabel": "Add to favorites",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "Dataset datalake actions menu",
+    "href": null,
+    "ariaLabel": null,
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "DIV",
+    "text": "adhoc\nN/A\n0\nDataset adhoc actions menu\nAdhoc data uploaded to S3",
+    "href": null,
+    "ariaLabel": "Select dataset adhoc",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "0",
+    "href": null,
+    "ariaLabel": "Add to favorites",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "Dataset adhoc actions menu",
+    "href": null,
+    "ariaLabel": null,
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "DIV",
+    "text": "cribl_edge_appscope_events\nN/A\n0\nDataset cribl_edge_appscope_events actions menu\nSearch Appscope events across all Cribl Edge fleets",
+    "href": null,
+    "ariaLabel": "Select dataset cribl_edge_appscope_events",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "0",
+    "href": null,
+    "ariaLabel": "Add to favorites",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "Dataset cribl_edge_appscope_events actions menu",
+    "href": null,
+    "ariaLabel": null,
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "DIV",
+    "text": "cribl_edge_appscope_metrics\nN/A\n0\nDataset cribl_edge_appscope_metrics actions menu\nSearch Appscope metrics across all Cribl Edge fleets",
+    "href": null,
+    "ariaLabel": "Select dataset cribl_edge_appscope_metrics",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "0",
+    "href": null,
+    "ariaLabel": "Add to favorites",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "Dataset cribl_edge_appscope_metrics actions menu",
+    "href": null,
+    "ariaLabel": null,
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "DIV",
+    "text": "cribl_edge_kubernetes_logs\nN/A\n0\nDataset cribl_edge_kubernetes_logs actions menu\nSearch Cribl Edge Kubernetes logs across all fleets",
+    "href": null,
+    "ariaLabel": "Select dataset cribl_edge_kubernetes_logs",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "0",
+    "href": null,
+    "ariaLabel": "Add to favorites",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "Dataset cribl_edge_kubernetes_logs actions menu",
+    "href": null,
+    "ariaLabel": null,
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "DIV",
+    "text": "cribl_edge_logs\nN/A\n0\nDataset cribl_edge_logs actions menu\nSearch Cribl Edge internal logs across all fleets",
+    "href": null,
+    "ariaLabel": "Select dataset cribl_edge_logs",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "0",
+    "href": null,
+    "ariaLabel": "Add to favorites",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "Dataset cribl_edge_logs actions menu",
+    "href": null,
+    "ariaLabel": null,
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "DIV",
+    "text": "cribl_edge_metrics\nN/A\n0\nDataset cribl_edge_metrics actions menu\nSearch Cribl Edge system metrics across all fleets",
+    "href": null,
+    "ariaLabel": "Select dataset cribl_edge_metrics",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "0",
+    "href": null,
+    "ariaLabel": "Add to favorites",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "Dataset cribl_edge_metrics actions menu",
+    "href": null,
+    "ariaLabel": null,
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "DIV",
+    "text": "cribl_edge_prometheus_scraper\nN/A\n0\nDataset cribl_edge_prometheus_scraper actions menu\nSearch Cribl Edge Prometheus scraper data across all fleets",
+    "href": null,
+    "ariaLabel": "Select dataset cribl_edge_prometheus_scraper",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "0",
+    "href": null,
+    "ariaLabel": "Add to favorites",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "Dataset cribl_edge_prometheus_scraper actions menu",
+    "href": null,
+    "ariaLabel": null,
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "DIV",
+    "text": "cribl_edge_spool\nN/A\n0\nDataset cribl_edge_spool actions menu\nSearch Cribl Edge Disk Spool outputs",
+    "href": null,
+    "ariaLabel": "Select dataset cribl_edge_spool",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "0",
+    "href": null,
+    "ariaLabel": "Add to favorites",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "Dataset cribl_edge_spool actions menu",
+    "href": null,
+    "ariaLabel": null,
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "DIV",
+    "text": "cribl_edge_state\nN/A\n0\nDataset cribl_edge_state actions menu\nSearch Cribl Edge system state across all fleets",
+    "href": null,
+    "ariaLabel": "Select dataset cribl_edge_state",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "0",
+    "href": null,
+    "ariaLabel": "Add to favorites",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "Dataset cribl_edge_state actions menu",
+    "href": null,
+    "ariaLabel": null,
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "DIV",
+    "text": "cribl_edge_system_logs\nN/A\n0\nDataset cribl_edge_system_logs actions menu\nSearch Cribl Edge system logs across all fleets",
+    "href": null,
+    "ariaLabel": "Select dataset cribl_edge_system_logs",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "0",
+    "href": null,
+    "ariaLabel": "Add to favorites",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "Dataset cribl_edge_system_logs actions menu",
+    "href": null,
+    "ariaLabel": null,
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "DIV",
+    "text": "datalake_parquet\nN/A\n0\nDataset datalake_parquet actions menu\nParquet Metrics",
+    "href": null,
+    "ariaLabel": "Select dataset datalake_parquet",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "0",
+    "href": null,
+    "ariaLabel": "Add to favorites",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "Dataset datalake_parquet actions menu",
+    "href": null,
+    "ariaLabel": null,
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "DIV",
+    "text": "datalake_raw\nN/A\n0\nDataset datalake_raw actions menu",
+    "href": null,
+    "ariaLabel": "Select dataset datalake_raw",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "0",
+    "href": null,
+    "ariaLabel": "Add to favorites",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "Dataset datalake_raw actions menu",
+    "href": null,
+    "ariaLabel": null,
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "DIV",
+    "text": "default\nN/A\n0\nDataset default actions menu\nDefault list of datasets to be searched when none is specified",
+    "href": null,
+    "ariaLabel": "Select dataset default",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "0",
+    "href": null,
+    "ariaLabel": "Add to favorites",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "Dataset default actions menu",
+    "href": null,
+    "ariaLabel": null,
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "DIV",
+    "text": "default_events\nN/A\n0\nDataset default_events actions menu\nThink events from Kubernetes or a 3rd party API (i.e. rest collector or O365 Management Activity API)",
+    "href": null,
+    "ariaLabel": "Select dataset default_events",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "0",
+    "href": null,
+    "ariaLabel": "Add to favorites",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "Dataset default_events actions menu",
+    "href": null,
+    "ariaLabel": null,
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "DIV",
+    "text": "default_metrics\nN/A\n0\nDataset default_metrics actions menu\nDefault dataset for capturing metrics from multiple sources",
+    "href": null,
+    "ariaLabel": "Select dataset default_metrics",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "0",
+    "href": null,
+    "ariaLabel": "Add to favorites",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "Dataset default_metrics actions menu",
+    "href": null,
+    "ariaLabel": null,
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "DIV",
+    "text": "grafana_prom\nN/A\n0\nDataset grafana_prom actions menu",
+    "href": null,
+    "ariaLabel": "Select dataset grafana_prom",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "0",
+    "href": null,
+    "ariaLabel": "Add to favorites",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "Dataset grafana_prom actions menu",
+    "href": null,
+    "ariaLabel": null,
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "DIV",
+    "text": "mtr\nN/A\n0\nDataset mtr actions menu",
+    "href": null,
+    "ariaLabel": "Select dataset mtr",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "0",
+    "href": null,
+    "ariaLabel": "Add to favorites",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "Dataset mtr actions menu",
+    "href": null,
+    "ariaLabel": null,
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "DIV",
+    "text": "History",
+    "href": null,
+    "ariaLabel": null,
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "DIV",
+    "text": "Sample Searches",
+    "href": null,
+    "ariaLabel": null,
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "A",
+    "text": "dataset=\"$vt_results\" | where jobName in (\"criblapm__home_service_summary\", \"criblapm__home_service_time_series\", \"criblapm__home_slow_traces\", \"criblapm__home_error_spans\")\n...more\n45 seconds ago",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/search/1776009582997.OYHX21?fromHistory=true",
+    "ariaLabel": "Search using query",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "SPAN",
+    "text": "...more",
+    "href": null,
+    "ariaLabel": "More",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "A",
+    "text": "dataset=\"otel\" | where isnotnull(end_time_unix_nano)    | extend svc=tostring(resource.attributes['service.name']),             dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0 ",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/search/1776009582911.LMbBvJ?fromHistory=true",
+    "ariaLabel": "Search using query",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "SPAN",
+    "text": "...more",
+    "href": null,
+    "ariaLabel": "More",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "A",
+    "text": "dataset=\"otel\" | where isnotnull(end_time_unix_nano)    | extend svc=tostring(resource.attributes['service.name']),            dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0, ",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/search/1776009582828.WfRcq6?fromHistory=true",
+    "ariaLabel": "Search using query",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "SPAN",
+    "text": "...more",
+    "href": null,
+    "ariaLabel": "More",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "A",
+    "text": "dataset=\"otel\" | where isnotnull(end_time_unix_nano)    | extend svc=tostring(resource.attributes['service.name']),             dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0 ",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/search/1776009522975.YDT4qm?fromHistory=true",
+    "ariaLabel": "Search using query",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "SPAN",
+    "text": "...more",
+    "href": null,
+    "ariaLabel": "More",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "A",
+    "text": "dataset=\"$vt_results\" | where jobName in (\"criblapm__home_service_summary\", \"criblapm__home_service_time_series\", \"criblapm__home_slow_traces\", \"criblapm__home_error_spans\")\n...more\n2 minutes ago",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/search/1776009522975.NWbxPc?fromHistory=true",
+    "ariaLabel": "Search using query",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "SPAN",
+    "text": "...more",
+    "href": null,
+    "ariaLabel": "More",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "A",
+    "text": "dataset=\"otel\" | where isnotnull(end_time_unix_nano)    | extend svc=tostring(resource.attributes['service.name']),            dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0, ",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/search/1776009522829.0dB9y0?fromHistory=true",
+    "ariaLabel": "Search using query",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "SPAN",
+    "text": "...more",
+    "href": null,
+    "ariaLabel": "More",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "A",
+    "text": "dataset=\"otel\" | where isnotnull(end_time_unix_nano)    | extend svc=tostring(resource.attributes['service.name']),             is_error=(tostring(status.code)==\"2\"),             msg=tostring(status.m",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/search/1776009466652.eptk3X?fromHistory=true",
+    "ariaLabel": "Search using query",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "SPAN",
+    "text": "...more",
+    "href": null,
+    "ariaLabel": "More",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "A",
+    "text": "dataset=\"otel\" | where isnotnull(end_time_unix_nano)    | extend svc=tostring(resource.attributes['service.name']),            parent=tostring(parent_span_id),            is_root=(parent==\"\" or isempt",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/search/1776009466481.sWkjD0?fromHistory=true",
+    "ariaLabel": "Search using query",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "SPAN",
+    "text": "...more",
+    "href": null,
+    "ariaLabel": "More",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "A",
+    "text": "dataset=\"otel\" | where isnotnull(end_time_unix_nano)    | extend svc=tostring(resource.attributes['service.name']),            dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0, ",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/search/1776009466479.6Ss9Za?fromHistory=true",
+    "ariaLabel": "Search using query",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "SPAN",
+    "text": "...more",
+    "href": null,
+    "ariaLabel": "More",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "A",
+    "text": "dataset=\"otel\" | where isnotnull(end_time_unix_nano)    | extend svc=tostring(resource.attributes['service.name']),            dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0, ",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/search/1776009466401.hrFE2O?fromHistory=true",
+    "ariaLabel": "Search using query",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "SPAN",
+    "text": "...more",
+    "href": null,
+    "ariaLabel": "More",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "A",
+    "text": "dataset=\"$vt_results\" | where jobName in (\"criblapm__home_service_summary\", \"criblapm__home_service_time_series\", \"criblapm__home_slow_traces\", \"criblapm__home_error_spans\")\n...more\n3 minutes ago",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/search/1776009462919.jLbt0l?fromHistory=true",
+    "ariaLabel": "Search using query",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "SPAN",
+    "text": "...more",
+    "href": null,
+    "ariaLabel": "More",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "A",
+    "text": "dataset=\"otel\" | where isnotnull(end_time_unix_nano)    | extend svc=tostring(resource.attributes['service.name']),             dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0 ",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/search/1776009462919.eeUk8B?fromHistory=true",
+    "ariaLabel": "Search using query",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "SPAN",
+    "text": "...more",
+    "href": null,
+    "ariaLabel": "More",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "A",
+    "text": "dataset=\"otel\" | where isnotnull(end_time_unix_nano)    | extend svc=tostring(resource.attributes['service.name']),            dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0, ",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/search/1776009462839.X9c8bp?fromHistory=true",
+    "ariaLabel": "Search using query",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "SPAN",
+    "text": "...more",
+    "href": null,
+    "ariaLabel": "More",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "A",
+    "text": "dataset=\"$vt_results\" | where jobName in (\"criblapm__home_service_summary\", \"criblapm__home_service_time_series\", \"criblapm__home_slow_traces\", \"criblapm__home_error_spans\")\n...more\n4 minutes ago",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/search/1776009403001.9Vo8B0?fromHistory=true",
+    "ariaLabel": "Search using query",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "SPAN",
+    "text": "...more",
+    "href": null,
+    "ariaLabel": "More",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "A",
+    "text": "dataset=\"otel\" | where isnotnull(end_time_unix_nano)    | extend svc=tostring(resource.attributes['service.name']),             dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0 ",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/search/1776009402842.d8X40B?fromHistory=true",
+    "ariaLabel": "Search using query",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "SPAN",
+    "text": "...more",
+    "href": null,
+    "ariaLabel": "More",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "A",
+    "text": "dataset=\"otel\" | where isnotnull(end_time_unix_nano)    | extend svc=tostring(resource.attributes['service.name']),            dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0, ",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/search/1776009402839.5zM8X7?fromHistory=true",
+    "ariaLabel": "Search using query",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "SPAN",
+    "text": "...more",
+    "href": null,
+    "ariaLabel": "More",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "A",
+    "text": "dataset=\"$vt_results\" | where jobName in (\"criblapm__home_service_summary\", \"criblapm__home_service_time_series\", \"criblapm__home_slow_traces\", \"criblapm__home_error_spans\")\n...more\n5 minutes ago",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/search/1776009342915.oFg3Ju?fromHistory=true",
+    "ariaLabel": "Search using query",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "SPAN",
+    "text": "...more",
+    "href": null,
+    "ariaLabel": "More",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "A",
+    "text": "dataset=\"otel\" | where isnotnull(end_time_unix_nano)    | extend svc=tostring(resource.attributes['service.name']),             dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0 ",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/search/1776009342913.cbb8CU?fromHistory=true",
+    "ariaLabel": "Search using query",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "SPAN",
+    "text": "...more",
+    "href": null,
+    "ariaLabel": "More",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "A",
+    "text": "dataset=\"otel\" | where isnotnull(end_time_unix_nano)    | extend svc=tostring(resource.attributes['service.name']),            dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0, ",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/search/1776009342837.8EbVz8?fromHistory=true",
+    "ariaLabel": "Search using query",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "SPAN",
+    "text": "...more",
+    "href": null,
+    "ariaLabel": "More",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "A",
+    "text": "dataset=\"otel\" | where isnotnull(end_time_unix_nano)    | extend svc=tostring(resource.attributes['service.name']),             dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0 ",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/search/1776009282916.QAEGlZ?fromHistory=true",
+    "ariaLabel": "Search using query",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "SPAN",
+    "text": "...more",
+    "href": null,
+    "ariaLabel": "More",
+    "title": null,
+    "dataTestId": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "",
+    "href": null,
+    "ariaLabel": "Support",
+    "title": null,
+    "dataTestId": null
+  }
+]

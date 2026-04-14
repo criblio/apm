@@ -1,0 +1,46 @@
+Products
+Apps
+Typhoon H
+omelab
+mai
+n
+Non-Production Environment
+99+
+CS
+Expand
+Search Home
+History
+Saved Searches
+Dashboards
+Notebooks
+Data
+Knowledge
+Packs
+Settings
+Organization Details
+Copilot Investigation
+In my "otel" dataset I have OpenTelemetry spans. The payment service is experiencing high error rates on its gRPC Charge operation in the last 15 minutes. Investigate what is happening.
+
+I’m going to investigate the otel spans for the payment service’s gRPC Charge operation over the last 15 minutes, quantify the error rate, and then drill into the dominant error types, upstream/downstream dependencies, and where the failures originate (client vs server vs downstream call). I’ll start by grounding on the dataset schema so we use the correct OpenTelemetry fields.
+
+First I’ll confirm how the gRPC Charge operation is represented in your otel spans (service name, rpc.service, rpc.method), then I’ll compute the error rate and break errors down by gRPC status code and where they occur (server span vs downstream client spans).
+
+The query engine here uses summarize/timestats instead of stats. I’ll re-run with the correct aggregation operator.
+
+KQL here uses slightly different aggregation/sorting syntax than standard Kusto. I’ll switch to the supported count by ... operator and explicit sort <field> desc to identify which service/rpc.service combination is producing Charge spans in the last 15 minutes.
+
+My initial query attempts failed because this environment’s KQL dialect doesn’t support stats/summarize in the way I first wrote it. I’m going to pull the exact groupby/aggregation syntax examples, then re-run the analysis with the correct operators.
+
+I’m going to (1) identify which service.name in your data emits the gRPC rpc.method="Charge" spans, then (2) compute the error rate for that operation over the last 15 minutes and break it down by gRPC status code and span kind (server vs client) to locate the failure origin.
+
+Please continue the investigation. Run the search to find error spans for the payment service in the last 15 minutes.
+
+I’ll focus specifically on error spans for the payment service’s gRPC Charge operation over the last 15 minutes. Because OpenTelemetry data sometimes populates either the top-level rpc.* fields or attributes.rpc.*, I’ll include both so we don’t miss spans, and I’ll treat errors as either status.code==2 (OTel ERROR) or non-zero gRPC status code.
+
+I’ll run a focused query for erroring Charge spans in the last 15 minutes, anchored on service.name=paymentservice (and the resource-attribute variant), and treating errors as either status.code==2 (OTel error) or a non-zero gRPC status code. Then we’ll summarize the dominant gRPC codes and see whether the failing spans are server-side or client-side.
+
+Fetch erroring paymentservice gRPC Charge spans (status.code=ERROR or grpc status !=0) in last 15m.
+minutes ago
+Ask Every Time
+Skip
+Run Query
