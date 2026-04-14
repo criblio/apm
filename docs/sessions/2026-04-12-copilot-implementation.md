@@ -9,7 +9,7 @@ the Cribl APM app, backed by `/api/v1/ai/q/agents/local_search`.
 
 Branch: `copilot-investigator` → PR #14
 
-New modules in `oteldemo/src/api/`:
+New modules in `src/api/`:
 
 - **`agent.ts`** — streaming NDJSON client + typed frame parser for the
   agent endpoint. Yields `text`, `toolCalls`, `toolResult`, `notification`

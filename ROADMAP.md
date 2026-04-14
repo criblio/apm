@@ -1,6 +1,6 @@
 # Cribl APM — Roadmap
 
-This document is the canonical priority list for the `oteldemo/` Cribl
+This document is the canonical priority list for the Cribl APM
 Search App. It captures the competitive gap analysis we ran against
 Datadog, Honeycomb, Dash0, Kloudfuse, Grafana Tempo/Loki, New Relic,
 and Sentry, plus the architectural insight that we're built on top of
@@ -10,7 +10,7 @@ alerts, query language, federation) rather than reinvent them.
 > **Refer to this doc as `ROADMAP.md`** (or `/ROADMAP.md` from the repo
 > root). Companion docs: `FAILURE-SCENARIOS.md` for the flagd flag
 > catalog and test plan; `CLAUDE.md` for repo-wide coding rules;
-> `oteldemo/AGENTS.md` for the Cribl App Platform developer guide.
+> `AGENTS.md` for the Cribl App Platform developer guide.
 
 ## Guiding principle: lean on Cribl Search
 
