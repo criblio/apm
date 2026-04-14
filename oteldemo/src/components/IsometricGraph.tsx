@@ -177,11 +177,21 @@ export default function IsometricGraph({
   } | null>(null);
 
   // Node + link data from edges/services (same construction as the 2D view).
+  // Also seeds ghost nodes from prevServices for any service that was busy
+  // in the prior window but is fully silent now — see DependencyGraph.tsx
+  // for the rationale.
   const { nodes, links } = useMemo(() => {
     const nodeMap = new Map<string, SimNode>();
     const linkAgg = new Map<string, SimLink>();
     for (const svc of services.keys()) {
       if (!nodeMap.has(svc)) nodeMap.set(svc, { id: svc, size: 0 });
+    }
+    if (prevServices) {
+      for (const [svc, prevSummary] of prevServices.entries()) {
+        if (nodeMap.has(svc)) continue;
+        if (prevSummary.requests < 50) continue;
+        nodeMap.set(svc, { id: svc, size: 0 });
+      }
     }
     for (const e of edges) {
       if (!nodeMap.has(e.parent)) nodeMap.set(e.parent, { id: e.parent, size: 0 });
@@ -214,15 +224,16 @@ export default function IsometricGraph({
       nodes: Array.from(nodeMap.values()),
       links: Array.from(linkAgg.values()),
     };
-  }, [edges, services]);
+  }, [edges, services, prevServices]);
 
   const nodeRadius = useCallback(
     (node: SimNode): number => {
       const summary = services.get(node.id);
-      const volume = summary ? summary.requests : node.size;
+      const prev = prevServices?.get(node.id);
+      const volume = summary?.requests ?? prev?.requests ?? node.size;
       return Math.max(12, Math.min(36, 12 + Math.log10(volume + 1) * 6));
     },
-    [services],
+    [services, prevServices],
   );
 
   // Shared simulation with the 2D graph view. `tick` bumps each frame
@@ -607,14 +618,23 @@ export default function IsometricGraph({
             const haloRy = ry + haloGap * CYL_TOP_RY_RATIO * 2.5;
             const haloWidth =
               health.bucket === 'critical' ? 3.5
+              : health.bucket === 'silent' ? 3.5
               : health.bucket === 'traffic_drop' ? 3
               : health.bucket === 'warn' ? 3
               : health.bucket === 'watch' ? 2
               : health.bucket === 'idle' ? 1
               : 0;
-            const haloDash = health.bucket === 'idle' ? '3 3' : undefined;
+            const haloDash =
+              health.bucket === 'idle' || health.bucket === 'silent'
+                ? '3 3'
+                : undefined;
+            const isGhost = health.bucket === 'silent';
 
-            const dimOpacity = focusId && !isFocused ? 0.35 : 1;
+            const dimOpacity = isGhost
+              ? 0.4
+              : focusId && !isFocused
+                ? 0.35
+                : 1;
 
             return (
               <g
@@ -696,11 +716,25 @@ export default function IsometricGraph({
                   fontSize="11"
                   fontFamily='"Open Sans", sans-serif'
                   fill="#1a1a2e"
-                  fontWeight={isFocused || health.bucket === 'critical' ? 600 : 500}
+                  fontWeight={isFocused || health.bucket === 'critical' || isGhost ? 600 : 500}
                   style={{ pointerEvents: 'none', userSelect: 'none' }}
                 >
                   {n.id}
                 </text>
+                {isGhost && (
+                  <text
+                    x={cx}
+                    y={cy + ry + 26}
+                    textAnchor="middle"
+                    fontSize="10"
+                    fontFamily='"Open Sans", sans-serif'
+                    fill="#dc2626"
+                    fontWeight={600}
+                    style={{ pointerEvents: 'none', userSelect: 'none' }}
+                  >
+                    no traffic
+                  </text>
+                )}
               </g>
             );
           })}

@@ -110,12 +110,26 @@ export default function DependencyGraph({
   } | null>(null);
 
   // Build nodes & links. Seed from the services map so isolated services
-  // still appear. Skip self-loops on edges.
+  // still appear. Also seed ghost nodes from the prior window for any
+  // service that was busy then but is fully silent now — those are the
+  // most actionable failures (a service that crashed or got isolated)
+  // and would otherwise vanish from the graph entirely. Skip self-loops
+  // on edges.
   const { nodes, links } = useMemo(() => {
     const nodeMap = new Map<string, SimNode>();
     const linkAgg = new Map<string, SimLink>();
     for (const svc of services.keys()) {
       if (!nodeMap.has(svc)) nodeMap.set(svc, { id: svc, size: 0 });
+    }
+    if (prevServices) {
+      for (const [svc, prevSummary] of prevServices.entries()) {
+        if (nodeMap.has(svc)) continue;
+        // Gate ghost nodes on the same minimum baseline as the
+        // serviceHealth `silent` bucket so a single noise span in the
+        // prior window doesn't conjure a permanent ghost.
+        if (prevSummary.requests < 50) continue;
+        nodeMap.set(svc, { id: svc, size: 0 });
+      }
     }
     for (const e of edges) {
       if (!nodeMap.has(e.parent)) nodeMap.set(e.parent, { id: e.parent, size: 0 });
@@ -153,13 +167,17 @@ export default function DependencyGraph({
       nodes: Array.from(nodeMap.values()),
       links: Array.from(linkAgg.values()),
     };
-  }, [edges, services]);
+  }, [edges, services, prevServices]);
 
   // Node size function shared with the simulation (so collision padding
-  // uses the same radii as rendering).
+  // uses the same radii as rendering). Ghost nodes (no current
+  // summary, only a prior-window one) get sized off their last-known
+  // volume so they don't collapse to the minimum radius and look
+  // like "always idle" services.
   function nodeRadius(node: SimNode): number {
     const summary = services.get(node.id);
-    const volume = summary ? summary.requests : node.size;
+    const prev = prevServices?.get(node.id);
+    const volume = summary?.requests ?? prev?.requests ?? node.size;
     return Math.max(10, Math.min(34, 10 + Math.log10(volume + 1) * 6));
   }
 
@@ -426,12 +444,17 @@ export default function DependencyGraph({
             const haloRadius = r + haloGap;
             const haloWidth =
               health.bucket === 'critical' ? 3.5
+              : health.bucket === 'silent' ? 3.5
               : health.bucket === 'traffic_drop' ? 3
               : health.bucket === 'warn' ? 3
               : health.bucket === 'watch' ? 2
               : health.bucket === 'idle' ? 1
               : 0;
-            const haloDash = health.bucket === 'idle' ? '3 3' : undefined;
+            const haloDash =
+              health.bucket === 'idle' || health.bucket === 'silent'
+                ? '3 3'
+                : undefined;
+            const isGhost = health.bucket === 'silent';
 
             return (
               <g
@@ -478,7 +501,10 @@ export default function DependencyGraph({
                   fill={idColor}
                   stroke={isPinned ? '#1a1a2e' : 'rgba(0,0,0,0.2)'}
                   strokeWidth={isPinned ? 2 : 1}
-                  opacity={focusId && !isFocused ? 0.35 : 1}
+                  opacity={
+                    isGhost ? 0.32 : focusId && !isFocused ? 0.35 : 1
+                  }
+                  strokeDasharray={isGhost ? '4 3' : undefined}
                 />
                 <text
                   y={r + haloGap + haloWidth + 12}
@@ -486,11 +512,24 @@ export default function DependencyGraph({
                   fontSize="11"
                   fontFamily='"Open Sans", sans-serif'
                   fill="#1a1a2e"
-                  fontWeight={isFocused || health.bucket === 'critical' ? 600 : 500}
+                  fontWeight={isFocused || health.bucket === 'critical' || isGhost ? 600 : 500}
                   style={{ pointerEvents: 'none', userSelect: 'none' }}
                 >
                   {n.id}
                 </text>
+                {isGhost && (
+                  <text
+                    y={r + haloGap + haloWidth + 24}
+                    textAnchor="middle"
+                    fontSize="10"
+                    fontFamily='"Open Sans", sans-serif'
+                    fill="#dc2626"
+                    fontWeight={600}
+                    style={{ pointerEvents: 'none', userSelect: 'none' }}
+                  >
+                    no traffic
+                  </text>
+                )}
               </g>
             );
           })}

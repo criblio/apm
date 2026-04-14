@@ -209,6 +209,54 @@
   color: var(--cds-color-fg);
 }
 
+/* "last seen Ns ago" pill rendered next to the service name when the
+ * row's newest span is older than ~25% of the lookback window. Tells
+ * the user the row is residue, not live data. Color is intentionally
+ * the same purple as the traffic-drop health bucket so the visual
+ * vocabulary stays consistent ("rate dropped" and "stopped emitting
+ * recently" are sibling signals). */
+.stalePill {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 8px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: var(--cds-font-weight-semibold);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.3;
+  color: #6b21a8;
+  background: rgba(168, 85, 247, 0.12);
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+/* Root-cause hint chip rendered next to the service name on rows that
+ * are anomalous AND have a downstream service whose edge is erroring.
+ * Cuts through error-propagation cascades like cartFailure where the
+ * row tinted red is the caller, not the actual root. Clickable —
+ * jumps to the suspected root's Service Detail. */
+.rootCauseHint {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 8px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: var(--cds-font-weight-semibold);
+  line-height: 1.3;
+  color: #b91c1c;
+  background: rgba(220, 38, 38, 0.10);
+  white-space: nowrap;
+  vertical-align: middle;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.rootCauseHint:hover {
+  background: rgba(220, 38, 38, 0.18);
+}
+
 .errHigh {
   color: var(--cds-color-danger);
   font-weight: var(--cds-font-weight-semibold);

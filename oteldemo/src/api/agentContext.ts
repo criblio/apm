@@ -147,18 +147,48 @@ unreadable 19-digit integers in search result tables, which is useless to a
 human. **Always project an ISO-8601 timestamp alongside any raw timestamp**
 in query output so the user sees a readable time.
 
-Convert to ISO-8601:
+**Prefer \`_time\` for row-level timestamps.** The collector populates
+\`_time\` from \`start_time_unix_nano\` already, so for 95% of queries
+you can just do:
 
 \`\`\`kql
 | extend iso_time = strftime(_time, "%Y-%m-%dT%H:%M:%S.%LZ")
 \`\`\`
 
-For spans, convert the start/end time fields via \`_time\` (which the
-collector populates from \`start_time_unix_nano\`), or do it manually:
+This is the canonical form — prefer it over any conversion from the raw
+nano fields. If you need the actual start/end boundaries of a span
+(e.g. rendering latency via the difference), there are two **non-obvious
+parser rules** you MUST respect:
+
+1. **No \`1e9\` / scientific notation.** The Cribl KQL parser rejects
+   it with a "mismatched input" syntax error. Use the literal
+   \`1000000000\` instead.
+2. **No inline math inside a function argument.** Writing
+   \`strftime(toreal(start_time_unix_nano)/1000000000, "fmt")\` fails
+   with the same mismatched-input error because the parser doesn't
+   accept a binary expression as a function argument. You must
+   compute the seconds in a **separate \`extend\`** first, then pass
+   the named variable to \`strftime\`.
+
+Correct pattern for span start/end conversion:
 
 \`\`\`kql
-| extend start_iso = strftime(toreal(start_time_unix_nano)/1e9, "%Y-%m-%dT%H:%M:%S.%LZ"),
-         end_iso = strftime(toreal(end_time_unix_nano)/1e9, "%Y-%m-%dT%H:%M:%S.%LZ")
+| extend start_sec = toreal(start_time_unix_nano)/1000000000,
+         end_sec   = toreal(end_time_unix_nano)/1000000000
+| extend start_iso = strftime(start_sec, "%Y-%m-%dT%H:%M:%S.%LZ"),
+         end_iso   = strftime(end_sec,   "%Y-%m-%dT%H:%M:%S.%LZ")
+\`\`\`
+
+Wrong patterns (both produce
+\`"mismatched input '(' expecting {<EOF>, ';'}"\` at parse time and burn
+a turn):
+
+\`\`\`kql
+// WRONG — inline math inside strftime()
+| extend start_iso = strftime(toreal(start_time_unix_nano)/1000000000, "...")
+
+// WRONG — scientific notation
+| extend sec = toreal(start_time_unix_nano)/1e9
 \`\`\`
 
 Project \`iso_time\` (or \`start_iso\` / \`end_iso\`) in every query that shows
@@ -166,9 +196,14 @@ per-row timestamps. You may also keep the raw field for reference, but the
 ISO version must be in the projection too. In summary text to the user,
 always refer to times in ISO-8601, never as raw unix epochs.
 
-### Example working queries (proven against this data)
+### Reference query (the only example you need)
 
-**Service error-rate + latency breakdown:**
+The field-mapping table above is the source of truth — write your own
+queries from it. This template covers the basic shape (svc filter, error
+predicate, percentile aggregation) and any other query type can be
+derived by changing what you summarize on. Always include
+\`isnotnull(end_time_unix_nano)\` to filter to spans (vs metrics or logs).
+
 \`\`\`kql
 dataset="${datasetId}" | where isnotnull(end_time_unix_nano)
   | extend svc=tostring(resource.attributes['service.name']),
@@ -176,43 +211,15 @@ dataset="${datasetId}" | where isnotnull(end_time_unix_nano)
           is_error=(tostring(status.code)=="2")
   | summarize requests=count(),
               errors=countif(is_error),
-              p50=percentile(dur_us, 50),
-              p95=percentile(dur_us, 95),
-              p99=percentile(dur_us, 99)
+              p95=percentile(dur_us, 95)
     by svc
-  | extend error_rate=round(100.0*errors/requests, 2)
   | sort by requests desc
 \`\`\`
 
-**Service-to-service dependency call graph (with error counts):**
-\`\`\`kql
-dataset="${datasetId}" | where isnotnull(end_time_unix_nano)
-  | extend svc=tostring(resource.attributes['service.name']),
-          parent=tostring(parent_span_id),
-          is_error=(tostring(status.code)=="2")
-  | where parent != "" and isnotempty(parent)
-  | project trace_id, parent, svc, is_error
-  | join kind=inner (
-      dataset="${datasetId}" | where isnotnull(end_time_unix_nano)
-      | extend psvc=tostring(resource.attributes['service.name']),
-              psid=tostring(span_id)
-      | project trace_id, psid, psvc
-    ) on trace_id, $left.parent == $right.psid
-  | where svc != psvc
-  | summarize callCount=count(), errorCount=countif(is_error) by parent=psvc, child=svc
-  | sort by callCount desc
-\`\`\`
-
-**Recent error spans for a specific service:**
-\`\`\`kql
-dataset="${datasetId}" | where isnotnull(end_time_unix_nano)
-  | extend svc=tostring(resource.attributes['service.name']),
-          is_error=(tostring(status.code)=="2")
-  | where svc=="<SERVICE>" and is_error
-  | project _time, trace_id, span_id, name, status.message, attributes
-  | sort by _time desc
-  | limit 50
-\`\`\`
+For service-to-service dependency analysis: self-join span rows on
+\`trace_id\` matching \`parent_span_id\` to its parent's \`span_id\`,
+then group by parent service vs child service. For per-minute
+histograms: \`summarize ... by svc, bin(_time, 60s)\`.
 
 ### Common failure modes to check (in priority order)
 
@@ -320,6 +327,52 @@ ${lines}
 }
 
 /**
+ * Parse the user's natural-language phrasing of a time range (e.g.
+ * "in the last 5 minutes", "right now", "the past hour", "last 30
+ * min") into a relative-time string compatible with our `earliest`
+ * field (e.g. `-5m`, `-1h`). Returns null when no match — the
+ * caller should keep its existing default.
+ *
+ * Why this exists: in the 2026-04-12 scenario eval the Investigator
+ * inherited the seed's default `-15m` even when the user explicitly
+ * asked about "last 5 minutes," which dragged stale errors from the
+ * prior test into the new investigation. Tightening up-front removes
+ * a class of false positives.
+ *
+ * Patterns handled (case-insensitive):
+ *   - "in the last N minute(s)" / "last N min" / "past N m"
+ *   - "in the last N hour(s)"   / "past N h"   / "N hr"
+ *   - "in the last N day(s)"
+ *   - "right now" / "currently" / "at the moment"  → -5m
+ */
+export function tightenEarliestFromPrompt(question: string): string | null {
+  const q = question.toLowerCase();
+  // Numeric "last N <unit>" / "past N <unit>" patterns. Order
+  // matters — try compound (number + unit) first, then the bare
+  // "right now" forms.
+  const numUnit = q.match(
+    /(?:in\s+the\s+)?(?:last|past)\s+(\d+)\s*(minute|minutes|min|m|hour|hours|hr|hrs|h|day|days|d)\b/,
+  );
+  if (numUnit) {
+    const n = Number(numUnit[1]);
+    if (Number.isFinite(n) && n > 0) {
+      const u = numUnit[2];
+      if (u.startsWith('m')) return `-${n}m`;
+      if (u.startsWith('h')) return `-${n}h`;
+      if (u.startsWith('d')) return `-${n}d`;
+    }
+  }
+  // "Right now" family — without a number, default to a tight 5m
+  // window on the assumption that "now" means "current state".
+  if (
+    /\b(right\s+now|currently|at\s+the\s+moment|in\s+the\s+last\s+(few|couple\s+of)\s+minutes)\b/.test(q)
+  ) {
+    return '-5m';
+  }
+  return null;
+}
+
+/**
  * Build the full first-message prompt for a seeded investigation.
  * This is what goes into \`messages[0].content\` on the initial POST.
  */
@@ -348,6 +401,13 @@ ${scopeLines.join('\n')}
 
 ### How to conduct this investigation
 
+**Target: converge in ≤8 turns.** Every additional turn grows the
+conversation history, which grows the time the next LLM response
+needs to start streaming, which pushes us toward the platform's
+30-second time-to-first-byte proxy timeout. An answer at turn 7 is
+far more valuable than a more thoroughly validated answer at turn 14
+that never reaches the user. When in doubt, ship the finding.
+
 1. Use the field mappings and example queries above. Do NOT use regex
    extraction on \`_raw\`. Do NOT call \`get_dataset_context\` — the
    schema is already documented above.
@@ -361,11 +421,16 @@ ${scopeLines.join('\n')}
    **\`render_trace\` tool** with that trace_id. The UI will display
    the full waterfall to the user. Do NOT just list trace_ids as
    text — render at least one representative trace.
-5. When you have enough evidence to explain the problem, call the
+5. As soon as you have **(a) a root-cause service**, **(b) one
+   rendered representative trace**, and **(c) a sentence describing
+   the user-visible impact**, call the
    **\`present_investigation_summary\` tool** with structured
-   \`findings\` and a \`conclusion\`. Do NOT write the summary as
-   markdown or as a template literal in plain text — always use the
-   tool call. The UI renders the tool's output as a final report card.
+   \`findings\` and a \`conclusion\`. That's the bar. Do **not** run
+   additional validation queries ("just to be sure", "to strengthen
+   the conclusion", "to rule out propagation") — the rendered trace
+   IS your validation, and the user can always ask for more depth
+   if they want it. Writing the summary as markdown or a template
+   literal in plain text is never acceptable — always use the tool.
 6. **After calling \`present_investigation_summary\`, STOP.** Do not
    write any additional text, do not restate the findings, do not
    emit a \`## Findings\` or \`## Conclusion\` markdown block after

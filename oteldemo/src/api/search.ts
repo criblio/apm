@@ -164,6 +164,11 @@ export async function listServiceSummaries(
   return rows.map((r) => {
     const requests = toNum(r.requests);
     const errors = toNum(r.errors);
+    // last_seen is epoch seconds (Cribl `_time` is seconds). Convert
+    // to ms so the rest of the app's Date math is consistent. Skip
+    // when the field is missing or zero (cached rows from before
+    // this column was added).
+    const lastSeenSec = toNum(r.last_seen);
     return {
       service: String(r.svc ?? 'unknown'),
       requests,
@@ -172,6 +177,7 @@ export async function listServiceSummaries(
       p50Us: toNum(r.p50_us),
       p95Us: toNum(r.p95_us),
       p99Us: toNum(r.p99_us),
+      lastSeenMs: lastSeenSec > 0 ? lastSeenSec * 1000 : undefined,
     };
   });
 }
