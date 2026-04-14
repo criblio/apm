@@ -14,7 +14,7 @@
 //   src/funcs/packsUpload.ts (PUT /packs)
 //   src/funcs/packsInstall.ts (POST /packs)
 //
-// Run from the oteldemo/ directory: `npm run deploy`
+// Run from the repo root: `npm run deploy`
 
 import { spawn } from 'node:child_process';
 import { readFile } from 'node:fs/promises';

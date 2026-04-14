@@ -3,20 +3,35 @@
 # Environment files
 .env
 .env.*
-!.env.example
 set_env.sh
 .envrc
 
 # OS files
 .DS_Store
 Thumbs.db
+*.suo
+*.sw?
 
-k8s/bin
-k8s/backups
-k8s/helm-values-processed.yaml
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
 
-# Node
+# Node / Vite build output
 node_modules/
+dist/
+dist-ssr/
+build/
+*.local
+
+# Editors
+.vscode/*
+!.vscode/extensions.json
+.idea
 
 # Claude Code runtime state
 .claude/
