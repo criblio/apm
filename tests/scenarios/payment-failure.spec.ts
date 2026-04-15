@@ -96,8 +96,24 @@ test('scenario 1 · paymentFailure surfaces in Home, Service Detail, Investigato
     });
 
     // 3. Home surface — propagated checkout error + Error classes panel.
-    //    Soft so Home surface gaps don't mask downstream surface gaps.
+    //    The previous step polled at -15m because the short window
+    //    crosses the ">1% error rate" threshold quickly: a ~3-minute
+    //    flag flip dilutes to ~0.1% inside a 1h window, so -15m is the
+    //    right lens for confirming the flag propagated. Switch to -1h
+    //    here because the Home panel cache-fast path only activates at
+    //    the default -1h range — the cache-miss → live fallback in
+    //    HomePage.tsx only runs against a cached-panels response, and
+    //    this step is the one that exercises it. Without the switch,
+    //    the whole Error classes check would run through the live-only
+    //    branch and never exercise the fix.
     await test.step('home · propagated checkout error + Error classes panel', async () => {
+      await gotoApm(page, '/?range=-1h');
+      // Wait for the payment row to render at -1h before reading
+      // neighboring cells — avoids reading a half-rendered table.
+      await page
+        .getByRole('row', { name: /^payment\s/ })
+        .waitFor({ state: 'visible', timeout: 20_000 });
+
       const checkoutRow = page.getByRole('row', { name: /^checkout\s/ });
       if (await checkoutRow.isVisible().catch(() => false)) {
         const checkoutCell = checkoutRow.locator('td').nth(2);
@@ -127,9 +143,10 @@ test('scenario 1 · paymentFailure surfaces in Home, Service Detail, Investigato
         // Before the fallback, a scheduled-search outage could leave
         // this panel visibly empty even while payment was erroring;
         // the fallback closes that gap so the panel is now a reliable
-        // surface to hard-assert on.
+        // surface to hard-assert on. Timeout gives the fallback live
+        // query room to resolve on top of the initial cache-read.
         await expect(paymentEntries, 'Error classes panel should list a payment entry')
-          .not.toHaveCount(0, { timeout: 15_000 });
+          .not.toHaveCount(0, { timeout: 30_000 });
       }
     });
 
