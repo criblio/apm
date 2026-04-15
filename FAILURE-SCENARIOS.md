@@ -2,14 +2,23 @@
 
 The upstream OpenTelemetry Demo ships a [flagd](https://flagd.dev/) service
 with 15 failure-injection flags. This document covers how to turn each one
-on against the kind cluster on `clintdev`, what telemetry signals to
-expect, and which view in the Cribl APM app is supposed to surface
-it. Use this as a regression test plan when iterating on the app.
+on against your demo cluster, what telemetry signals to expect, and
+which view in the Cribl APM app is supposed to surface it. Use this as a
+regression test plan when iterating on the app.
 
 ## Prerequisites
 
-- `ssh clintdev` works
-- kind cluster `otel-demo-cribl` is running in Docker on that host
+- A running [otel-demo-criblcloud](https://github.com/criblio/otel-demo-criblcloud)
+  cluster (kind, k3d, real k8s — anywhere flagd's `flagd-ui` sidecar is
+  reachable)
+- `FLAGD_UI_URL` env var pointing at flagd-ui. The pack ships flagd as a
+  `ClusterIP` service so the simplest path is a port-forward:
+  ```bash
+  kubectl -n otel-demo port-forward --address 0.0.0.0 svc/flagd 4000:4000 &
+  export FLAGD_UI_URL=http://localhost:4000
+  ```
+  Persist `FLAGD_UI_URL` in `.env` so you don't have to re-export it
+  every session
 - Cribl APM app is deployed to the Cribl Cloud staging environment
   and the OTel telemetry pipeline is shipping data to the `otel` dataset
 
@@ -34,9 +43,10 @@ scripts/flagd-set.sh paymentFailure off
 scripts/flagd-set.sh --all-off
 ```
 
-Under the hood the script SSHes to clintdev, patches the `flagd-config`
-ConfigMap in the `otel-demo` namespace, applies it, and bounces the flagd
-Deployment so the change takes effect in under 10 seconds.
+Under the hood the script just calls flagd-ui's HTTP API
+(`GET $FLAGD_UI_URL/api/read` / `POST $FLAGD_UI_URL/api/write`). The
+write triggers flagd's file-watch reload, so changes take effect in
+under a second with no pod restart.
 
 ## Best practices for observing a scenario
 

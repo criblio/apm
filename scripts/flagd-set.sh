@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# flagd-set.sh — flip an OTel demo feature flag on the clintdev kind cluster.
+# flagd-set.sh — flip an OTel demo feature flag via the flagd-ui HTTP API.
 #
 # Usage:
 #   scripts/flagd-set.sh <flagName> <variant>     # turn a flag on/to a variant
@@ -14,37 +14,89 @@
 #   scripts/flagd-set.sh emailMemoryLeak 100x
 #   scripts/flagd-set.sh paymentFailure off
 #
-# How it works: the demo runs inside a kind cluster on clintdev. The flagd
-# ConfigMap in the otel-demo namespace holds the JSON flag state. This
-# script fetches the ConfigMap, patches `defaultVariant` for the named flag,
-# applies the result, and bounces the flagd Deployment so the change takes
-# effect immediately (otherwise ConfigMap propagation can take ~60s).
+# How it works: the upstream OpenTelemetry Demo ships a `flagd-ui` Phoenix
+# app as a sidecar in the flagd pod. It exposes two unauthenticated
+# endpoints on port 4000:
 #
-# Requires: ssh access to clintdev, which runs Docker with a kind cluster
-# named "otel-demo-cribl". No local kubectl needed — we exec into the
-# control-plane container.
+#   GET  $FLAGD_UI_URL/api/read   - returns {"flags": {...}}
+#   POST $FLAGD_UI_URL/api/write  - takes  {"data": {"flags": {...}}}
+#                                   and triggers flagd's file-watch reload
+#                                   (no pod bounce required)
+#
+# The read response is raw and the write body is wrapped — that asymmetry
+# is intentional on flagd-ui's side, not a bug here. This script wraps on
+# write and tolerates either shape on read in case flagd-ui evolves.
+#
+# Requires:
+#   - FLAGD_UI_URL pointing at a reachable flagd-ui service. The cluster
+#     ships flagd as a ClusterIP service so you'll need a port-forward
+#     (or NodePort/ingress) to reach it from outside the cluster:
+#       kubectl -n otel-demo port-forward --address 0.0.0.0 svc/flagd 4000:4000 &
+#       FLAGD_UI_URL=http://localhost:4000 scripts/flagd-set.sh --list
+#   - curl
+#   - python3 (for JSON patching — flagd configs are small so python is
+#     cheaper than taking a jq dependency)
 
 set -euo pipefail
-
-SSH_HOST="clintdev"
-CTRL_CONTAINER="otel-demo-cribl-control-plane"
-NAMESPACE="otel-demo"
-CONFIGMAP="flagd-config"
-DEPLOYMENT="flagd"
+# Without inherit_errexit, `set -e` is not propagated into `$( ... )`
+# command substitutions — so a failing curl inside fetch_config() would
+# leak a Python traceback from the downstream `python3 -c` before this
+# script exited non-zero. Enable it so failures surface cleanly at the
+# first broken step.
+shopt -s inherit_errexit
 
 die() { echo "error: $*" >&2; exit 1; }
 
+: "${FLAGD_UI_URL:?FLAGD_UI_URL must be set (see .env.example)}"
+FLAGD_UI_URL="${FLAGD_UI_URL%/}"
+
+command -v curl >/dev/null || die "curl not found on PATH"
+command -v python3 >/dev/null || die "python3 not found on PATH"
+
 fetch_config() {
-  ssh "$SSH_HOST" "docker exec $CTRL_CONTAINER kubectl -n $NAMESPACE get cm $CONFIGMAP -o jsonpath='{.data.demo\.flagd\.json}'"
+  # Returns the unwrapped flag JSON ({"flags": {...}}) on stdout. The
+  # flagd-ui /api/read endpoint already returns this shape unwrapped, but
+  # we still tolerate a {"data": {...}} envelope in case it evolves.
+  # Capture curl's output first so `set -e` bails before python runs on
+  # an empty stdin — otherwise a failing curl leaks a JSONDecodeError
+  # traceback into the user's terminal.
+  local resp
+  resp="$(curl -sSf "$FLAGD_UI_URL/api/read")"
+  printf '%s' "$resp" | python3 -c '
+import json, sys
+payload = json.load(sys.stdin)
+inner = payload["data"] if isinstance(payload, dict) and "data" in payload else payload
+json.dump(inner, sys.stdout)
+'
 }
 
 apply_config() {
+  # Takes a path to the unwrapped flag JSON and POSTs it (wrapped in
+  # {"data": ...}) to flagd-ui, which writes it to disk and triggers
+  # flagd's file-watch.
   local json_file="$1"
-  cat "$json_file" | ssh "$SSH_HOST" "docker exec -i $CTRL_CONTAINER sh -c 'cat > /tmp/flagd-patched.json && kubectl -n $NAMESPACE create configmap $CONFIGMAP --from-file=demo.flagd.json=/tmp/flagd-patched.json --dry-run=client -o yaml | kubectl apply -f - >/dev/null && kubectl -n $NAMESPACE rollout restart deployment/$DEPLOYMENT >/dev/null && kubectl -n $NAMESPACE rollout status deployment/$DEPLOYMENT --timeout=60s'" | tail -1
+  local body
+  body="$(python3 -c '
+import json, sys
+with open(sys.argv[1]) as f:
+    inner = json.load(f)
+print(json.dumps({"data": inner}))
+' "$json_file")"
+  curl -sSf \
+    -X POST \
+    -H 'content-type: application/json' \
+    --data "$body" \
+    "$FLAGD_UI_URL/api/write" >/dev/null \
+    || die "POST $FLAGD_UI_URL/api/write failed"
+  echo "applied"
 }
 
 cmd_list() {
-  fetch_config | python3 -c '
+  # Capture fetch_config first so a failed curl surfaces cleanly via
+  # `set -e` instead of as a JSONDecodeError traceback from python.
+  local json
+  json="$(fetch_config)"
+  printf '%s' "$json" | python3 -c '
 import json, sys
 d = json.load(sys.stdin)
 for name, flag in d["flags"].items():
@@ -58,7 +110,9 @@ for name, flag in d["flags"].items():
 }
 
 cmd_status() {
-  fetch_config | python3 -c '
+  local json
+  json="$(fetch_config)"
+  printf '%s' "$json" | python3 -c '
 import json, sys
 d = json.load(sys.stdin)
 active = [(n, f["defaultVariant"]) for n, f in d["flags"].items() if f.get("defaultVariant") != "off"]
@@ -130,7 +184,7 @@ case "${1:-}" in
   --list|-l)   cmd_list ;;
   --status|-s) cmd_status ;;
   --all-off)   cmd_all_off ;;
-  -h|--help|'') sed -n '1,30p' "$0"; exit 0 ;;
+  -h|--help|'') sed -n '1,36p' "$0"; exit 0 ;;
   *)
     [[ $# -eq 2 ]] || die "usage: $0 <flagName> <variant> (or --list / --status / --all-off)"
     cmd_set "$1" "$2"
