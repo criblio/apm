@@ -208,6 +208,24 @@ test('scenario 1 · paymentFailure surfaces in Home, Service Detail, Investigato
     //    We use the NavBar Investigate link (React Router client-side
     //    navigation) because a direct goto to /app-ui/apm/investigate
     //    hits the same host-404 issue as /service/payment.
+    //
+    //    Gated behind SCENARIO_TEST_INVESTIGATOR=1 as of plan v2
+    //    (docs/sessions/2026-04-15-scenario-plan-v2.md). Local
+    //    Playwright is no longer the surface for LLM-as-judge
+    //    evaluation — agent summaries are trend-y, non-deterministic,
+    //    and belong in the off-Actions eval harness whose design doc
+    //    is the next-concrete-step from plan v2. Keeping the step
+    //    body so a developer debugging the Investigator locally can
+    //    opt in with `SCENARIO_TEST_INVESTIGATOR=1 npx playwright test …`
+    //    but skipping by default so a slow or flaky Copilot run
+    //    doesn't fail the deterministic regression surfaces above.
+    if (process.env.SCENARIO_TEST_INVESTIGATOR !== '1') {
+      console.log(
+        '[scenario 1] Skipping Investigator step (opt in with SCENARIO_TEST_INVESTIGATOR=1).',
+      );
+      return;
+    }
+
     await test.step('investigator · summarises the payment regression', async () => {
       await page.getByRole('link', { name: 'Investigate', exact: true }).click();
       await page.waitForURL(/\/investigate/, { timeout: 15_000 });
