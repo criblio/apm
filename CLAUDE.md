@@ -139,12 +139,23 @@ See `.env.example` for the full list of vars tests depend on.
 
 The test telemetry comes from the upstream OpenTelemetry Demo's
 `flagd` feature-flag service. `scripts/flagd-set.sh` flips flags to
-reproduce the scenarios catalogued in `FAILURE-SCENARIOS.md`. The
-script currently SSHes into `clintdev` and patches the flagd
-ConfigMap in the kind cluster — this is dev-box specific and only
-works from Clint's setup. Follow-up work will replace it with an
-HTTP API call against the demo cluster's flagd-ui service so other
-contributors can run it too.
+reproduce the scenarios catalogued in `FAILURE-SCENARIOS.md`.
+
+The script talks to flagd-ui's HTTP API directly — no SSH, no
+kubectl, no pod restarts. Set `FLAGD_UI_URL` (in `.env` or the
+shell) to a reachable flagd-ui endpoint and you're done. The
+demo cluster ships flagd as a `ClusterIP` service so you'll
+typically want a port-forward:
+
+```bash
+kubectl -n otel-demo port-forward --address 0.0.0.0 svc/flagd 4000:4000 &
+export FLAGD_UI_URL=http://localhost:4000
+scripts/flagd-set.sh --list
+```
+
+`FAILURE-SCENARIOS.md` has the full prerequisites and per-flag
+recipes. The script supports `--list`, `--status`, `--all-off`,
+and `<flagName> <variant>` (e.g. `paymentFailure 50%`).
 
 ### PR conventions
 
