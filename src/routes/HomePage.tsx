@@ -63,6 +63,15 @@ const REFRESH_OPTIONS: Array<{ label: string; ms: number }> = [
 ];
 const DEFAULT_REFRESH_MS = 60_000;
 
+/** Threshold beyond which the "cached panels" stamp is treated as
+ *  stale and surfaced as a chip on the affected panel headers. Set to
+ *  3× the 5-minute scheduled-search cadence: a single missed run is
+ *  still within normal drift, but three missed runs means the scheduler
+ *  is not keeping up (cluster outage, Cribl Search backpressure, etc.)
+ *  and the UI should warn the user before they mistake cached emptiness
+ *  for a healthy system. */
+const PANEL_CACHE_STALE_THRESHOLD_MS = 15 * 60_000;
+
 function fmtRate(requestsPerMin: number): string {
   if (requestsPerMin >= 1000) return `${(requestsPerMin / 1000).toFixed(1)}k/min`;
   if (requestsPerMin >= 10) return `${requestsPerMin.toFixed(0)}/min`;
@@ -197,6 +206,11 @@ export default function HomePage() {
   const [loadingSlow, setLoadingSlow] = useState(true);
   const [loadingErrors, setLoadingErrors] = useState(true);
   const [loadingAnomalies, setLoadingAnomalies] = useState(true);
+  // Timestamp (ms since epoch) of the latest bucket observed in the
+  // most recent cached-panels read, or null when the current fetch
+  // didn't read from cache. Used to render a "cache Nm stale" chip on
+  // the Home panels when the scheduled-search cadence has slipped.
+  const [panelCacheUpdatedMs, setPanelCacheUpdatedMs] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshMs, setRefreshMs] = useState<number>(DEFAULT_REFRESH_MS);
   const [sort, setSort] = useState<SortState>({ key: 'requests', dir: 'desc' });
@@ -215,6 +229,10 @@ export default function HomePage() {
     setLoadingSlow(true);
     setLoadingErrors(true);
     setLoadingAnomalies(true);
+    // Reset the cache stamp so the stale chip disappears when the
+    // user navigates away from a cached range. It is repopulated
+    // below only if the cache-fast path actually reads cached rows.
+    setPanelCacheUpdatedMs(null);
 
     // Previous window of the same length — fuels the delta-vs-baseline
     // chips. Failure here is non-fatal; we just skip the chips. Fired
@@ -263,17 +281,34 @@ export default function HomePage() {
         if (
           cached.serviceSummaries &&
           cached.serviceBuckets &&
-          cached.slowClasses &&
-          cached.errorClasses
+          cached.slowClasses
         ) {
           setSummaries(cached.serviceSummaries);
           setBuckets(cached.serviceBuckets);
           setSlowClasses(cached.slowClasses);
-          setErrorClasses(cached.errorClasses);
           setLoadingSummaries(false);
           setLoadingBuckets(false);
           setLoadingSlow(false);
-          setLoadingErrors(false);
+          setPanelCacheUpdatedMs(cached.lastUpdatedMs);
+
+          // The error-spans scheduled search can write zero rows
+          // during a cluster outage and then take several scheduled
+          // runs to re-populate once telemetry recovers. Fall back
+          // to a live listErrorClasses call when the cache returns
+          // null or an empty array so the panel catches up on the
+          // next render instead of waiting out the scheduler. The
+          // other cached panels keep their fast-path values — only
+          // the error classes panel pays the live-query latency.
+          if (cached.errorClasses && cached.errorClasses.length > 0) {
+            setErrorClasses(cached.errorClasses);
+            setLoadingErrors(false);
+          } else {
+            void listErrorClasses(range, 'now')
+              .then((r) => setErrorClasses(r))
+              .catch(() => setErrorClasses([]))
+              .finally(() => setLoadingErrors(false));
+          }
+
           // Don't await the prev summary or anomaly query here —
           // let them resolve in the background and light up the
           // delta chips + anomaly widget when they land. The main
@@ -449,6 +484,22 @@ export default function HomePage() {
   function reqPerMin(totalRequests: number): number {
     return rangeMinutes > 0 ? totalRequests / rangeMinutes : 0;
   }
+
+  // Age of the panel-cache snapshot, in ms, when the current
+  // fetch actually read from cache AND that snapshot is older than
+  // the staleness threshold. Passed to each panel whose data came
+  // from the same cached scheduled-search batch so they can render
+  // a "cache Nm stale" chip. When the current fetch bypassed the
+  // cache (non-default range, stream filter off, cache-miss
+  // fallback) or the snapshot is still within the expected
+  // cadence, this stays null and no chip is rendered. Recomputes
+  // on every refresh tick so the chip age ticks forward visibly.
+  const panelCacheStaleAgeMs = useMemo(() => {
+    if (panelCacheUpdatedMs == null) return null;
+    const age = lastRefresh - panelCacheUpdatedMs;
+    if (age < PANEL_CACHE_STALE_THRESHOLD_MS) return null;
+    return age;
+  }, [panelCacheUpdatedMs, lastRefresh]);
 
   function toggleSort(key: SortKey) {
     setSort((cur) => {
@@ -759,6 +810,7 @@ export default function HomePage() {
           loading={loadingSlow}
           mode="duration"
           emptyMessage="No traces in this range."
+          staleCacheAgeMs={panelCacheStaleAgeMs}
         />
         <TraceClassList
           title="Error classes"
@@ -775,6 +827,7 @@ export default function HomePage() {
           loading={loadingErrors}
           mode="errors"
           emptyMessage="No errors in this range — all clear."
+          staleCacheAgeMs={panelCacheStaleAgeMs}
         />
       </div>
 
