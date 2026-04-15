@@ -108,11 +108,24 @@ test('scenario 1 · paymentFailure surfaces in Home, Service Detail, Investigato
     //    branch and never exercise the fix.
     await test.step('home · propagated checkout error + Error classes panel', async () => {
       await gotoApm(page, '/?range=-1h');
-      // Wait for the payment row to render at -1h before reading
-      // neighboring cells — avoids reading a half-rendered table.
+      // Wait for the service catalog to finish its initial load.
+      // At -1h the cache-fast path does a batched $vt_results read
+      // over four scheduled-search outputs, which can take
+      // 15-45s on a busy cluster before the first setSummaries
+      // call lands. "Services (N)" only renders when
+      // loadingSummaries has flipped to false, so it is a clean
+      // "rows are present" signal. Budget matches the cache-read
+      // tail — if we hit it, the cluster is genuinely stuck, not
+      // the UI.
+      await page
+        .getByText(/^Services \(\d+\)/)
+        .waitFor({ state: 'visible', timeout: 90_000 });
+      // Payment row should be in the rendered table at this point;
+      // a short wait guards against race between "Services (N)"
+      // becoming visible and the table body rendering.
       await page
         .getByRole('row', { name: /^payment\s/ })
-        .waitFor({ state: 'visible', timeout: 20_000 });
+        .waitFor({ state: 'visible', timeout: 15_000 });
 
       const checkoutRow = page.getByRole('row', { name: /^checkout\s/ });
       if (await checkoutRow.isVisible().catch(() => false)) {
@@ -143,10 +156,11 @@ test('scenario 1 · paymentFailure surfaces in Home, Service Detail, Investigato
         // Before the fallback, a scheduled-search outage could leave
         // this panel visibly empty even while payment was erroring;
         // the fallback closes that gap so the panel is now a reliable
-        // surface to hard-assert on. Timeout gives the fallback live
-        // query room to resolve on top of the initial cache-read.
+        // surface to hard-assert on. 60s budget covers both the cache
+        // read and the subsequent live listErrorClasses fallback at
+        // -1h on a busy cluster.
         await expect(paymentEntries, 'Error classes panel should list a payment entry')
-          .not.toHaveCount(0, { timeout: 30_000 });
+          .not.toHaveCount(0, { timeout: 60_000 });
       }
     });
 
