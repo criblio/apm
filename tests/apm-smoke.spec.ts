@@ -7,30 +7,18 @@
 // `window.CRIBL_BASE_PATH` / `window.CRIBL_API_URL` so React Router
 // resolves relative to the pack mount point. Navigating to the URL
 // directly from Playwright skips that injection, so we polyfill the
-// base path ourselves via `addInitScript` — which is exactly what the
-// Cribl shell would have done if we'd click-driven our way in through
-// the Apps menu.
+// base path ourselves via `installCriblHostGlobals` — which is exactly
+// what the Cribl shell would have done if we'd click-driven our way in
+// through the Apps menu.
 
 import { test, expect } from '@playwright/test';
-
-const APP_PATH = process.env.CRIBL_APM_APP_PATH ?? '/app-ui/apm/';
+import { installCriblHostGlobals, gotoApm } from './helpers/apmSession';
 
 test('APM app shell renders on Cribl Cloud', async ({ page }) => {
-  // Polyfill the host globals the pack's `App.tsx` reads so React Router
-  // uses the pack mount point as its basename. Without this the router
-  // sees `/app-ui/apm/` as the pathname with a `/` basename, and no
-  // route matches.
-  await page.addInitScript((basePath) => {
-    (window as unknown as { CRIBL_BASE_PATH: string }).CRIBL_BASE_PATH = basePath;
-    (window as unknown as { CRIBL_API_URL: string }).CRIBL_API_URL = '/m/default_search';
-  }, APP_PATH.replace(/\/$/, ''));
-
-  await page.goto(APP_PATH, { waitUntil: 'domcontentloaded' });
+  await installCriblHostGlobals(page);
+  await gotoApm(page, '/');
 
   // NavBar brand + three representative tabs from src/components/NavBar.tsx.
-  // `getByRole('link', { exact: true })` is used on `Home` because the
-  // brand anchor also contains "Cribl APM Home"-style text in some
-  // layouts; the exact match avoids ambiguity.
   await expect(page.getByText('Cribl APM').first()).toBeVisible({ timeout: 30_000 });
   await expect(page.getByRole('link', { name: 'Home', exact: true })).toBeVisible();
   await expect(page.getByRole('link', { name: 'System Architecture' })).toBeVisible();
