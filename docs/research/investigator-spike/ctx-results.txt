@@ -1,0 +1,772 @@
+Products
+Apps
+Typhoon H
+omelab
+mai
+n
+Non-Production Environment
+99+
+CS
+Expand
+Search Home
+History
+Saved Searches
+Dashboards
+Notebooks
+Data
+Knowledge
+Packs
+Settings
+Organization Details
+Copilot Investigation
+## Dataset & Schema Context (Cribl APM)
+
+The "otel" dataset contains OpenTelemetry traces, logs, and metrics ingested
+from an OTel Collector. **Records are pre-parsed JSON** — ALL fields are
+available as structured columns. Do NOT use regex extraction on _raw.
+
+### Span identification
+- Spans: `dataset="otel" | where isnotnull(end_time_unix_nano)`
+- Metrics: `dataset="otel" | where datatype == "generic_metrics"`
+
+### Key field mappings (use exactly these patterns)
+- Service name: `tostring(resource.attributes['service.name'])`
+- Duration (microseconds): `(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0`
+- Error detection: `tostring(status.code)=="2"`  (status.code is a STRING "2", not int 2)
+- Status message: `status.message`
+- Span kind: `kind` (1=SERVER, 2=CLIENT, 3=PRODUCER, 4=CONSUMER)
+- Operation name: `name`
+- RPC method: `tostring(attributes['rpc.method'])`
+- RPC service: `tostring(attributes['rpc.service'])`
+- gRPC status code: `tostring(attributes['rpc.grpc.status_code'])`
+- Exception type: look in events array for exception.type
+- Parent span: `parent_span_id` (empty string = root span)
+- Trace ID: `trace_id`
+- Span ID: `span_id`
+- K8s pod: `resource.attributes['k8s.pod.name']`
+
+### KQL dialect notes (Cribl Search KQL, NOT standard Kusto)
+- Use `summarize` for aggregation (not `stats`)
+- Use `timestats` for time-bucketed aggregation
+- Use `extend` for computed columns
+- Use `sort by field desc` (not `order by`)
+- `countif(predicate)` works inside summarize
+- Bracket-quote dotted fields: `["resource.attributes.service.name"]`
+- Or use the nested accessor: `resource.attributes['service.name']`
+- String comparisons: `tostring(x)=="value"`
+
+### Service topology (from our System Architecture graph)
+Services in this environment and their dependencies:
+- `frontend-proxy` → `frontend` (HTTP)
+- `frontend` → `checkout`, `cart`, `product-catalog`, `recommendation`, `ad`, `currency`, `shipping` (gRPC)
+- `checkout` → `payment` (gRPC oteldemo.PaymentService/Charge)
+- `checkout` → `cart`, `product-catalog`, `currency`, `shipping`, `email` (gRPC)
+- `payment` → no downstream service dependencies (leaf node)
+- Messaging: `cart` → Kafka → `accounting`; `checkout` → Kafka → `accounting`, `email`
+- `flagd` is the feature flag service, called by many services
+
+### Example working queries
+Service summary with error rates:
+```kql
+dataset="otel" | where isnotnull(end_time_unix_nano)
+  | extend svc=tostring(resource.attributes['service.name']),
+          dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
+          is_error=(tostring(status.code)=="2")
+  | summarize requests=count(),
+              errors=countif(is_error),
+              p50=percentile(dur_us, 50),
+              p95=percentile(dur_us, 95),
+              p99=percentile(dur_us, 99)
+    by svc
+  | extend error_rate=round(100.0*errors/requests, 2)
+  | sort by requests desc
+```
+
+Dependencies (service-to-service call graph):
+```kql
+dataset="otel" | where isnotnull(end_time_unix_nano)
+  | extend svc=tostring(resource.attributes['service.name']),
+          parent=tostring(parent_span_id),
+          is_error=(tostring(status.code)=="2")
+  | where parent != "" and isnotempty(parent)
+  | project trace_id, parent, svc, is_error
+  | join kind=inner (
+      dataset="otel" | where isnotnull(end_time_unix_nano)
+      | extend psvc=tostring(resource.attributes['service.name']),
+              psid=tostring(span_id)
+      | project trace_id, psid, psvc
+    ) on trace_id, $left.parent == $right.psid
+  | where svc != psvc
+  | summarize callCount=count(), errorCount=countif(is_error) by parent=psvc, child=svc
+  | sort by callCount desc
+```
+
+## Current Investigation
+
+The payment service's gRPC Charge operation (called by checkout) is experiencing a high error rate in the last 15 minutes. Investigate the root cause. Use the field mappings and query patterns above — do NOT use regex extraction.
+
+I’m going to anchor the investigation on the otel dataset (it contains the gRPC spans and status fields we need) and pull its schema so we can write precise KQL for the payment service’s Charge operation over the last 15 minutes.
+
+I’m going to quantify the error rate specifically for payment’s gRPC oteldemo.PaymentService/Charge spans over the last 15 minutes, and break errors down by gRPC status code, pod, and service version to see if this is isolated to a subset of instances or a systemic issue.
+
+Payment Charge errors by gRPC code, service version, and pod (last 15m)
+minutes ago
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+cribl dataset=otel
+| where isnotnull(end_time_unix_nano)
+| extend svc=tostring(resource.attributes['service.name']),
+         rpc_svc=tostring(attributes['rpc.service']),
+         rpc_method=tostring(attributes['rpc.method']),
+         grpc_code=tostring(attributes['rpc.grpc.status_code']),
+         is_error=(tostring(status.code)=="2"),
+         pod=tostring(resource.attributes['k8s.pod.name']),
+         ver=tostring(resource.attributes['service.version']),
+         dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0
+| where svc=="payment" and rpc_svc=="oteldemo.PaymentService" and rpc_method=="Charge"
+| summarize requests=count(), errors=countif(is_error), p95_us=percentile(dur_us, 95) by grpc_code, ver, pod
+| extend error_rate_pct=round(100.0*errors/requests, 2)
+| sort by errors desc
+| limit 100
+2 results (1.16s)
+Details
+Show table settings
+x
+grpc_code
+Settings
+ver
+Settings
+pod
+Settings
+y
+requests
+Settings
+y
+errors
+Settings
+y
+p95_us
+Settings
+y
+err…ct
+Settings
+null
+0
+2.2.0
+2.2.0
+payment-786d4cc9bd-k56jj
+payment-786d4cc9bd-k56jj
+19
+32
+19
+0
+32983.552
+16928.256
+100
+0
+
+Your last-15m breakdown is already very telling: all errors are concentrated in a single payment pod (payment-786d4cc9bd-k56jj, ver 2.2.0) and the failing spans have no rpc.grpc.status_code attribute (it’s null), while successful requests report grpc_code="0".
+
+Next I’ll (1) confirm whether any other payment pods are serving Charge traffic and (2) pull the status.message / exception details for the failing Charge spans from that pod to identify the underlying error.
+
+Overall Payment Charge error rate by pod+version (last 15m)
+minutes ago
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+cribl dataset=otel
+| where isnotnull(end_time_unix_nano)
+| extend svc=tostring(resource.attributes['service.name']),
+         rpc_svc=tostring(attributes['rpc.service']),
+         rpc_method=tostring(attributes['rpc.method']),
+         is_error=(tostring(status.code)=="2"),
+         pod=tostring(resource.attributes['k8s.pod.name']),
+         ver=tostring(resource.attributes['service.version'])
+| where svc=="payment" and rpc_svc=="oteldemo.PaymentService" and rpc_method=="Charge"
+| summarize requests=count(), errors=countif(is_error) by ver, pod
+| extend error_rate_pct=round(100.0*errors/requests, 2)
+| sort by errors desc
+| limit 100
+1 results (0.89s)
+Details
+Show table settings
+x
+ver
+Settings
+pod
+Settings
+y
+requests
+Settings
+y
+errors
+Settings
+y
+error_rate_pct
+Settings
+2.2.0
+payment-786d4cc9bd-k56jj
+54
+21
+38.89
+
+Next I’m going to inspect what the errors actually are on the affected pod by summarizing status.message (and any gRPC code present) for the failing Charge spans. This should quickly indicate whether we’re seeing timeouts, internal exceptions, validation failures, etc.
+
+Status.message breakdown for failing Charge spans in impacted pod
+minutes ago
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+cribl dataset=otel
+| where isnotnull(end_time_unix_nano)
+| extend svc=tostring(resource.attributes['service.name']),
+         rpc_svc=tostring(attributes['rpc.service']),
+         rpc_method=tostring(attributes['rpc.method']),
+         grpc_code=tostring(attributes['rpc.grpc.status_code']),
+         is_error=(tostring(status.code)=="2"),
+         pod=tostring(resource.attributes['k8s.pod.name']),
+         ver=tostring(resource.attributes['service.version']),
+         status_msg=tostring(status.message)
+| where svc=="payment" and rpc_svc=="oteldemo.PaymentService" and rpc_method=="Charge" and 
+pod=="payment-786d4cc9bd-k56jj" and is_error
+| summarize errors=count() by grpc_code, status_msg
+| sort by errors desc
+| limit 100
+1 results (1.17s)
+Details
+Show table settings
+x
+grpc_code
+Settings
+status_msg
+Settings
+y
+errors
+Settings
+null
+20
+
+From the searches you already ran, errors are isolated to a single payment pod (payment-786d4cc9bd-k56jj, ver 2.2.0). The failing spans show status.code=="2" but lack attributes['rpc.grpc.status_code'] and also have an empty status.message, which suggests the request is failing before the gRPC status is populated (e.g., abrupt termination or an internal exception before response is written).
+
+Next I’ll use structured span fields to (1) check what checkout (client) sees for the same Charge calls (gRPC code/message), and (2) look for exception events attached to the failing payment spans.
+
+First I’ll validate whether the client-side spans in checkout for the same Charge calls report a concrete gRPC status code (e.g., 13, 14, 4) even though the payment server spans are missing it. This helps differentiate between instrumentation gaps on the server vs a transport-level failure that prevents the server from emitting a proper status.
+
+Checkout spans for calls to PaymentService/Charge by grpc_code and pod (last 15m)
+minutes ago
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+cribl dataset=otel
+| where isnotnull(end_time_unix_nano)
+| extend svc=tostring(resource.attributes['service.name']),
+         rpc_svc=tostring(attributes['rpc.service']),
+         rpc_method=tostring(attributes['rpc.method']),
+         grpc_code=tostring(attributes['rpc.grpc.status_code']),
+         is_error=(tostring(status.code)=="2"),
+         kind=tostring(kind),
+         ver=tostring(resource.attributes['service.version']),
+         pod=tostring(resource.attributes['k8s.pod.name'])
+| where svc=="checkout" and rpc_svc=="oteldemo.PaymentService" and rpc_method=="Charge"
+| summarize requests=count(), errors=countif(is_error) by grpc_code, kind, ver, pod
+| extend error_rate_pct=round(100.0*errors/requests, 2)
+| sort by errors desc
+| limit 100
+2 results (0.96s)
+Details
+Show table settings
+x
+grpc_code
+Settings
+kind
+Settings
+ver
+Settings
+pod
+Settings
+y
+requests
+Settings
+y
+errors
+Settings
+2
+0
+3
+3
+2.2.0
+2.2.0
+checkout-dc948cbcf-hcdrp
+checkout-dc948cbcf-hcdrp
+20
+33
+20
+0
+
+Great—checkout does see a concrete failure mode: the failed client spans have grpc_code="2" (UNKNOWN) with 100% error rate for those 20 calls. Combined with the payment server spans having status.code=="2" but missing rpc.grpc.status_code and status.message, this pattern is consistent with a server-side exception/abort where the client receives a generic UNKNOWN.
+
+Next I’ll extract exception details from the span events on the failing payment server spans (OTel exceptions are recorded as events with fields like exception.type / exception.message). This should reveal the actual root cause (e.g., NullPointer, DB failure, misconfig, etc.) without using _raw.
+
+The previous attempt to expand the events array didn’t execute successfully, so I’m going to take a simpler structured approach first: check whether the payment server spans already carry exception.* as span attributes (some instrumentations attach them directly), which avoids array expansion entirely. If that’s empty, we’ll pivot to inspecting the shape of the events field and adjust the query accordingly.
+
+To identify the underlying root cause, I’ll pull a small set of individual failing payment server spans (no aggregation) and inspect whether they contain any structured exception attributes (attributes['exception.type'], attributes['exception.message']) or other helpful fields alongside the missing gRPC status code. This avoids more complex expressions and should work reliably if those fields exist.
+
+Sample failing payment Charge spans (project core status/exception fields)
+minutes ago
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+cribl dataset=otel
+| where isnotnull(end_time_unix_nano)
+| extend svc=tostring(resource.attributes['service.name']),
+         rpc_svc=tostring(attributes['rpc.service']),
+         rpc_method=tostring(attributes['rpc.method']),
+         pod=tostring(resource.attributes['k8s.pod.name']),
+         is_error=(tostring(status.code)=="2"),
+         grpc_code=tostring(attributes['rpc.grpc.status_code']),
+         status_msg=tostring(status.message),
+         ex_type=tostring(attributes['exception.type']),
+         ex_msg=tostring(attributes['exception.message'])
+| where svc=="payment" and rpc_svc=="oteldemo.PaymentService" and rpc_method=="Charge" and 
+pod=="payment-786d4cc9bd-k56jj" and is_error
+| project end_time_unix_nano, trace_id, span_id, grpc_code, status_msg, ex_type, ex_msg
+| sort by end_time_unix_nano desc
+| limit 20
+20 results (0.89s)
+Details
+Show table settings
+y
+end_time_unix_nano
+Settings
+trace_id
+Settings
+span_id
+Settings
+grpc_code
+Settings
+status_msg
+Settings
+1776012803455230500
+1776012799375196000
+1776012790890764800
+1776012788012015900
+1776012733146144300
+1776012700378450400
+1776012699079386400
+1776012664229812500
+1776012627232157700
+1776012608097304800
+1776012581740983600
+1776012263045429000
+1776012261078673200
+1776012212566299100
+1776012047722112500
+1776012042947477500
+1776012040282134000
+1776012013619430100
+1776011993702999600
+1776011958917334800
+5c4cffd07a3555f2fb4f8cd71618e525
+8a332ac00e53ebea2c6d604f3040dd84
+ef5fb07fe75b892a94526df6a8a54603
+18252a3cbb58f16beb580f3e2a041a85
+902824024af1a2bb39811d6b6bdcb430
+d954343bd90ba67f8fa9126a89a1ffb2
+29d8fc8971795e7af5126879ee33864c
+bf5fed2fdffdd12e91bb35ab123274f2
+4fa2602c865fdfb518fad3f7a34c4ef8
+e80a13af6a928fab4d275ec7b56e79f9
+93f590d09a34462302a9379736e982ba
+23c10090448069cb24afb5f1485bc1b8
+2feb23616e89a05c95d18733d34ed1e9
+42f2766432b76fbaeaff99d752e7d4f4
+fa1ab803bea4fb8e9b2c9a868abcd41a
+4eb446e902bbd1aa71303265e2f131d0
+7dfd20832b4b48571a19617cbd0cf523
+cd4bfac3b17cb5089cf6cc98ed0d01e7
+bbaa49c1ce523ab84daa83f404347725
+1bec24a1beea8b50d6e5b076e28c3142
+fcf7b2321f47e995
+448d992eef2c31cb
+541cfdcf9a6f39de
+972a0878dabeacae
+a9a087162c44cbdf
+a736c99c4d1b95b0
+ad1412c4d5c8068f
+50629ac01f91a9bd
+e24d463caf4cdc42
+c71d0bbea3b23241
+59580f0d082fe8fb
+73259c29f5959b59
+647dca349a6299af
+f8b06598260274e9
+32347500d3a8a5aa
+69676c6604498ee2
+1ae66f7e10d61872
+944aa71db3c81035
+09156279c63d8655
+b34eddaf4dee282f
+null
+null
+null
+null
+null
+null
+null
+null
+null
+null
+null
+null
+null
+null
+null
+null
+null
+null
+null
+null
+
+To get closer to a root cause using only structured OTel fields, I’m going to:
+
+verify whether other payment pods are healthy (and whether only one pod is receiving Charge traffic), and
+check whether errors on the impacted pod correlate with pod start time and/or show a distinct duration pattern (e.g., immediate aborts vs slow timeouts).
+Payment SERVER span error rate by pod+version (last 15m)
+minutes ago
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+cribl dataset=otel
+| where isnotnull(end_time_unix_nano)
+| extend svc=tostring(resource.attributes['service.name']),
+         pod=tostring(resource.attributes['k8s.pod.name']),
+         ver=tostring(resource.attributes['service.version']),
+         kind=tostring(kind),
+         is_error=(tostring(status.code)=="2")
+| where svc=="payment" and kind=="1"
+| summarize server_spans=count(), server_errors=countif(is_error) by ver, pod
+| extend error_rate_pct=round(100.0*server_errors/server_spans, 2)
+| sort by server_errors desc
+| limit 100
+1 results (1.09s)
+Details
+Show table settings
+x
+ver
+Settings
+pod
+Settings
+y
+server_spans
+Settings
+y
+server_errors
+Settings
+y
+error_rate_pct
+Settings
+2.2.0
+payment-786d4cc9bd-k56jj
+58
+1
+1.72
+
+There’s an inconsistency I want to resolve before concluding root cause: across all payment SERVER spans in the last 15m, we only see 1 error, but for Charge we previously saw a much higher error count. Next I’ll directly profile the payment/Charge spans in the impacted pod by kind, status.code, and presence of rpc.grpc.status_code to confirm whether the failing spans are truly server spans (kind=1) and how they’re being marked as errors.
+
+That query failed due to an unsupported function usage. I’m going to rerun it with a simpler, more compatible check for “missing gRPC code” by testing whether attributes['rpc.grpc.status_code'] is null (instead of using isempty()), while still breaking down by kind, status.code, and grpc_code.
+
+Payment Charge spans in impacted pod by kind/status_code/grpc_code (null grpc check)
+minutes ago
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+cribl dataset=otel
+| where isnotnull(end_time_unix_nano)
+| extend svc=tostring(resource.attributes['service.name']),
+         rpc_svc=tostring(attributes['rpc.service']),
+         rpc_method=tostring(attributes['rpc.method']),
+         pod=tostring(resource.attributes['k8s.pod.name']),
+         ver=tostring(resource.attributes['service.version']),
+         kind=tostring(kind),
+         status_code=tostring(status.code),
+         grpc_code=tostring(attributes['rpc.grpc.status_code']),
+         grpc_code_is_null=isnull(attributes['rpc.grpc.status_code']),
+         status_msg=tostring(status.message)
+| where svc=="payment" and rpc_svc=="oteldemo.PaymentService" and rpc_method=="Charge" and 
+pod=="payment-786d4cc9bd-k56jj"
+| summarize spans=count(), grpc_code_null=countif(grpc_code_is_null), empty_status_msg=countif(status_msg=="") by 
+ver, kind, status_code, grpc_code
+| sort by spans desc
+| limit 100
+2 results (1.26s)
+Details
+Show table settings
+x
+ver
+Settings
+kind
+Settings
+status_code
+Settings
+grpc_code
+Settings
+y
+spans
+Settings
+y
+grp…ll
+Settings
+2.2.0
+2.2.0
+2
+2
+0
+2
+0
+null
+31
+21
+0
+21
+
+I’m going to verify we’re actually looking at the server-side PaymentService/Charge spans. Right now, the “impacted payment pod” breakdown shows kind="2" (CLIENT) for both successes and failures, which would contradict the notion that these are server spans.
+
+Next search: list payment SERVER spans (kind=1) in the last 15 minutes and see how they identify the RPC operation (via name, rpc.service, rpc.method). That will tell us the correct filter to isolate the true server Charge spans.
+
+Confirm payment SERVER spans correspond to Charge and their error count (last 15m)
+minutes ago
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+cribl dataset=otel
+| where isnotnull(end_time_unix_nano)
+| extend svc=tostring(resource.attributes['service.name']),
+         kind=tostring(kind),
+         span_name=tostring(name),
+         rpc_svc=tostring(attributes['rpc.service']),
+         rpc_method=tostring(attributes['rpc.method']),
+         pod=tostring(resource.attributes['k8s.pod.name']),
+         is_error=(tostring(status.code)=="2")
+| where svc=="payment" and kind=="1"
+| summarize spans=count(), errors=countif(is_error) by span_name, rpc_svc, rpc_method
+| sort by spans desc
+| limit 100
+2 results (0.97s)
+Details
+Show table settings
+x
+span_name
+Settings
+rpc_svc
+Settings
+rpc_method
+Settings
+y
+spans
+Settings
+y
+errors
+Settings
+charge
+tcp.connect
+null
+null
+null
+null
+51
+4
+0
+1
+
+To pin down why checkout is getting grpc_code=2 (UNKNOWN) while payment’s server handler span (name="charge", kind=SERVER) shows 0 errors, I’m going to inspect the only server-side error we do see in payment: name="tcp.connect". If that connect error is happening on the same pod/time window, it’s a strong indicator the Charge handler is failing early due to an outbound connection failure (and the server instrumentation isn’t recording the gRPC status on the handler span).
+
+The previous tcp.connect summary query didn’t run cleanly, so I’m going to simplify it: pull a small sample of the raw tcp.connect error spans (still fully structured fields, no _raw) and project the peer/target attributes. This should reveal what dependency/endpoint the payment pod is failing to connect to, if any.
+
+Sample payment tcp.connect spans with errors (last 15m)
+minutes ago
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+cribl dataset=otel
+| where isnotnull(end_time_unix_nano)
+| extend svc=tostring(resource.attributes['service.name']),
+         pod=tostring(resource.attributes['k8s.pod.name']),
+         ver=tostring(resource.attributes['service.version']),
+         span_name=tostring(name),
+         kind=tostring(kind),
+         status_code=tostring(status.code),
+         status_msg=tostring(status.message),
+         peer_name=tostring(attributes['net.peer.name']),
+         peer_ip=tostring(attributes['net.peer.ip']),
+         peer_port=tostring(attributes['net.peer.port']),
+         server_addr=tostring(attributes['server.address']),
+         server_port=tostring(attributes['server.port']),
+         transport=tostring(attributes['network.transport']),
+         error_type=tostring(attributes['error.type'])
+| where svc=="payment" and span_name=="tcp.connect" and status_code=="2"
+| project end_time_unix_nano, trace_id, span_id, pod, ver, kind, status_msg, error_type, transport, peer_name, 
+peer_ip, peer_port, server_addr, server_port
+| sort by end_time_unix_nano desc
+| limit 20
+1 results (0.92s)
+Details
+Show table settings
+y
+end_time_unix_nano
+Settings
+trace_id
+Settings
+span_id
+Settings
+pod
+Settings
+ver
+Settings
+1776012561958666800
+6d9e76fd86a87797b7a887d5af6aa839
+cd1501d98c29c0a6
+payment-786d4cc9bd-k56jj
+2.2.0
+
+We have a concrete low-level failure signal on the impacted pod: a tcp.connect SERVER span error with connect ECONNREFUSED 10.96.141.153:8013. Next I’ll see if we can identify what service that IP:port corresponds to (via available lookup tables), so we can tie the Charge errors to a specific downstream dependency or misrouted endpoint.
+
+Goal
+
+Investigate root cause of high error rate for the payment service gRPC Charge operation (called by checkout) in the last 15 minutes using structured OpenTelemetry span fields in the otel dataset (no regex on _raw).
+
+What We Found
+Error scope (last 15 minutes)
+Errors are concentrated in pod payment-786d4cc9bd-k56jj running service.version=2.2.0.
+In that pod: 54 Charge requests, 21 errors → 38.89% error rate.
+Successful Charge spans report attributes['rpc.grpc.status_code']="0"; failing spans typically have attributes['rpc.grpc.status_code']=null and empty status.message.
+Span semantics / instrumentation mismatch
+The spans you’re counting for oteldemo.PaymentService/Charge under service.name="payment" are primarily recorded as kind=2 (CLIENT).
+Meanwhile, payment SERVER spans (kind=1) show a handler span named name="charge" with 51 spans and 0 errors in the same window.
+This mismatch strongly suggests either:
+the failing Charge attempts are not being captured/marked on the server handler span, or
+failure occurs before the server can set/emit the gRPC status on the handler span (so the client side reports an error but the server handler span remains OK).
+Concrete failure signal in payment: outbound TCP connect refused
+Payment emits a SERVER span name="tcp.connect" with status.code=="2" on the impacted pod payment-786d4cc9bd-k56jj (service.version=2.2.0).
+The error message is: connect ECONNREFUSED 10.96.141.153:8013.
+Example timestamp (converted from end_time_unix_nano): 2026-04-12T16:49:21.958666800Z.
+This indicates payment attempted to open an outbound TCP connection to 10.96.141.153:8013 and the connection was refused—consistent with Charge failures that surface to callers as generic gRPC errors.
+Caller perspective (checkout → payment)
+Checkout client spans calling PaymentService/Charge show failures as gRPC status code 2 (UNKNOWN) for the errored calls.
+This aligns with a server-side abort/exception or transport failure where the server does not return a more specific gRPC status.
+Root Cause
+
+The high Charge error rate is isolated to payment pod payment-786d4cc9bd-k56jj (v2.2.0) and aligns with an outbound connection failure from payment (connect ECONNREFUSED 10.96.141.153:8013). Checkout observes these as gRPC UNKNOWN errors, while payment’s server handler span name="charge" shows 0 errors—suggesting the failure happens before the handler span records a gRPC status (or server-side instrumentation is not propagating the error to that span).
+
+Data Sources
+otel (32 events)
+Choose what you want to do next:
+Dig deeper into findings
+Save to notebook
+End investigation

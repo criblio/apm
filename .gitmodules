@@ -1,3 +1,0 @@
-[submodule "opentelemetry-demo"]
-	path = opentelemetry-demo
-	url = https://github.com/open-telemetry/opentelemetry-demo

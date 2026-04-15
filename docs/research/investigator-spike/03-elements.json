@@ -1,0 +1,268 @@
+[
+  {
+    "tag": "A",
+    "text": "",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/stream",
+    "ariaLabel": "Stream Home",
+    "title": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "Products",
+    "href": null,
+    "ariaLabel": null,
+    "title": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "Apps",
+    "href": null,
+    "ariaLabel": null,
+    "title": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "Typhoon H\nomelab",
+    "href": null,
+    "ariaLabel": null,
+    "title": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "mai\nn",
+    "href": null,
+    "ariaLabel": null,
+    "title": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "99+",
+    "href": null,
+    "ariaLabel": null,
+    "title": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "CS",
+    "href": null,
+    "ariaLabel": "Account",
+    "title": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "Expand",
+    "href": null,
+    "ariaLabel": "Expand",
+    "title": null
+  },
+  {
+    "tag": "A",
+    "text": "Stream Home",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/stream",
+    "ariaLabel": null,
+    "title": null
+  },
+  {
+    "tag": "A",
+    "text": "Worker Groups",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/stream/m",
+    "ariaLabel": null,
+    "title": null
+  },
+  {
+    "tag": "A",
+    "text": "Workers",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/stream/workers",
+    "ariaLabel": null,
+    "title": null
+  },
+  {
+    "tag": "A",
+    "text": "Outposts",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/stream/outposts",
+    "ariaLabel": null,
+    "title": null
+  },
+  {
+    "tag": "A",
+    "text": "Mappings",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/stream/mappings",
+    "ariaLabel": null,
+    "title": null
+  },
+  {
+    "tag": "A",
+    "text": "Monitoring",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/stream/dashboard",
+    "ariaLabel": null,
+    "title": null
+  },
+  {
+    "tag": "A",
+    "text": "Guard",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/stream/guard",
+    "ariaLabel": null,
+    "title": null
+  },
+  {
+    "tag": "A",
+    "text": "Notifications",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/stream/notifications",
+    "ariaLabel": null,
+    "title": null
+  },
+  {
+    "tag": "A",
+    "text": "Settings",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/stream/settings",
+    "ariaLabel": null,
+    "title": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "Organization Details",
+    "href": null,
+    "ariaLabel": null,
+    "title": null
+  },
+  {
+    "tag": "A",
+    "text": "View Details",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/stream/m",
+    "ariaLabel": null,
+    "title": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "Add Worker Group",
+    "href": null,
+    "ariaLabel": null,
+    "title": null
+  },
+  {
+    "tag": "A",
+    "text": "default",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/stream/m/default",
+    "ariaLabel": null,
+    "title": null
+  },
+  {
+    "tag": "A",
+    "text": "defaultHybrid",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/stream/m/defaultHybrid",
+    "ariaLabel": null,
+    "title": null
+  },
+  {
+    "tag": "A",
+    "text": "homeHybrid",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/stream/m/homeHybrid",
+    "ariaLabel": null,
+    "title": null
+  },
+  {
+    "tag": "A",
+    "text": "search",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/stream/m/search",
+    "ariaLabel": null,
+    "title": null
+  },
+  {
+    "tag": "A",
+    "text": "View Dashboard",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/stream/dashboard",
+    "ariaLabel": null,
+    "title": null
+  },
+  {
+    "tag": "A",
+    "text": "1\nRulesets",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/stream/mappings",
+    "ariaLabel": null,
+    "title": null
+  },
+  {
+    "tag": "A",
+    "text": "cribl_search_engine:search",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/stream/m/default/outputs/cribl_search_engine/search",
+    "ariaLabel": null,
+    "title": null
+  },
+  {
+    "tag": "A",
+    "text": "cribl_search",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/stream/m/default/pipelines/cribl_search",
+    "ariaLabel": null,
+    "title": null
+  },
+  {
+    "tag": "A",
+    "text": "search",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/stream/m/default/routes?id=OzaqSB",
+    "ariaLabel": null,
+    "title": null
+  },
+  {
+    "tag": "A",
+    "text": "cribl-lake",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/stream/m/default/routes?id=vFt6O3",
+    "ariaLabel": null,
+    "title": null
+  },
+  {
+    "tag": "A",
+    "text": "typhoon",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/stream/m/default/routes?id=vm0diz",
+    "ariaLabel": null,
+    "title": null
+  },
+  {
+    "tag": "A",
+    "text": "typhoon-parquet",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/stream/m/default/routes?id=zmoMpa",
+    "ariaLabel": null,
+    "title": null
+  },
+  {
+    "tag": "A",
+    "text": "http:http",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/stream/m/default/inputs/http/http",
+    "ariaLabel": null,
+    "title": null
+  },
+  {
+    "tag": "A",
+    "text": "cribl_lake:typhoon",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/stream/m/default/outputs/cribl_lake/typhoon",
+    "ariaLabel": null,
+    "title": null
+  },
+  {
+    "tag": "A",
+    "text": "tcpjson:criblcloud",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/stream/m/default/outputs/tcpjson/criblcloud",
+    "ariaLabel": null,
+    "title": null
+  },
+  {
+    "tag": "A",
+    "text": "router:outputrouter",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/stream/m/default/outputs/router/outputrouter",
+    "ariaLabel": null,
+    "title": null
+  },
+  {
+    "tag": "A",
+    "text": "Search-Normalization",
+    "href": "https://main-objective-shirley-sho21r7.cribl-staging.cloud/stream/m/default/p/Search-Normalization",
+    "ariaLabel": null,
+    "title": null
+  },
+  {
+    "tag": "BUTTON",
+    "text": "",
+    "href": null,
+    "ariaLabel": "Support",
+    "title": null
+  }
+]

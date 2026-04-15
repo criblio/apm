@@ -1,0 +1,234 @@
+.card {
+  position: absolute;
+  z-index: 10;
+  background: var(--cds-color-bg);
+  border: 1px solid var(--cds-color-border);
+  border-radius: var(--cds-radius-lg);
+  box-shadow: var(--cds-shadow-lg);
+  padding: var(--cds-space-md);
+  min-width: 260px;
+  max-width: 320px;
+  pointer-events: auto;
+  font-size: var(--cds-font-size-sm);
+}
+.cardPinned {
+  border-color: var(--cds-color-accent);
+  box-shadow: 0 0 0 2px var(--cds-color-accent-subtle), var(--cds-shadow-lg);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--cds-space-sm);
+  margin-bottom: var(--cds-space-sm);
+}
+
+.healthDot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.name {
+  font-weight: var(--cds-font-weight-semibold);
+  font-size: var(--cds-font-size-md);
+  color: var(--cds-color-fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.closeBtn {
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--cds-color-fg-muted);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  border-radius: var(--cds-radius-sm);
+}
+.closeBtn:hover {
+  background: var(--cds-color-bg-muted);
+  color: var(--cds-color-fg);
+}
+
+.statusLine {
+  font-size: var(--cds-font-size-xs);
+  color: var(--cds-color-fg-muted);
+  margin-bottom: var(--cds-space-md);
+}
+
+.stats {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  row-gap: 4px;
+  column-gap: var(--cds-space-md);
+  margin-bottom: var(--cds-space-md);
+}
+
+.statLabel {
+  font-size: var(--cds-font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--cds-color-fg-muted);
+  font-weight: var(--cds-font-weight-semibold);
+}
+
+.statValue {
+  font-size: var(--cds-font-size-sm);
+  font-weight: var(--cds-font-weight-semibold);
+  color: var(--cds-color-fg);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.statValueErr {
+  color: var(--cds-color-danger);
+}
+
+.statDelta {
+  font-size: var(--cds-font-size-xs);
+  font-weight: var(--cds-font-weight-medium);
+  color: var(--cds-color-fg-muted);
+}
+
+.statDeltaBad {
+  font-size: var(--cds-font-size-xs);
+  font-weight: var(--cds-font-weight-semibold);
+  color: #a855f7;
+}
+
+.sparkBlock {
+  margin-top: var(--cds-space-sm);
+}
+
+.sparkLabel {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  font-size: var(--cds-font-size-xs);
+  color: var(--cds-color-fg-muted);
+  margin-bottom: 2px;
+}
+
+.sparkSvgWrap {
+  background: var(--cds-color-bg-subtle);
+  border-radius: var(--cds-radius-sm);
+  padding: 4px 6px;
+}
+
+.pinHint {
+  font-size: 10px;
+  color: var(--cds-color-fg-subtle);
+  text-align: right;
+  margin-top: var(--cds-space-xs);
+  font-style: italic;
+}
+
+.tooltipActions {
+  display: flex;
+  align-items: center;
+  gap: var(--cds-space-xs);
+  margin-top: var(--cds-space-md);
+}
+
+.openLink {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--cds-space-xs);
+  flex: 1 1 auto;
+  padding: var(--cds-space-xs) var(--cds-space-md);
+  height: 30px;
+  font-size: var(--cds-font-size-sm);
+  font-weight: var(--cds-font-weight-semibold);
+  color: var(--cds-color-accent-hover);
+  background: var(--cds-color-accent-subtle);
+  border: 1px solid var(--cds-color-accent);
+  border-radius: var(--cds-radius-md);
+  text-decoration: none;
+  cursor: pointer;
+  transition: all var(--cds-transition-fast);
+}
+.openLink:hover {
+  background: var(--cds-color-accent);
+  color: var(--cds-color-fg-inverse);
+  text-decoration: none;
+}
+
+.missing {
+  color: var(--cds-color-fg-subtle);
+  font-style: italic;
+  font-size: var(--cds-font-size-xs);
+  text-align: center;
+  padding: var(--cds-space-sm) 0;
+}
+
+/* Lazy-loaded operation breakdown sections. Kept compact so the
+ * tooltip doesn't balloon past ~400px tall when a service has both
+ * top calls AND erroring calls populated. */
+.opsSection {
+  margin-top: var(--cds-space-sm);
+  padding-top: var(--cds-space-sm);
+  border-top: 1px solid var(--cds-color-border-subtle);
+}
+.opsHeader {
+  font-size: var(--cds-font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--cds-color-fg-muted);
+  font-weight: var(--cds-font-weight-semibold);
+  margin-bottom: var(--cds-space-xs);
+}
+.opsHeaderErr {
+  color: var(--cds-color-danger);
+}
+.opsList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.opsRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--cds-space-sm);
+  padding: 2px 0;
+  font-size: var(--cds-font-size-xs);
+  font-family: var(--cds-font-mono);
+}
+.opsName {
+  color: var(--cds-color-fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+.opsCount {
+  color: var(--cds-color-fg-muted);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+  font-weight: var(--cds-font-weight-semibold);
+}
+.opsCountErr {
+  color: var(--cds-color-danger);
+}
+.opsLoading,
+.opsEmpty {
+  font-size: var(--cds-font-size-xs);
+  color: var(--cds-color-fg-subtle);
+  font-style: italic;
+}
+.opsError {
+  font-size: var(--cds-font-size-xs);
+  color: var(--cds-color-danger);
+}

@@ -1,0 +1,101 @@
+Products
+Apps
+Typhoon H
+omelab
+mai
+n
+Non-Production Environment
+99+
+CS
+Expand
+Stream Home
+Worker Groups
+Workers
+Outposts
+Mappings
+Monitoring
+Guard
+Notifications
+Settings
+Organization Details
+Worker Groups
+View Details
+Add Worker Group
+/
+1
+default
+AWS
+3
+Workers
+defaultHybrid
+Hybrid
+0
+Workers
+homeHybrid
+Hybrid
+0
+Workers
+search
+AWS
+2
+Workers
+Monitoring
+View Dashboard
+15min
+4
+Worker Groups
+5
+Workers
+15
+Processes
+20
+CPUs
+37.91
+Memory GB
+0.09 / 0.14
+Storage TB
+Events
+790.45k
+IN
+1.90m
+OUT
+Bytes
+964.26MB
+IN
+1.72GB
+OUT
+Mappings
+1
+Rulesets
+Recent Actions
+Apr 08
+13:41
+Clint Sharp - Updated Destination cribl_search_engine:search (default)
+Feb 28
+09:04
+Clint Sharp - Updated Pipeline cribl_search (default)
+09:02
+Clint Sharp - Updated Route search (default)
+09:02
+Clint Sharp - Updated Route cribl-lake (default)
+09:02
+Clint Sharp - Updated Route typhoon (default)
+09:02
+Clint Sharp - Updated Route typhoon-parquet (default)
+Jan 17
+18:25
+Clint Sharp - Updated Source http:http (default)
+Aug 04
+12:21
+Clint Sharp - Updated Destination cribl_lake:typhoon (default)
+May 04
+17:13
+Clint Sharp - Updated Destination tcpjson:criblcloud (default)
+Mar 31
+14:34
+Clint Sharp - Deleted Destination cribl_lake:typhoon-cribl_lake (default)
+14:34
+Clint Sharp - Updated Destination router:outputrouter (default)
+Aug 24
+15:22
+Clint Sharp - Created Pack Search-Normalization (default)

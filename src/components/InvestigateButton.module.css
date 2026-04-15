@@ -1,0 +1,42 @@
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: var(--cds-radius-sm);
+  font-size: var(--cds-font-size-xs);
+  font-weight: var(--cds-font-weight-semibold);
+  cursor: pointer;
+  line-height: 1;
+  white-space: nowrap;
+  transition: border-color 0.12s, background 0.12s, transform 0.06s;
+}
+.btn:active {
+  transform: translateY(1px);
+}
+
+/* Subtle: quiet inline button for tables / cards */
+.subtle {
+  background: var(--cds-color-bg);
+  border: 1px solid var(--cds-color-border-subtle);
+  color: var(--cds-color-fg);
+}
+.subtle:hover {
+  border-color: var(--cds-color-accent);
+  color: var(--cds-color-accent);
+}
+
+/* Primary: gradient call-to-action for page headers */
+.primary {
+  background: linear-gradient(90deg, #0190ff, #7c3aed);
+  border: 1px solid transparent;
+  color: white;
+  padding: 6px 14px;
+}
+.primary:hover {
+  filter: brightness(1.08);
+}
+
+.icon {
+  flex: 0 0 auto;
+}

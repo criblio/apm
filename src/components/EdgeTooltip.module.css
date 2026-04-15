@@ -1,0 +1,162 @@
+.card {
+  position: absolute;
+  z-index: 11;
+  background: var(--cds-color-bg);
+  border: 1px solid var(--cds-color-border);
+  border-radius: var(--cds-radius-lg);
+  box-shadow: var(--cds-shadow-lg);
+  padding: var(--cds-space-md);
+  width: 260px;
+  pointer-events: none;
+  font-size: var(--cds-font-size-sm);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--cds-space-xs);
+  margin-bottom: var(--cds-space-sm);
+  padding-bottom: var(--cds-space-xs);
+  border-bottom: 1px solid var(--cds-color-border-subtle);
+}
+
+.kindBadge {
+  display: inline-block;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: var(--cds-font-weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  border-radius: var(--cds-radius-sm);
+  background: var(--cds-color-accent-subtle);
+  color: var(--cds-color-accent-hover);
+}
+/* Messaging edges get a distinct color so the badge and the dashed
+ * line style reinforce each other. */
+.kindBadge[data-kind='messaging'] {
+  background: #ede9fe;
+  color: #5b21b6;
+}
+
+.healthDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+.healthText {
+  font-size: var(--cds-font-size-xs);
+  color: var(--cds-color-fg-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Horizontal endpoints row. Both services share the available width
+ * equally with `flex: 1` + `min-width: 0`, and each name clips with
+ * ellipsis when it's long (title attribute preserves the full name on
+ * hover). The arrow is a natural-sized column between them. */
+.endpoints {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: var(--cds-space-xs);
+  margin-bottom: var(--cds-space-sm);
+}
+
+.endpoint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 0;
+  min-width: 0;
+}
+.endpointDot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.endpointName {
+  font-weight: var(--cds-font-weight-semibold);
+  color: var(--cds-color-fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  font-size: var(--cds-font-size-sm);
+}
+
+.arrow {
+  flex-shrink: 0;
+  color: var(--cds-color-fg-subtle);
+  font-size: 14px;
+  line-height: 1;
+}
+
+.topicRow {
+  display: flex;
+  align-items: baseline;
+  gap: var(--cds-space-sm);
+  padding: 4px 0;
+  margin-bottom: var(--cds-space-xs);
+  border-top: 1px solid var(--cds-color-border-subtle);
+  padding-top: var(--cds-space-xs);
+  font-family: var(--cds-font-mono);
+  font-size: var(--cds-font-size-xs);
+}
+.topicLabel {
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--cds-color-fg-muted);
+  font-weight: var(--cds-font-weight-semibold);
+  font-family: var(--cds-font-family);
+  font-size: 10px;
+}
+.topicValue {
+  flex: 1;
+  color: var(--cds-color-fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.stats {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  row-gap: 4px;
+  column-gap: var(--cds-space-md);
+  padding-top: var(--cds-space-xs);
+  border-top: 1px solid var(--cds-color-border-subtle);
+}
+
+.statLabel {
+  font-size: var(--cds-font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--cds-color-fg-muted);
+  font-weight: var(--cds-font-weight-semibold);
+}
+.statValue {
+  font-size: var(--cds-font-size-sm);
+  font-weight: var(--cds-font-weight-semibold);
+  color: var(--cds-color-fg);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.statValueErr {
+  color: var(--cds-color-danger);
+}
+
+.investigateHint {
+  margin-top: var(--cds-space-sm);
+  padding-top: var(--cds-space-xs);
+  border-top: 1px solid var(--cds-color-border-subtle);
+  font-size: 10px;
+  color: var(--cds-color-accent);
+  text-align: center;
+  font-style: italic;
+  letter-spacing: 0.2px;
+}

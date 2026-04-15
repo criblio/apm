@@ -3,14 +3,14 @@
 The upstream OpenTelemetry Demo ships a [flagd](https://flagd.dev/) service
 with 15 failure-injection flags. This document covers how to turn each one
 on against the kind cluster on `clintdev`, what telemetry signals to
-expect, and which view in the Trace Explorer app is supposed to surface
+expect, and which view in the Cribl APM app is supposed to surface
 it. Use this as a regression test plan when iterating on the app.
 
 ## Prerequisites
 
 - `ssh clintdev` works
 - kind cluster `otel-demo-cribl` is running in Docker on that host
-- Trace Explorer app is deployed to the Cribl Cloud staging environment
+- Cribl APM app is deployed to the Cribl Cloud staging environment
   and the OTel telemetry pipeline is shipping data to the `otel` dataset
 
 ## Helper script

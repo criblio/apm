@@ -1,0 +1,40 @@
+Products
+Apps
+Typhoon H
+omelab
+mai
+n
+Non-Production Environment
+99+
+CS
+Expand
+Search Home
+History
+Saved Searches
+Dashboards
+Notebooks
+Data
+Knowledge
+Packs
+Settings
+Organization Details
+Copilot Investigation
+Cribl Search
+You can get started with one of these ideas, or by asking me something else in the chat.
+BetaDeep Investigation Mode
+Develop and evaluate multiple hypotheses, then determine a solution. This may degrade overall Search system performance while running.
+1
+Start a new investigation
+
+Start with an alert from Cribl or elsewhere. Dive into the data and create a notebook to document your findings.
+
+2
+Explore my data
+
+We'll start an open-ended exploration into your datasets, looking for patterns and anomalies.
+
+Resume a prior investigation
+
+If you have a notebook that you want to extend, even if you didn't build it with Copilot, let us know.
+
+Coming Soon

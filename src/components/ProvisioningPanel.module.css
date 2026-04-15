@@ -1,0 +1,255 @@
+.card {
+  background: var(--cds-color-bg);
+  border: 1px solid var(--cds-color-border-subtle);
+  border-radius: var(--cds-radius-lg);
+  box-shadow: var(--cds-shadow-sm);
+  padding: var(--cds-space-lg);
+}
+
+.sectionTitle {
+  font-size: var(--cds-font-size-lg);
+  font-weight: var(--cds-font-weight-semibold);
+  color: var(--cds-color-fg);
+  margin: 0 0 var(--cds-space-sm) 0;
+}
+
+.sectionHelp {
+  font-size: var(--cds-font-size-sm);
+  color: var(--cds-color-fg-muted);
+  line-height: 1.5;
+  margin: 0 0 var(--cds-space-md) 0;
+}
+
+.actions {
+  display: flex;
+  gap: var(--cds-space-sm);
+  margin-top: var(--cds-space-md);
+  align-items: center;
+}
+
+.primaryBtn {
+  background: var(--cds-color-accent);
+  color: white;
+  border: none;
+  border-radius: var(--cds-radius-md);
+  padding: var(--cds-space-sm) var(--cds-space-lg);
+  font-size: var(--cds-font-size-sm);
+  font-weight: var(--cds-font-weight-semibold);
+  cursor: pointer;
+  transition: opacity var(--cds-transition-fast);
+}
+.primaryBtn:hover:not(:disabled) {
+  opacity: 0.9;
+}
+.primaryBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.secondaryBtn {
+  background: transparent;
+  color: var(--cds-color-fg-muted);
+  border: 1px solid var(--cds-color-border-subtle);
+  border-radius: var(--cds-radius-md);
+  padding: var(--cds-space-sm) var(--cds-space-lg);
+  font-size: var(--cds-font-size-sm);
+  cursor: pointer;
+  transition: background var(--cds-transition-fast);
+}
+.secondaryBtn:hover {
+  background: var(--cds-color-bg-subtle);
+}
+
+.statusLine {
+  font-size: var(--cds-font-size-sm);
+  color: var(--cds-color-fg-muted);
+  padding: var(--cds-space-md) 0;
+}
+
+.errorBox {
+  background: rgba(220, 38, 38, 0.08);
+  border: 1px solid var(--cds-color-danger);
+  border-radius: var(--cds-radius-md);
+  padding: var(--cds-space-md);
+  color: var(--cds-color-danger);
+  font-size: var(--cds-font-size-sm);
+  margin-top: var(--cds-space-md);
+}
+
+.errText {
+  color: var(--cds-color-danger);
+  font-size: var(--cds-font-size-xs);
+  margin-left: var(--cds-space-sm);
+}
+
+/* -------- Action summary chips -------- */
+
+.summary {
+  display: flex;
+  gap: var(--cds-space-md);
+  margin: var(--cds-space-md) 0;
+}
+
+.summaryChip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--cds-space-sm);
+  padding: var(--cds-space-sm) var(--cds-space-md);
+  border-radius: var(--cds-radius-md);
+  border: 1px solid var(--cds-color-border-subtle);
+  font-size: var(--cds-font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.summaryCount {
+  font-size: var(--cds-font-size-lg);
+  font-weight: var(--cds-font-weight-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+.summaryLabel {
+  color: var(--cds-color-fg-muted);
+}
+
+.summaryChip_create {
+  background: rgba(16, 185, 129, 0.08);
+  border-color: rgba(16, 185, 129, 0.3);
+}
+.summaryChip_create .summaryCount {
+  color: #10b981;
+}
+
+.summaryChip_update {
+  background: rgba(59, 130, 246, 0.08);
+  border-color: rgba(59, 130, 246, 0.3);
+}
+.summaryChip_update .summaryCount {
+  color: #3b82f6;
+}
+
+.summaryChip_delete {
+  background: rgba(220, 38, 38, 0.08);
+  border-color: rgba(220, 38, 38, 0.3);
+}
+.summaryChip_delete .summaryCount {
+  color: var(--cds-color-danger);
+}
+
+.summaryChip_noop {
+  background: var(--cds-color-bg-subtle);
+}
+
+/* -------- Action list -------- */
+
+.actionList {
+  list-style: none;
+  padding: 0;
+  margin: var(--cds-space-md) 0 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 420px;
+  overflow-y: auto;
+  border: 1px solid var(--cds-color-border-subtle);
+  border-radius: var(--cds-radius-md);
+}
+
+.actionRow {
+  display: flex;
+  align-items: center;
+  gap: var(--cds-space-md);
+  padding: var(--cds-space-sm) var(--cds-space-md);
+  font-size: var(--cds-font-size-sm);
+  border-bottom: 1px solid var(--cds-color-border-subtle);
+}
+.actionRow:last-child {
+  border-bottom: none;
+}
+
+.actionKind {
+  display: inline-block;
+  min-width: 56px;
+  padding: 2px var(--cds-space-sm);
+  border-radius: var(--cds-radius-sm);
+  font-size: var(--cds-font-size-xs);
+  font-weight: var(--cds-font-weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  text-align: center;
+}
+.actionKind_create {
+  background: rgba(16, 185, 129, 0.15);
+  color: #10b981;
+}
+.actionKind_update {
+  background: rgba(59, 130, 246, 0.15);
+  color: #3b82f6;
+}
+.actionKind_delete {
+  background: rgba(220, 38, 38, 0.15);
+  color: var(--cds-color-danger);
+}
+.actionKind_noop {
+  background: var(--cds-color-bg-subtle);
+  color: var(--cds-color-fg-muted);
+}
+
+.actionId {
+  font-family: var(--cds-font-mono, monospace);
+  color: var(--cds-color-fg);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* -------- Danger zone -------- */
+
+.dangerZone {
+  margin-top: var(--cds-space-xl);
+  padding-top: var(--cds-space-lg);
+  border-top: 1px dashed var(--cds-color-border-subtle);
+}
+
+.dangerTitle {
+  font-size: var(--cds-font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--cds-color-danger);
+  font-weight: var(--cds-font-weight-semibold);
+}
+
+.dangerHelp {
+  font-size: var(--cds-font-size-sm);
+  color: var(--cds-color-fg-muted);
+  line-height: 1.5;
+  margin: var(--cds-space-sm) 0 var(--cds-space-md) 0;
+}
+
+.dangerBtn {
+  background: transparent;
+  color: var(--cds-color-danger);
+  border: 1px solid var(--cds-color-danger);
+  border-radius: var(--cds-radius-md);
+  padding: var(--cds-space-sm) var(--cds-space-lg);
+  font-size: var(--cds-font-size-sm);
+  cursor: pointer;
+  transition: background var(--cds-transition-fast);
+  margin-right: var(--cds-space-sm);
+}
+.dangerBtn:hover {
+  background: rgba(220, 38, 38, 0.08);
+}
+
+.dangerBtnConfirm {
+  background: var(--cds-color-danger);
+  color: white;
+  border: 1px solid var(--cds-color-danger);
+  border-radius: var(--cds-radius-md);
+  padding: var(--cds-space-sm) var(--cds-space-lg);
+  font-size: var(--cds-font-size-sm);
+  font-weight: var(--cds-font-weight-semibold);
+  cursor: pointer;
+  margin-right: var(--cds-space-sm);
+}

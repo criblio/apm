@@ -1,0 +1,250 @@
+Products
+Apps
+Typhoon H
+omelab
+mai
+n
+Non-Production Environment
+99+
+CS
+Expand
+Search Home
+History
+Saved Searches
+Dashboards
+Notebooks
+Data
+Knowledge
+Packs
+Settings
+Organization Details
+Home
+Run Investigation
+Preview
+Sampling
+hour ago
+PDT
+Search
+1
+Enter search terms here or check our documentation
+Build Query
+Search settings
+Available Datasets
+Add Dataset
+tailscale
+27 seconds ago
+1
+Dataset tailscale actions menu
+Tailscale API
+main
+2 days ago
+1
+Dataset main actions menu
+Built-in Local Search Dataset. Inbound will be sent to main unless otherwise specified, and under certain error conditions.
+demo
+3 days ago
+1
+Dataset demo actions menu
+otel
+27 seconds ago
+0
+Dataset otel actions menu
+OpenTelemetry Demo Dataset
+cribl_lookups
+15 hours ago
+0
+Dataset cribl_lookups actions menu
+Search Cribl lookup tables
+default_logs
+3 days ago
+0
+Dataset default_logs actions menu
+Default dataset for capturing logs from multiple sources
+default_spans
+3 days ago
+0
+Dataset default_spans actions menu
+Default dataset for capturing distributed trace spans from multiple sources
+cribl_logs
+3 days ago
+0
+Dataset cribl_logs actions menu
+Internal logs from Cribl deployments
+cribl_search_sample
+3 days ago
+0
+Dataset cribl_search_sample actions menu
+Search Cribl provided public sample data
+homelab
+4 days ago
+0
+Dataset homelab actions menu
+Homelab data from Stream
+typhoon
+4 days ago
+0
+Dataset typhoon actions menu
+cribl_metrics
+4 days ago
+0
+Dataset cribl_metrics actions menu
+Internal metrics from Cribl deployments
+cribl_internal_logs
+6 days ago
+0
+Dataset cribl_internal_logs actions menu
+Search Cribl internal logs
+datalake_v2
+1 month ago
+0
+Dataset datalake_v2 actions menu
+Typhoon Datalake
+datalake
+1 month ago
+0
+Dataset datalake actions menu
+Typhoon Datalake
+adhoc
+N/A
+0
+Dataset adhoc actions menu
+Adhoc data uploaded to S3
+cribl_edge_appscope_events
+N/A
+0
+Dataset cribl_edge_appscope_events actions menu
+Search Appscope events across all Cribl Edge fleets
+cribl_edge_appscope_metrics
+N/A
+0
+Dataset cribl_edge_appscope_metrics actions menu
+Search Appscope metrics across all Cribl Edge fleets
+cribl_edge_kubernetes_logs
+N/A
+0
+Dataset cribl_edge_kubernetes_logs actions menu
+Search Cribl Edge Kubernetes logs across all fleets
+cribl_edge_logs
+N/A
+0
+Dataset cribl_edge_logs actions menu
+Search Cribl Edge internal logs across all fleets
+cribl_edge_metrics
+N/A
+0
+Dataset cribl_edge_metrics actions menu
+Search Cribl Edge system metrics across all fleets
+cribl_edge_prometheus_scraper
+N/A
+0
+Dataset cribl_edge_prometheus_scraper actions menu
+Search Cribl Edge Prometheus scraper data across all fleets
+cribl_edge_spool
+N/A
+0
+Dataset cribl_edge_spool actions menu
+Search Cribl Edge Disk Spool outputs
+cribl_edge_state
+N/A
+0
+Dataset cribl_edge_state actions menu
+Search Cribl Edge system state across all fleets
+cribl_edge_system_logs
+N/A
+0
+Dataset cribl_edge_system_logs actions menu
+Search Cribl Edge system logs across all fleets
+datalake_parquet
+N/A
+0
+Dataset datalake_parquet actions menu
+Parquet Metrics
+datalake_raw
+N/A
+0
+Dataset datalake_raw actions menu
+default
+N/A
+0
+Dataset default actions menu
+Default list of datasets to be searched when none is specified
+default_events
+N/A
+0
+Dataset default_events actions menu
+Think events from Kubernetes or a 3rd party API (i.e. rest collector or O365 Management Activity API)
+default_metrics
+N/A
+0
+Dataset default_metrics actions menu
+Default dataset for capturing metrics from multiple sources
+grafana_prom
+N/A
+0
+Dataset grafana_prom actions menu
+mtr
+N/A
+0
+Dataset mtr actions menu
+History
+Sample Searches
+My History
+dataset="$vt_results" | where jobName in ("criblapm__home_service_summary", "criblapm__home_service_time_series", "criblapm__home_slow_traces", "criblapm__home_error_spans")
+...more
+45 seconds ago
+dataset="otel" | where isnotnull(end_time_unix_nano)    | extend svc=tostring(resource.attributes['service.name']),             dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0    | where dur_us < 30000000    | summarize curr_p95_us=percentile(dur_us, 95),                curr_count=count()      by svc, op=name    | lookup criblapm_op_baselines on svc, op    | extend prev_p95_us=toreal(p95_us),             prev_requests=toreal(requests)    | where isnotnull(prev_p95_us) and prev_p95_us > 0    | where curr_p95_us >= prev_p95_us * 5      and curr_p95_us >= 1000000      and prev_requests >= 20    | project svc, op,              curr_p95_us,              prev_p95_us,              requests=curr_count,              ratio=curr_p95_us/prev_p95_us    | sort by ratio desc    | limit 20
+...more
+45 seconds ago
+dataset="otel" | where isnotnull(end_time_unix_nano)    | extend svc=tostring(resource.attributes['service.name']),            dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,            is_error=(tostring(status.code)=="2")        | where dur_us < 30000000    | summarize requests=count(),                errors=countif(is_error),                p50_us=percentile(dur_us, 50),                p95_us=percentile(dur_us, 95),                p99_us=percentile(dur_us, 99)      by svc    | extend error_rate=toreal(errors)/toreal(requests)    | sort by requests desc
+...more
+45 seconds ago
+dataset="otel" | where isnotnull(end_time_unix_nano)    | extend svc=tostring(resource.attributes['service.name']),             dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0    | where dur_us < 30000000    | summarize curr_p95_us=percentile(dur_us, 95),                curr_count=count()      by svc, op=name    | lookup criblapm_op_baselines on svc, op    | extend prev_p95_us=toreal(p95_us),             prev_requests=toreal(requests)    | where isnotnull(prev_p95_us) and prev_p95_us > 0    | where curr_p95_us >= prev_p95_us * 5      and curr_p95_us >= 1000000      and prev_requests >= 20    | project svc, op,              curr_p95_us,              prev_p95_us,              requests=curr_count,              ratio=curr_p95_us/prev_p95_us    | sort by ratio desc    | limit 20
+...more
+2 minutes ago
+dataset="$vt_results" | where jobName in ("criblapm__home_service_summary", "criblapm__home_service_time_series", "criblapm__home_slow_traces", "criblapm__home_error_spans")
+...more
+2 minutes ago
+dataset="otel" | where isnotnull(end_time_unix_nano)    | extend svc=tostring(resource.attributes['service.name']),            dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,            is_error=(tostring(status.code)=="2")        | where dur_us < 30000000    | summarize requests=count(),                errors=countif(is_error),                p50_us=percentile(dur_us, 50),                p95_us=percentile(dur_us, 95),                p99_us=percentile(dur_us, 99)      by svc    | extend error_rate=toreal(errors)/toreal(requests)    | sort by requests desc
+...more
+2 minutes ago
+dataset="otel" | where isnotnull(end_time_unix_nano)    | extend svc=tostring(resource.attributes['service.name']),             is_error=(tostring(status.code)=="2"),             msg=tostring(status.message)    | where is_error    | sort by _time desc    | project _time, svc, name, trace_id, msg    | limit 300
+...more
+3 minutes ago
+dataset="otel" | where isnotnull(end_time_unix_nano)    | extend svc=tostring(resource.attributes['service.name']),            parent=tostring(parent_span_id),            is_root=(parent=="" or isempty(parent)),            dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0    | summarize span_count=count(),                trace_start_ns=min(start_time_unix_nano),                trace_end_ns=max(end_time_unix_nano),                max_non_root_dur_us=maxif(dur_us, is_root == false),                root_svc=minif(svc, is_root),                root_op=minif(name, is_root)      by trace_id    | extend trace_dur_us=(toreal(trace_end_ns)-toreal(trace_start_ns))/1000.0    | where isnotnull(root_svc)    | extend max_child_us=iff(isnull(max_non_root_dur_us), 0.0, toreal(max_non_root_dur_us))    | where not (trace_dur_us > 30000000 and (span_count < 3 or (max_child_us / trace_dur_us) < 0.1))    | sort by trace_dur_us desc    | limit 500
+...more
+3 minutes ago
+dataset="otel" | where isnotnull(end_time_unix_nano)    | extend svc=tostring(resource.attributes['service.name']),            dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,            is_error=(tostring(status.code)=="2")        | where dur_us < 30000000    | summarize requests=count(),                errors=countif(is_error),                p50_us=percentile(dur_us, 50),                p95_us=percentile(dur_us, 95),                p99_us=percentile(dur_us, 99)      by svc, bucket=bin(_time, 60s)    | sort by svc asc, bucket asc
+...more
+3 minutes ago
+dataset="otel" | where isnotnull(end_time_unix_nano)    | extend svc=tostring(resource.attributes['service.name']),            dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,            is_error=(tostring(status.code)=="2")        | where dur_us < 30000000    | summarize requests=count(),                errors=countif(is_error),                p50_us=percentile(dur_us, 50),                p95_us=percentile(dur_us, 95),                p99_us=percentile(dur_us, 99)      by svc    | extend error_rate=toreal(errors)/toreal(requests)    | sort by requests desc
+...more
+3 minutes ago
+dataset="$vt_results" | where jobName in ("criblapm__home_service_summary", "criblapm__home_service_time_series", "criblapm__home_slow_traces", "criblapm__home_error_spans")
+...more
+3 minutes ago
+dataset="otel" | where isnotnull(end_time_unix_nano)    | extend svc=tostring(resource.attributes['service.name']),             dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0    | where dur_us < 30000000    | summarize curr_p95_us=percentile(dur_us, 95),                curr_count=count()      by svc, op=name    | lookup criblapm_op_baselines on svc, op    | extend prev_p95_us=toreal(p95_us),             prev_requests=toreal(requests)    | where isnotnull(prev_p95_us) and prev_p95_us > 0    | where curr_p95_us >= prev_p95_us * 5      and curr_p95_us >= 1000000      and prev_requests >= 20    | project svc, op,              curr_p95_us,              prev_p95_us,              requests=curr_count,              ratio=curr_p95_us/prev_p95_us    | sort by ratio desc    | limit 20
+...more
+3 minutes ago
+dataset="otel" | where isnotnull(end_time_unix_nano)    | extend svc=tostring(resource.attributes['service.name']),            dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,            is_error=(tostring(status.code)=="2")        | where dur_us < 30000000    | summarize requests=count(),                errors=countif(is_error),                p50_us=percentile(dur_us, 50),                p95_us=percentile(dur_us, 95),                p99_us=percentile(dur_us, 99)      by svc    | extend error_rate=toreal(errors)/toreal(requests)    | sort by requests desc
+...more
+dataset="$vt_results" | where jobName in ("criblapm__home_service_summary", "criblapm__home_service_time_series", "criblapm__home_slow_traces", "criblapm__home_error_spans")
+...more
+4 minutes ago
+dataset="otel" | where isnotnull(end_time_unix_nano)    | extend svc=tostring(resource.attributes['service.name']),             dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0    | where dur_us < 30000000    | summarize curr_p95_us=percentile(dur_us, 95),                curr_count=count()      by svc, op=name    | lookup criblapm_op_baselines on svc, op    | extend prev_p95_us=toreal(p95_us),             prev_requests=toreal(requests)    | where isnotnull(prev_p95_us) and prev_p95_us > 0    | where curr_p95_us >= prev_p95_us * 5      and curr_p95_us >= 1000000      and prev_requests >= 20    | project svc, op,              curr_p95_us,              prev_p95_us,              requests=curr_count,              ratio=curr_p95_us/prev_p95_us    | sort by ratio desc    | limit 20
+...more
+4 minutes ago
+dataset="otel" | where isnotnull(end_time_unix_nano)    | extend svc=tostring(resource.attributes['service.name']),            dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,            is_error=(tostring(status.code)=="2")        | where dur_us < 30000000    | summarize requests=count(),                errors=countif(is_error),                p50_us=percentile(dur_us, 50),                p95_us=percentile(dur_us, 95),                p99_us=percentile(dur_us, 99)      by svc    | extend error_rate=toreal(errors)/toreal(requests)    | sort by requests desc
+...more
+4 minutes ago
+dataset="$vt_results" | where jobName in ("criblapm__home_service_summary", "criblapm__home_service_time_series", "criblapm__home_slow_traces", "criblapm__home_error_spans")
+...more
+5 minutes ago
+dataset="otel" | where isnotnull(end_time_unix_nano)    | extend svc=tostring(resource.attributes['service.name']),             dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0    | where dur_us < 30000000    | summarize curr_p95_us=percentile(dur_us, 95),                curr_count=count()      by svc, op=name    | lookup criblapm_op_baselines on svc, op    | extend prev_p95_us=toreal(p95_us),             prev_requests=toreal(requests)    | where isnotnull(prev_p95_us) and prev_p95_us > 0    | where curr_p95_us >= prev_p95_us * 5      and curr_p95_us >= 1000000      and prev_requests >= 20    | project svc, op,              curr_p95_us,              prev_p95_us,              requests=curr_count,              ratio=curr_p95_us/prev_p95_us    | sort by ratio desc    | limit 20
+...more
+5 minutes ago
+dataset="otel" | where isnotnull(end_time_unix_nano)    | extend svc=tostring(resource.attributes['service.name']),            dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,            is_error=(tostring(status.code)=="2")        | where dur_us < 30000000    | summarize requests=count(),                errors=countif(is_error),                p50_us=percentile(dur_us, 50),                p95_us=percentile(dur_us, 95),                p99_us=percentile(dur_us, 99)      by svc    | extend error_rate=toreal(errors)/toreal(requests)    | sort by requests desc
+...more
+5 minutes ago
+dataset="otel" | where isnotnull(end_time_unix_nano)    | extend svc=tostring(resource.attributes['service.name']),             dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0    | where dur_us < 30000000    | summarize curr_p95_us=percentile(dur_us, 95),                curr_count=count()      by svc, op=name    | lookup criblapm_op_baselines on svc, op    | extend prev_p95_us=toreal(p95_us),             prev_requests=toreal(requests)    | where isnotnull(prev_p95_us) and prev_p95_us > 0    | where curr_p95_us >= prev_p95_us * 5      and curr_p95_us >= 1000000      and prev_requests >= 20    | project svc, op,              curr_p95_us,              prev_p95_us,              requests=curr_count,              ratio=curr_p95_us/prev_p95_us    | sort by ratio desc    | limit 20
+...more
+6 minutes ago
