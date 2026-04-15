@@ -23,7 +23,9 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const APP_ROOT = resolve(__dirname, '..');
-const REPO_ROOT = resolve(APP_ROOT, '..');
+// After the flatten PR the app IS the repo root — there's no enclosing
+// monorepo directory anymore.
+const REPO_ROOT = APP_ROOT;
 
 /**
  * Cribl Cloud has two environments — production and staging — with separate
