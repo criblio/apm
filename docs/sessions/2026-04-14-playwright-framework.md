@@ -36,28 +36,57 @@ workflow until we migrate them in follow-ups.
 - Firefox / WebKit browsers — chromium-only per scope
 - `scripts/flagd-api` rewrite (the other queued PR) — separate branch
 
-## Validation done locally
+## Validation
 
 - `npm run lint` — clean
 - `npm run build` — 506 kB bundle, clean
-- `npx playwright test --list` (with dummy `CRIBL_BASE_URL`) —
-  discovers both `auth.setup.ts` and `apm-smoke.spec.ts` under the right
-  projects
-- `npm run test:e2e` not run end-to-end — `CRIBL_TEST_EMAIL` /
-  `CRIBL_TEST_PASSWORD` aren't in `.env` yet. The test suite will need
-  creds before it can actually log in. User should add those to `.env`
-  and run `npm run test:e2e` to validate
+- `npm run deploy` — uploads + installs the pack on the configured
+  staging workspace. This required a bugfix in `scripts/deploy.mjs`
+  (leftover from the flatten PR) where `REPO_ROOT` was still resolving
+  to the parent dir of `APP_ROOT`. The app IS the repo now.
+- `npm run test:e2e` — both `setup` and `apm-smoke` pass against the
+  deployed pack in ~5s total. Verified with `playwright/.auth` cleared
+  between runs, so the setup logs in from scratch each time.
 
-## Known edges that may bite
+## Lessons learned while wiring this up
 
-- **Auth0 selectors** — `tests/auth.setup.ts` uses `getByLabel(/email/i)`
-  / `getByLabel(/password/i)` / role-based button matchers. If Cribl
-  customizes the Auth0 form fields (non-label-based inputs, non-English
-  strings), update the selectors there
-- **App path** — default is `/app-ui/apm/`, which matches the Cribl App
-  Platform convention documented in `AGENTS.md`. If the pack lives
-  somewhere else on staging, set `CRIBL_APM_APP_PATH` in `.env`
-- **iframe wrapping** — the smoke test looks for text on the page first,
-  falls back to the first frame whose URL matches `/apm/`. If the pack
-  renders in an iframe with a different URL pattern, the frame-detection
-  fallback will need a tweak
+Things that looked simple but weren't:
+
+1. **`page.goto('/', { waitUntil: 'load' })` fails on the Auth0
+   redirect chain** — the original document's `load` event never fires
+   because the browser throws it away mid-navigation. Use
+   `waitUntil: 'commit'` and wait for `domcontentloaded` separately.
+2. **Cribl's Auth0 login is two-step** — email field + "Next" button,
+   then password field + "Continue". The outer wrapper also renders
+   three social-login buttons ("Continue with <org>", "Continue with
+   Cribl Corp Okta", "Continue with Google") whose accessible names
+   match `/continue/`. Scope the primary submit lookup with
+   `{ name: 'Next', exact: true }` (first step) and
+   `{ name: /^(continue|log in|sign in)$/i }` (second step).
+3. **Direct navigation to `/app-ui/apm/` doesn't inject host globals**
+   — `window.CRIBL_BASE_PATH` / `window.CRIBL_API_URL` are only set
+   when the outer Cribl shell wraps the pack. Without them React
+   Router's basename defaults to `/` and no route matches
+   `/app-ui/apm/`, so the pack renders an empty `#root` with the
+   warning "No routes matched location /app-ui/apm/". Fix: use
+   `page.addInitScript` in the smoke test to polyfill those globals
+   before `goto`. This mirrors what the Cribl host would have done
+   if we click-drove through the Apps menu.
+4. **`scripts/deploy.mjs` was still assuming a parent monorepo dir**
+   after the flatten PR — it was reading `.env` from
+   `/home/clint/local/src/.env` instead of
+   `/home/clint/local/src/apm/.env`. Fix: `REPO_ROOT = APP_ROOT`.
+
+## Known edges
+
+- **Auth0 selectors** — if Cribl restyles the login page or adds
+  localization, update the email/password/button matchers in
+  `tests/auth.setup.ts`
+- **App path** — default is `/app-ui/apm/`. Set `CRIBL_APM_APP_PATH`
+  in `.env` to override
+- **Host-global polyfill** — the smoke test pretends the Cribl host is
+  serving the pack (`CRIBL_API_URL=/m/default_search`). That's fine
+  for assertions against the shell + local React components, but any
+  future spec that exercises pack KV reads or search calls needs to
+  either accept a couple of background `401`s or load the pack via
+  its authenticated wrapper URL instead
