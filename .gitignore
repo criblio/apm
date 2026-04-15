@@ -3,6 +3,7 @@
 # Environment files
 .env
 .env.*
+!.env.example
 set_env.sh
 .envrc
 
@@ -35,3 +36,10 @@ build/
 
 # Claude Code runtime state
 .claude/
+
+# Playwright
+playwright/.auth/
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/

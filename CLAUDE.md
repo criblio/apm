@@ -110,6 +110,31 @@ Pattern: write a short Node ESM script that imports
 via the Bash tool. Keep these scripts out of version control unless
 they become reusable — the repo already has enough one-offs.
 
+### End-to-end tests (Playwright)
+
+The `tests/` tree runs against the deployed APM pack on Cribl Cloud
+using `@playwright/test` with a headless chromium. This is separate
+from the ad-hoc CDP scripts above — tests are reproducible on a
+fresh machine, CDP scripts attach to the user's live browser.
+
+- `playwright.config.ts` reads `CRIBL_BASE_URL` from `.env` and
+  declares two projects: a `setup` project that runs
+  `tests/auth.setup.ts`, and a `chromium` project that runs specs
+  with the cached `storageState`.
+- `tests/auth.setup.ts` — logs in once via the Auth0 Universal
+  Login using `CRIBL_TEST_EMAIL` / `CRIBL_TEST_PASSWORD`, saves
+  browser state to `playwright/.auth/cribl-cloud.json` (gitignored).
+  If Cribl changes the login form, update the selectors here.
+- `tests/apm-smoke.spec.ts` — asserts the APM app shell renders
+  inside the workspace at `CRIBL_APM_APP_PATH` (defaults to
+  `/app-ui/apm/`).
+- Run all tests: `npm run test:e2e`. Debug with
+  `npm run test:e2e:ui` or `npm run test:e2e:headed`.
+- Add new tests as `tests/*.spec.ts`. They automatically inherit
+  the authenticated storage state.
+
+See `.env.example` for the full list of vars tests depend on.
+
 ### Triggering failure scenarios
 
 The test telemetry comes from the upstream OpenTelemetry Demo's
