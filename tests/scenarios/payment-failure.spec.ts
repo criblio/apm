@@ -122,9 +122,14 @@ test('scenario 1 · paymentFailure surfaces in Home, Service Detail, Investigato
       if (await errorClassesHeading.isVisible().catch(() => false)) {
         const wrap = errorClassesHeading.locator('xpath=ancestor::*[contains(@class,"wrap")][1]');
         const paymentEntries = wrap.locator('li').filter({ hasText: /payment/i });
-        await expect
-          .soft(paymentEntries, 'Error classes panel should list a payment entry')
-          .not.toHaveCount(0, { timeout: 5_000 });
+        // Promoted from expect.soft to a hard assertion in the same
+        // PR that adds the cache-miss → live fallback in HomePage.
+        // Before the fallback, a scheduled-search outage could leave
+        // this panel visibly empty even while payment was erroring;
+        // the fallback closes that gap so the panel is now a reliable
+        // surface to hard-assert on.
+        await expect(paymentEntries, 'Error classes panel should list a payment entry')
+          .not.toHaveCount(0, { timeout: 15_000 });
       }
     });
 

@@ -38,6 +38,13 @@ interface Props {
   loading?: boolean;
   mode: Mode;
   emptyMessage?: string;
+  /** Age of the panel-cache snapshot feeding this list, in ms. When
+   *  the caller sets this, the list renders a "cache Nm stale" chip
+   *  in the header so an empty or out-of-date panel can be
+   *  distinguished from a healthy-and-quiet one. Callers are
+   *  responsible for only passing a value when the age exceeds the
+   *  staleness threshold; this component just formats and renders. */
+  staleCacheAgeMs?: number | null;
 }
 
 function fmtDurationUs(us: number): string {
@@ -56,6 +63,15 @@ function fmtRelative(lastSeenMs: number): string {
   return `${Math.floor(deltaSec / 86400)}d ago`;
 }
 
+function fmtStaleAge(ageMs: number): string {
+  const sec = Math.max(0, Math.round(ageMs / 1000));
+  if (sec < 60) return `${sec}s`;
+  const min = Math.round(sec / 60);
+  if (min < 60) return `${min}m`;
+  const hr = Math.round(min / 60);
+  return `${hr}h`;
+}
+
 export default function TraceClassList({
   title,
   subtitle,
@@ -63,13 +79,29 @@ export default function TraceClassList({
   loading,
   mode,
   emptyMessage,
+  staleCacheAgeMs,
 }: Props) {
+  const staleChipText =
+    staleCacheAgeMs != null && staleCacheAgeMs > 0
+      ? `cache ${fmtStaleAge(staleCacheAgeMs)} stale`
+      : null;
   return (
     <div className={s.wrap}>
       <div className={s.header}>
         <span className={s.title}>
           {title}{' '}
           {!loading && <span className={s.subtitle}>({items.length} classes)</span>}
+          {staleChipText && (
+            <span
+              className={s.staleChip}
+              title={
+                'The scheduled search feeding this panel has not written a fresh bucket recently. ' +
+                'The panel may be missing events from the last few minutes until the next scheduled run lands.'
+              }
+            >
+              {staleChipText}
+            </span>
+          )}
         </span>
         {subtitle && <span className={s.subtitle}>{subtitle}</span>}
       </div>

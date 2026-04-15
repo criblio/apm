@@ -26,6 +26,22 @@
   color: var(--cds-color-fg-muted);
 }
 
+.staleChip {
+  display: inline-flex;
+  align-items: center;
+  margin-left: var(--cds-space-sm);
+  padding: 0 var(--cds-space-sm);
+  height: 18px;
+  background: var(--cds-color-warning-subtle);
+  color: var(--cds-color-warning);
+  border-radius: var(--cds-radius-sm);
+  font-size: 10px;
+  font-weight: var(--cds-font-weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  cursor: help;
+}
+
 .list {
   list-style: none;
   margin: 0;
