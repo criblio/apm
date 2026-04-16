@@ -12,6 +12,7 @@ import type {
   ServiceSummary,
   ServiceBucket,
   OperationSummary,
+  InstanceSummary,
   OperationAnomaly,
   TraceBrief,
   TraceLogEntry,
@@ -223,6 +224,23 @@ export async function listOperationSummaries(
   const rows = await runQuery(Q.serviceOperations(service), earliest, latest, 100);
   return rows.map((r) => ({
     operation: String(r.name ?? 'unknown'),
+    requests: toNum(r.requests),
+    errors: toNum(r.errors),
+    errorRate: toNum(r.error_rate),
+    p50Us: toNum(r.p50_us),
+    p95Us: toNum(r.p95_us),
+    p99Us: toNum(r.p99_us),
+  }));
+}
+
+export async function listServiceInstances(
+  service: string,
+  earliest = '-1h',
+  latest = 'now',
+): Promise<InstanceSummary[]> {
+  const rows = await runQuery(Q.serviceInstances(service), earliest, latest, 100);
+  return rows.map((r) => ({
+    instanceId: String(r.instance_id ?? 'unknown'),
     requests: toNum(r.requests),
     errors: toNum(r.errors),
     errorRate: toNum(r.error_rate),

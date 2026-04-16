@@ -10,6 +10,7 @@ import {
   listServiceSummaries,
   getServiceTimeSeries,
   listOperationSummaries,
+  listServiceInstances,
   listRecentErrorTraces,
   getDependencies,
   listServiceMetricNames,
@@ -27,6 +28,7 @@ import type {
   ServiceSummary,
   ServiceBucket,
   OperationSummary,
+  InstanceSummary,
   TraceBrief,
   DependencyEdge,
 } from '../api/types';
@@ -191,11 +193,13 @@ export default function ServiceDetailPage() {
     dir: 'asc' | 'desc';
   }>({ key: 'requests', dir: 'desc' });
   const [errorTraces, setErrorTraces] = useState<TraceBrief[]>([]);
+  const [instances, setInstances] = useState<InstanceSummary[]>([]);
   const [edges, setEdges] = useState<DependencyEdge[]>([]);
   const [loadingSummary, setLoadingSummary] = useState(true);
   const [loadingBuckets, setLoadingBuckets] = useState(true);
   const [loadingOps, setLoadingOps] = useState(true);
   const [loadingErrors, setLoadingErrors] = useState(true);
+  const [loadingInstances, setLoadingInstances] = useState(true);
   const [loadingDeps, setLoadingDeps] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notFound, setNotFound] = useState(false);
@@ -224,6 +228,7 @@ export default function ServiceDetailPage() {
     setLoadingBuckets(true);
     setLoadingOps(true);
     setLoadingErrors(true);
+    setLoadingInstances(true);
     setLoadingDeps(true);
     const binSeconds = binSecondsFor(range);
 
@@ -270,6 +275,11 @@ export default function ServiceDetailPage() {
               .catch(() => setErrorTraces([]))
               .finally(() => setLoadingErrors(false));
           }
+          // Instances aren't cached — always live.
+          void listServiceInstances(serviceName, range, 'now')
+            .then((inst) => setInstances(inst))
+            .catch(() => setInstances([]))
+            .finally(() => setLoadingInstances(false));
           return;
         }
       } catch {
@@ -309,6 +319,11 @@ export default function ServiceDetailPage() {
       .then((e) => setEdges(e))
       .catch(() => setEdges([]))
       .finally(() => setLoadingDeps(false));
+
+    listServiceInstances(serviceName, range, 'now')
+      .then((inst) => setInstances(inst))
+      .catch(() => setInstances([]))
+      .finally(() => setLoadingInstances(false));
   }, [range, serviceName, streamFilterEnabled]);
 
   useEffect(() => {
@@ -1061,6 +1076,65 @@ export default function ServiceDetailPage() {
             )}
           </div>
         </div>
+      </div>
+
+      {/* Instances section — per-pod RED metrics */}
+      <div className={s.instancesCard}>
+        <div className={s.cardHeader}>
+          <span className={s.cardTitle}>
+            Instances{' '}
+            {!loadingInstances && (
+              <span className={s.cardSubtitle}>({instances.length})</span>
+            )}
+          </span>
+          <span className={s.cardSubtitle}>
+            Per-pod metrics via service.instance.id
+          </span>
+        </div>
+        {loadingInstances ? (
+          <div className={s.skeletonRows}>
+            {[85, 72, 60].map((w, i) => (
+              <div key={i} style={{ width: `${w}%` }} />
+            ))}
+          </div>
+        ) : instances.length <= 1 ? (
+          <div className={s.emptyState}>
+            {instances.length === 1
+              ? 'Single instance — per-pod breakdown is only useful with multiple replicas.'
+              : 'No instance data in this range.'}
+          </div>
+        ) : (
+          <table className={s.opsTable}>
+            <thead>
+              <tr>
+                <th>Instance</th>
+                <th className={s.num}>Requests</th>
+                <th className={s.num}>Errors</th>
+                <th className={s.num}>p50</th>
+                <th className={s.num}>p95</th>
+                <th className={s.num}>p99</th>
+              </tr>
+            </thead>
+            <tbody>
+              {instances.map((inst) => (
+                <tr key={inst.instanceId}>
+                  <td>
+                    <div className={s.opName}>{inst.instanceId}</div>
+                  </td>
+                  <td className={s.num}>{inst.requests.toLocaleString()}</td>
+                  <td className={`${s.num} ${errClass(inst.errorRate)}`}>
+                    {inst.errorRate === 0
+                      ? '0'
+                      : `${(inst.errorRate * 100).toFixed(1)}%`}
+                  </td>
+                  <td className={s.num}>{fmtUs(inst.p50Us)}</td>
+                  <td className={s.num}>{fmtUs(inst.p95Us)}</td>
+                  <td className={s.num}>{fmtUs(inst.p99Us)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
     </div>
   );

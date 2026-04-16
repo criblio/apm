@@ -122,34 +122,25 @@ is a 10% Bernoulli trial in upstream `AdService.java`
 `FAILURE-SCENARIOS.md` originally described. §6 has been rewritten
 with a ⚠️ marker and the upstream source link.
 
-### ~~1d. Detection coverage gaps~~ — **DONE (3 of 4)**
+### ~~1d. Detection coverage gaps~~ — **DONE**
 
 The detection coverage audit (`docs/sessions/2026-04-16-detection-
 coverage-and-fix-plan.md`) mapped all 15 `FAILURE-SCENARIOS.md` flags
 to current UI capability. Result: **9 fully detected, 3 partially
-detected, 1 design-limited, 2 out of scope.**
+detected, 1 design-limited, 2 out of scope.** All four proposed
+fixes shipped:
 
-Three of the four proposed fixes shipped and are validated on staging:
+| # | PR | Status |
+|---|---|---|
+| 1 | PR #13 `test: bump scenario 1 Recent errors timeout` | ✅ merged |
+| 2 | PR #14 `fix: exempt kafka consumer ops from stream filter` | ✅ merged |
+| 3 | PR #15 `perf: ServiceDetail panel caching` | ✅ merged |
+| 4 | PR #17 `feat: Instances section on ServiceDetail` | ✅ merged |
 
-| # | PR | Status | Validated |
-|---|---|---|---|
-| 1 | PR #13 `test: bump scenario 1 Recent errors timeout` | ✅ merged | scenario 1 passes (1.8 min) |
-| 2 | PR #14 `fix: exempt kafka consumer ops from stream filter` | ✅ merged | deployed; unblocks scenario 2 |
-| 3 | PR #15 `perf: ServiceDetail panel caching` | ✅ merged | scenario 1 ServiceDetail renders from cache in ~1-2s vs 10-20s before |
-| 4 | `feat: Instances tab on ServiceDetail` | 🔲 not started | unblocks scenario 11 (emailMemoryLeak) |
-
-Validation run results (2026-04-16, sequential against staging):
-
-- **Scenario 1** (`paymentFailure`): all hard + soft assertions green
-  in 1.8 min. ServiceDetail panels now render from cache — the
-  Recent errors soft-failure that triggered this work item no longer
-  reproduces.
-- **Flagd catalog validation** (`adFailure` / `productCatalogFailure`
-  / `llmRateLimitError`): all three flags green.
-
-Remaining: the Instances tab (PR #4) is the last gap for scenario 11.
-Estimated 1-2 days of work. After it ships, every theoretically-
-detectable scenario (12 of 15) has a working UI surface.
+Every theoretically-detectable scenario (12 of 15) now has a working
+UI surface. The remaining 3 are documented limitations: `adFailure`
+(10% Bernoulli rate), `llmInaccurateResponse` (semantic), and
+`imageSlowLoad` (client-side / RUM).
 
 **Operational note:** after deploying a pack version that adds new
 scheduled searches, you must re-provision via Settings → Provisioning
