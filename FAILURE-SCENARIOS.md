@@ -61,6 +61,25 @@ under a second with no pod restart.
 - **After testing, revert with `--all-off`.** Leaving flags on skews every
   future observation until you do.
 
+## Automated catalog validation
+
+`tests/scenarios/flagd-catalog-validation.spec.ts` flips each of the
+flags tagged §6 / §7 / §14 below in turn and confirms each one injects
+`status.code=2` spans on the expected service, using a post-flip
+timestamp filter so residual errors from prior runs don't satisfy the
+assertion. Run it after bumping otel-demo's upstream services to catch
+regressions like "the flag's boolean check got removed from one RPC".
+Per-flag budget is generous enough to accommodate Bernoulli-rate flags
+(`adFailure` is 10% per request — see §6).
+
+```bash
+npx playwright test tests/scenarios/flagd-catalog-validation.spec.ts
+```
+
+The spec prints a per-flag summary with error counts and first-
+observed elapsed time on exit. Treat a zero-error row or a timeout as
+a signal to open an upstream issue against `open-telemetry/opentelemetry-demo`.
+
 ---
 
 ## Scenarios
@@ -203,14 +222,48 @@ cart for fetch + clear operations, so checkout inherits the failure.
 
 ---
 
-### 6. `adFailure` — hard error (ad)
+### 6. `adFailure` — ⚠️ 10%-rate error injection (ad)
 
 ```bash
 scripts/flagd-set.sh adFailure on
 ```
 
-Same pattern as above but on the `ad` service. Less fan-out upstream
-(only `frontend` calls ad) so the propagation is narrower.
+Variants: `off`, `on`.
+
+**Signal shape.** The ad service's `oteldemo.AdService/GetAds` gRPC
+handler throws `StatusRuntimeException(UNAVAILABLE)` on approximately
+**1 in 10** requests when the flag is on. The 10% rate is hard-coded
+in [AdService.java](https://github.com/open-telemetry/opentelemetry-demo/blob/main/src/ad/src/main/java/oteldemo/AdService.java)
+(`if (ffClient.getBooleanValue(AD_FAILURE, ...) && random.nextInt(10) == 0)`),
+so it's a fixed Bernoulli trial per request — **not** the hard-error
+pattern `cartFailure` / `paymentFailure` produce. Only the top-level
+`GetAds` RPC is gated by the flag; `getAdsByCategory` and
+`getRandomAds` continue serving cleanly.
+
+With baseline ad traffic of roughly 10 `GetAds`/minute, expect on
+the order of 1 error span per minute while the flag is on. A 15-
+second window has ~80% chance of zero errors by pure variance —
+observe over 2+ minutes when diagnosing, and poll rather than
+sample when asserting in a test.
+
+**Where it shows up:**
+- **Home catalog**: `ad` row's error-rate cell gets a small chip
+  (error rate ≤1% over the default window). Much subtler than the
+  hard-error scenarios because the rate itself is low.
+- **System Architecture**: the `frontend → ad` edge picks up a
+  trickle of errored calls; whether it tints red depends on the
+  graph's health thresholds.
+- **Service Detail (`ad`)**: Errors chart shows a small but
+  persistent error rate after the flag is on.
+- **Home > Error classes**: `ad` / `GetAds` entries appear with
+  the `UNAVAILABLE` status message.
+
+**Limitation.** The signal-to-noise is low because only 10% of one
+operation fails. Useful for testing the "small chronic failure"
+case but not a strong demo of "service is broken". Documented as
+⚠️ here so the flag's name (`adFailure`) is not read as implying
+the same shape as `cartFailure`. Spotted via
+`tests/scenarios/flagd-catalog-validation.spec.ts`.
 
 ---
 
