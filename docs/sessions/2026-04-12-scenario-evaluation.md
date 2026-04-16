@@ -1,3 +1,5 @@
+> **Stale** — the UI gaps and Investigator accuracy findings from this eval have been addressed or re-assessed in the 2026-04-16 detection coverage audit. See ROADMAP.md §1a-§1d for the current state.
+
 # Session 2026-04-12 — Error-scenario evaluation (UI vs Copilot Investigator)
 
 Paired-surface evaluation of five flagd error-injection scenarios against

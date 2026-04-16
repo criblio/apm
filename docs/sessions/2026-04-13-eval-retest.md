@@ -1,3 +1,5 @@
+> **Stale** — follow-up to the 2026-04-12 eval; findings have been folded into ROADMAP.md §1a-§1d.
+
 # Session 2026-04-13 — Retest of the 2026-04-12 scenario eval
 
 Follow-up to `docs/sessions/2026-04-12-scenario-evaluation.md`. After

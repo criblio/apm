@@ -97,46 +97,95 @@ self-inflicted flagd-bounce noise. Three gaps, impact-ordered:
    or add a preamble paragraph explicitly marking those as expected
    noise. Start with the preamble paragraph (landing in this PR).
 
-### 1b. UI gaps surfaced by the scenario eval
+### ~~1b. UI gaps surfaced by the scenario eval~~ — **DONE**
 
-Three concrete UI bugs from the same session:
+All three items shipped (verified in the 2026-04-16 detection
+coverage audit against current source):
 
-1. **Ghost nodes for silently-gone services on System Architecture.**
-   When a service drops below N% of its baseline span volume, keep
-   its node on the graph with a dashed outline and a "no traffic"
-   badge, clickable through to its last-known Service Detail page.
-   Today it vanishes from the graph, so `paymentUnreachable` has no
-   clickable target. Catches any blast-radius scenario where the root
-   service goes fully dark (`failedReadinessProbe`, pod crashloops,
-   etc.).
+1. **Ghost nodes** — `SystemArchPage.tsx:199-290`. `traffic_drop`
+   and `silent` health buckets render dashed/outlined nodes with a
+   "no traffic" badge; clickable through to Service Detail.
+2. **Red rate-drop chip** — `DeltaChip.tsx` `rateDrop` mode with
+   `RATE_DROP_THRESHOLD = 0.5`. Wired on Home catalog rate column.
+3. **Root-cause hint** — `HomePage.tsx:378-407`. `rootCauseHints`
+   map derived from outgoing RPC edges; renders `→ likely <child>`
+   on anomalous rows.
 
-2. **Red "DOWN" state on the Home rate-column DeltaChip.** The chip
-   is currently `relNeutral` so a 94% rate drop renders the same
-   blue color as a 94% surge. A dedicated red treatment for rate
-   drops ≥50% would make payment's row scream in `paymentUnreachable`
-   instead of mumbling.
+### ~~1c. FAILURE-SCENARIOS.md smoke test~~ — **DONE**
 
-3. **Root-cause hint on Home rows.** Home currently tints
-   `frontend-proxy` red when `cartFailure` fires because errors
-   attribute to the caller's outgoing-span side. The actual failing
-   service (`cart`) still shows 0% because its own server-side spans
-   aren't errored — cart's `EmptyCart` returns over a broken Redis
-   connection inside the span duration. Add a "likely root: `<svc>`"
-   hint derived from same-trace span-link analysis on anomalous rows.
-   The Investigator already runs this query; Home should render it
-   without asking.
+PR #10 (`tests/scenarios/flagd-catalog-validation.spec.ts`) validates
+`adFailure`, `productCatalogFailure`, and `llmRateLimitError`
+end-to-end against the deployed pack's Cribl Search endpoint. All
+three flags produce post-flip error spans. Key finding: `adFailure`
+is a 10% Bernoulli trial in upstream `AdService.java`
+(`random.nextInt(10) == 0`), not the hard-error pattern §6 of
+`FAILURE-SCENARIOS.md` originally described. §6 has been rewritten
+with a ⚠️ marker and the upstream source link.
 
-### 1c. FAILURE-SCENARIOS.md smoke test
+### 1d. Detection coverage gaps (from 2026-04-16 audit)
 
-The 2026-04-12 eval found **three of five tested flags produce zero
-`status.code=2` errors on their targeted service** (`adFailure`,
-`productCatalogFailure`, `llmRateLimitError`). Verified via direct
-KQL — not an observer-side problem. Either the upstream OTel demo's
-flag wiring has regressed or the flags require specific UI actions
-to activate. Either way, `FAILURE-SCENARIOS.md` is stale on those
-rows and can't be trusted as a regression harness. Fix: ship a
-scheduled saved search that counts errors per flagged service on a
-rolling window and alerts when a known-enabled flag emits nothing.
+The detection coverage audit (`docs/sessions/2026-04-16-detection-
+coverage-and-fix-plan.md`) ran the modeled scenarios against master,
+mapped all 15 `FAILURE-SCENARIOS.md` flags to current UI capability,
+and verified each claimed gap against source. Result: **9 fully
+detected, 3 partially detected, 1 design-limited, 2 out of scope.**
+
+Three real gaps remain, each with a concrete fix:
+
+1. **ServiceDetail panel caching.** `ServiceDetailPage::fetchAll()`
+   fires six uncached parallel queries; the slowest take 10-20s on
+   `-1h`, leaving the page in a skeleton state during the incidents
+   when users most need it (FAILURE-SCENARIOS known gap #6). Mirror
+   the Home panel-cache pattern — add `criblapm__svc_operations` and
+   `criblapm__svc_recent_errors` scheduled searches, plus a reader
+   that consults `$vt_results` before live-querying.
+   **Unblocks:** scenarios 1, 5, 6, 8, 9, 10, 14.
+   **Est:** 1-2 days.
+
+2. **Instances tab on ServiceDetail.** Group RED metrics by
+   `resource.attributes['service.instance.id']` instead of only at
+   the service level. A leaking or misbehaving single pod is
+   invisible when aggregated.
+   **Unblocks:** scenario 11 (`emailMemoryLeak`).
+   **Est:** 1-2 days.
+
+3. **Kafka consumer stream-filter exemption.** The stream filter in
+   `streamFilter.ts` hides idle-wait traces that have the same span
+   shape as actual kafka consumer lag. Exempt operations matching
+   `/-consumed$/` or `/\bConsume\b/i` from the filter.
+   **Unblocks:** scenario 2 (`kafkaQueueProblems`).
+   **Est:** ~1 hour.
+
+**Proposed PR sequence:**
+
+| # | PR | Est | Unblocks |
+|---|---|---|---|
+| 1 | `test: bump scenario 1 Recent errors timeout` | 5 min | scenario 1 test goes green |
+| 2 | `fix: exempt kafka consumer ops from stream filter` | ~1 hr | scenario 2 |
+| 3 | `perf: ServiceDetail panel caching` | 1-2 days | scenarios 1, 5, 6, 8, 9, 10, 14 |
+| 4 | `feat: Instances tab on ServiceDetail` | 1-2 days | scenario 11 |
+
+Total: ~3-4 days. After these, every theoretically-detectable
+scenario (12 of 15) has a working UI surface.
+
+### 1e. Eval harness design (from 2026-04-15 scoping)
+
+Nightly off-Actions eval suite that flips flagd scenarios, drives
+the deployed app headlessly, and scores detection efficacy as a
+trend over time. Design scoped in `docs/sessions/2026-04-15-cicd-
+and-eval-harness.md`. Open questions before implementation:
+
+- Orchestrator host (clintdev vs. dedicated VPS)
+- Dedicated Lakehouse workspace + otel-demo deployment
+- Scenario list for v1 (the 9 fully-detected ✅ rows from the §1d
+  coverage table)
+- Result storage + trending (flat JSON in `apm-evals` sibling repo)
+- Trigger + reporting (GitHub Actions cron → Checks API)
+- Investigator scoring: LLM-as-judge, not local Playwright
+- Scoring rule schema: parameterized, no service names in engine
+
+**Deliverable:** `docs/research/eval-harness/design.md`. Orchestrator
+code comes after review.
 
 ### 2. User-facing alerts (via Cribl Saved Searches)
 
@@ -285,6 +334,25 @@ Being honest about the wins too:
 ---
 
 ## Completed
+
+### ~~Scenario detection & test harness (1b-1c)~~ — DONE
+
+- **UI gaps** (§1b) — ghost nodes, red rate-drop chip, root-cause
+  hint: all three shipped. Verified against source in the 2026-04-16
+  coverage audit.
+- **Flagd smoke test** (§1c) — PR #10
+  `tests/scenarios/flagd-catalog-validation.spec.ts`. Also surfaced
+  `adFailure`'s 10% Bernoulli rate.
+- **Home panel cache-miss fallback** — PR #8. When the scheduled
+  search for Error classes returns empty, fires a live query
+  fallback; adds a "cache Nm stale" chip on the panel header.
+- **Trace waterfall clock-skew resilience** — PR #9. `buildTimeline`
+  now anchors the chart scale to the root span so a single clock-
+  skewed child (e.g. the PHP quote service's ~1s offset) doesn't
+  blow the waterfall scale. Out-of-window spans render as warning
+  rows instead of invisible negative-offset bars.
+- **Playwright e2e framework** — PRs #4-#7. Auth0 login, host-global
+  injection, flagd-ui client, scenario 1 spec, Cribl Search helper.
 
 ### ~~AI-powered investigations (Copilot Investigator)~~ — DONE
 
