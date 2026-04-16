@@ -147,7 +147,8 @@
 
 .opsCard,
 .errCard,
-.depsCard {
+.depsCard,
+.instancesCard {
   background: var(--cds-color-bg);
   border: 1px solid var(--cds-color-border-subtle);
   border-radius: var(--cds-radius-lg);

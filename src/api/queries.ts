@@ -235,6 +235,32 @@ export function serviceOperations(service: string): string {
 }
 
 /**
+ * Per-instance RED metrics for one service. Groups by
+ * `service.instance.id` instead of operation name. Powers the
+ * Instances section on ServiceDetail so per-pod failures (memory
+ * leak, slow start, noisy-neighbor) are visible instead of diluted
+ * into the service-level aggregate.
+ */
+export function serviceInstances(service: string): string {
+  const s = service.replace(/"/g, '\\"');
+  return `${spansBase()}
+    | extend svc=tostring(resource.attributes['service.name']),
+            instance_id=tostring(resource.attributes['service.instance.id']),
+            dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
+            is_error=(tostring(status.code)=="2")
+    | where svc=="${s}"
+    ${streamFilterSpanKqlClause()}
+    | summarize requests=count(),
+                errors=countif(is_error),
+                p50_us=percentile(dur_us, 50),
+                p95_us=percentile(dur_us, 95),
+                p99_us=percentile(dur_us, 99)
+      by instance_id
+    | extend error_rate=toreal(errors)/toreal(requests)
+    | sort by requests desc`;
+}
+
+/**
  * All-services variant of serviceOperations — groups by (svc, name)
  * instead of just name, with no service filter. Scheduled as
  * `criblapm__svc_operations` so ServiceDetail can read the Top

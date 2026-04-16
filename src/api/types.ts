@@ -127,6 +127,16 @@ export interface OperationSummary {
   p99Us: number;
 }
 
+export interface InstanceSummary {
+  instanceId: string;
+  requests: number;
+  errors: number;
+  errorRate: number;
+  p50Us: number;
+  p95Us: number;
+  p99Us: number;
+}
+
 /** Short summary of a trace for "slow traces" / "error traces" panels. */
 export interface TraceBrief {
   traceID: string;
