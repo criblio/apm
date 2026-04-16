@@ -96,8 +96,37 @@ test('scenario 1 · paymentFailure surfaces in Home, Service Detail, Investigato
     });
 
     // 3. Home surface — propagated checkout error + Error classes panel.
-    //    Soft so Home surface gaps don't mask downstream surface gaps.
+    //    The previous step polled at -15m because the short window
+    //    crosses the ">1% error rate" threshold quickly: a ~3-minute
+    //    flag flip dilutes to ~0.1% inside a 1h window, so -15m is the
+    //    right lens for confirming the flag propagated. Switch to -1h
+    //    here because the Home panel cache-fast path only activates at
+    //    the default -1h range — the cache-miss → live fallback in
+    //    HomePage.tsx only runs against a cached-panels response, and
+    //    this step is the one that exercises it. Without the switch,
+    //    the whole Error classes check would run through the live-only
+    //    branch and never exercise the fix.
     await test.step('home · propagated checkout error + Error classes panel', async () => {
+      await gotoApm(page, '/?range=-1h');
+      // Wait for the service catalog to finish its initial load.
+      // At -1h the cache-fast path does a batched $vt_results read
+      // over four scheduled-search outputs, which can take
+      // 15-45s on a busy cluster before the first setSummaries
+      // call lands. "Services (N)" only renders when
+      // loadingSummaries has flipped to false, so it is a clean
+      // "rows are present" signal. Budget matches the cache-read
+      // tail — if we hit it, the cluster is genuinely stuck, not
+      // the UI.
+      await page
+        .getByText(/^Services \(\d+\)/)
+        .waitFor({ state: 'visible', timeout: 90_000 });
+      // Payment row should be in the rendered table at this point;
+      // a short wait guards against race between "Services (N)"
+      // becoming visible and the table body rendering.
+      await page
+        .getByRole('row', { name: /^payment\s/ })
+        .waitFor({ state: 'visible', timeout: 15_000 });
+
       const checkoutRow = page.getByRole('row', { name: /^checkout\s/ });
       if (await checkoutRow.isVisible().catch(() => false)) {
         const checkoutCell = checkoutRow.locator('td').nth(2);
@@ -122,9 +151,16 @@ test('scenario 1 · paymentFailure surfaces in Home, Service Detail, Investigato
       if (await errorClassesHeading.isVisible().catch(() => false)) {
         const wrap = errorClassesHeading.locator('xpath=ancestor::*[contains(@class,"wrap")][1]');
         const paymentEntries = wrap.locator('li').filter({ hasText: /payment/i });
-        await expect
-          .soft(paymentEntries, 'Error classes panel should list a payment entry')
-          .not.toHaveCount(0, { timeout: 5_000 });
+        // Promoted from expect.soft to a hard assertion in the same
+        // PR that adds the cache-miss → live fallback in HomePage.
+        // Before the fallback, a scheduled-search outage could leave
+        // this panel visibly empty even while payment was erroring;
+        // the fallback closes that gap so the panel is now a reliable
+        // surface to hard-assert on. 60s budget covers both the cache
+        // read and the subsequent live listErrorClasses fallback at
+        // -1h on a busy cluster.
+        await expect(paymentEntries, 'Error classes panel should list a payment entry')
+          .not.toHaveCount(0, { timeout: 60_000 });
       }
     });
 
@@ -172,6 +208,24 @@ test('scenario 1 · paymentFailure surfaces in Home, Service Detail, Investigato
     //    We use the NavBar Investigate link (React Router client-side
     //    navigation) because a direct goto to /app-ui/apm/investigate
     //    hits the same host-404 issue as /service/payment.
+    //
+    //    Gated behind SCENARIO_TEST_INVESTIGATOR=1 as of plan v2
+    //    (docs/sessions/2026-04-15-scenario-plan-v2.md). Local
+    //    Playwright is no longer the surface for LLM-as-judge
+    //    evaluation — agent summaries are trend-y, non-deterministic,
+    //    and belong in the off-Actions eval harness whose design doc
+    //    is the next-concrete-step from plan v2. Keeping the step
+    //    body so a developer debugging the Investigator locally can
+    //    opt in with `SCENARIO_TEST_INVESTIGATOR=1 npx playwright test …`
+    //    but skipping by default so a slow or flaky Copilot run
+    //    doesn't fail the deterministic regression surfaces above.
+    if (process.env.SCENARIO_TEST_INVESTIGATOR !== '1') {
+      console.log(
+        '[scenario 1] Skipping Investigator step (opt in with SCENARIO_TEST_INVESTIGATOR=1).',
+      );
+      return;
+    }
+
     await test.step('investigator · summarises the payment regression', async () => {
       await page.getByRole('link', { name: 'Investigate', exact: true }).click();
       await page.waitForURL(/\/investigate/, { timeout: 15_000 });
