@@ -1,3 +1,5 @@
+> **Stale** — this plan was superseded first by plan v2, then by ROADMAP.md §1d. Kept for historical context.
+
 # Session: Next-PR plan after flatten (2026-04-14)
 
 Context handoff doc. PR #1 (`chore/flatten-to-apm`,

@@ -1,3 +1,5 @@
+> **Stale** — plan v2 was superseded by the 2026-04-16 detection coverage audit. The concrete PR sequence now lives in ROADMAP.md §1d. Kept for historical context.
+
 # Scenario plan v2 — reconcile with eval-harness direction (2026-04-15)
 
 Supersedes `docs/sessions/2026-04-15-scenario-test-roadmap-plan.md`
