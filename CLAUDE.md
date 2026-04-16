@@ -110,6 +110,51 @@ Pattern: write a short Node ESM script that imports
 via the Bash tool. Keep these scripts out of version control unless
 they become reusable — the repo already has enough one-offs.
 
+### Deploying to staging
+
+`npm run deploy` builds, packages, and uploads the pack to Cribl
+Cloud. **It does not provision scheduled searches.** If the deploy
+includes new or changed `criblapm__*` scheduled searches (defined
+in `src/api/provisionedSearches.ts`), you must re-provision
+afterwards:
+
+1. Open the deployed app on staging
+2. Navigate to **Settings → Provisioning**
+3. Click **Apply** to reconcile (creates new searches, updates
+   changed ones, leaves unchanged ones alone)
+
+Without this step, new panels that read from `$vt_results` (like
+the ServiceDetail cache added in PR #15) will fall through to
+live queries because the scheduled search hasn't been created yet.
+
+### Running scenario tests
+
+Run scenario specs **one at a time, sequentially** — never in
+parallel. The staging Cribl Search instance has a small worker
+pool; two specs firing queries concurrently saturate it and cause
+timeouts that look like test failures but are really resource
+exhaustion.
+
+```bash
+# Good — sequential
+npx playwright test tests/scenarios/payment-failure.spec.ts
+# wait for it to finish, then:
+npx playwright test tests/scenarios/flagd-catalog-validation.spec.ts
+
+# Bad — parallel (will overload staging)
+npx playwright test tests/scenarios/  # runs both at once if workers > 1
+```
+
+`playwright.config.ts` sets `workers: 1` which serializes specs
+within a single `npx playwright test` invocation, but launching
+two separate `npx playwright test` commands concurrently bypasses
+that — don't do it.
+
+Between scenario runs, allow **15–30 minutes** for the previous
+run's error signal to decay out of the lookback window. Running
+back-to-back is fine for development iteration but produces noisy
+baselines for detection-quality measurements.
+
 ### End-to-end tests (Playwright)
 
 The `tests/` tree runs against the deployed APM pack on Cribl Cloud
