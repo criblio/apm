@@ -265,7 +265,8 @@ export function allOperationsSummary(limit: number = 1000): string {
  * Traces sorted by trace duration descending — "slow traces" panel on
  * the Home page. Optionally scoped to a service. Applies the same
  * long-poll / idle-wait filter as rawSlowestTraces() — see
- * api/streamFilter.ts.
+ * api/streamFilter.ts. Includes `root_op` in the summarize so the
+ * stream filter's kafka consumer exemption can reference it.
  */
 export function slowestTraces(service?: string): string {
   const svcFilter = service ? `| where svc=="${service.replace(/"/g, '\\"')}"` : '';
@@ -279,7 +280,8 @@ export function slowestTraces(service?: string): string {
                 first_seen=min(_time),
                 trace_start_ns=min(start_time_unix_nano),
                 trace_end_ns=max(end_time_unix_nano),
-                max_non_root_dur_us=maxif(dur_us, is_root == false)
+                max_non_root_dur_us=maxif(dur_us, is_root == false),
+                root_op=minif(name, is_root)
       by trace_id
     | extend trace_dur_us=(toreal(trace_end_ns)-toreal(trace_start_ns))/1000.0
     ${streamFilterKqlClause()}
