@@ -40,11 +40,30 @@ export default function SpanTree({ trace, selectedSpanId, onSelect }: Props) {
         const proc = trace.processes[span.processID];
         const svc = proc?.serviceName ?? 'unknown';
         const color = serviceColor(svc);
-        const offsetUs = span.startTime - traceStart;
-        const leftPct = (offsetUs / traceDuration) * 100;
-        const widthPct = Math.max((span.duration / traceDuration) * 100, 0.2);
+        // Clip the span's extent to the chart's [traceStart, traceEnd]
+        // window. buildTimeline anchors that window to the root span
+        // when one exists, so clock-skewed children whose start lands
+        // before the root can render as either a clamped sliver (if
+        // they overlap the window) or a label-only row with no bar
+        // (if they are entirely outside it). Either is preferable to
+        // the old behavior, where negative leftPct pushed the bar off
+        // the visible area and made the row look half-broken.
+        const traceEnd = traceStart + traceDuration;
+        const spanEnd = span.startTime + span.duration;
+        const visStart = Math.max(span.startTime, traceStart);
+        const visEnd = Math.min(spanEnd, traceEnd);
+        const hasVisibleBar = visEnd > visStart;
+        const leftPct = ((visStart - traceStart) / traceDuration) * 100;
+        const widthPct = Math.max(
+          ((visEnd - visStart) / traceDuration) * 100,
+          0.2,
+        );
         const isError = span.tags.some((t) => t.key === 'error' && t.value === true);
         const isSelected = span.spanID === selectedSpanId;
+        const outOfWindowTitle =
+          'This span is timestamped outside the trace window — likely ' +
+          'clock skew in the emitting service. Select the row to see ' +
+          'the raw timings in the detail pane.';
 
         return (
           <div
@@ -58,17 +77,23 @@ export default function SpanTree({ trace, selectedSpanId, onSelect }: Props) {
               <span className={s.opName}>{span.operationName}</span>
             </div>
             <div className={s.bar}>
-              <div
-                className={s.barFill}
-                style={{
-                  left: `${leftPct}%`,
-                  width: `${widthPct}%`,
-                  background: color,
-                }}
-                title={formatDurationUs(span.duration)}
-              >
-                {widthPct > 8 ? formatDurationUs(span.duration) : ''}
-              </div>
+              {hasVisibleBar ? (
+                <div
+                  className={s.barFill}
+                  style={{
+                    left: `${leftPct}%`,
+                    width: `${widthPct}%`,
+                    background: color,
+                  }}
+                  title={formatDurationUs(span.duration)}
+                >
+                  {widthPct > 8 ? formatDurationUs(span.duration) : ''}
+                </div>
+              ) : (
+                <div className={s.outOfWindow} title={outOfWindowTitle}>
+                  ⚠ {formatDurationUs(span.duration)} outside trace window
+                </div>
+              )}
             </div>
           </div>
         );
