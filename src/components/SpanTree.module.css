@@ -86,6 +86,18 @@
   background: var(--cds-color-danger) !important;
 }
 
+.outOfWindow {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--cds-font-size-xs);
+  font-style: italic;
+  color: var(--cds-color-warning);
+  cursor: help;
+}
+
 .timeAxis {
   display: grid;
   grid-template-columns: minmax(280px, 0.5fr) 1fr;
