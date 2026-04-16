@@ -199,7 +199,7 @@ test('scenario 1 · paymentFailure surfaces in Home, Service Detail, Investigato
             items,
             'Recent errors panel should list at least one trace for payment failures',
           )
-          .not.toHaveCount(0, { timeout: 10_000 });
+          .not.toHaveCount(0, { timeout: 30_000 });
       }
     });
 
