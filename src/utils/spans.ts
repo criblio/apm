@@ -64,13 +64,51 @@ export function buildTimeline(trace: JaegerTrace): TraceTimeline {
   }
   for (const r of roots) visit(r, 0);
 
-  // Time window — defensive: if a span is missing parents we still want a sane window
-  let traceStart = Infinity;
-  let traceEnd = -Infinity;
-  for (const sp of spans) {
-    if (sp.startTime < traceStart) traceStart = sp.startTime;
-    const e = sp.startTime + sp.duration;
-    if (e > traceEnd) traceEnd = e;
+  // Time window — anchor the chart's coordinate space to the root
+  // span (first parent-less span in start-time order) when one
+  // exists, and extend the right edge only for spans whose start
+  // falls *inside* that root window.
+  //
+  // Walking raw min/max across every span is naive against intra-
+  // trace clock skew: some OTel instrumentations (PHP in particular,
+  // when a service's SDK is stamping span times from a different
+  // monotonic source than its upstream caller) occasionally emit
+  // child spans whose start_time lands fractions of a second before
+  // their parent's start. A single skewed child then drags
+  // `traceStart` into the past and blows the waterfall scale so the
+  // real work is crammed into the last few percent of the chart
+  // width, leaving the left side of the waterfall visibly empty.
+  //
+  // Anchoring to the root keeps the scale tied to what the trace
+  // actually measured. Skewed spans still belong to the trace and
+  // remain selectable in SpanTree — their bars are clipped by the
+  // renderer rather than scaling the chart around them. The
+  // `traceEnd` extension covers legitimate async overflow where a
+  // child span started inside the root window outlives its parent.
+  //
+  // Fall back to the raw min/max walk when there is no root span
+  // (fragmented traces, dropped parent links) so multi-root shapes
+  // still display with reasonable bounds.
+  let traceStart: number;
+  let traceEnd: number;
+  const rootId = roots[0];
+  if (rootId) {
+    const root = byId.get(rootId)!;
+    traceStart = root.startTime;
+    traceEnd = root.startTime + root.duration;
+    for (const sp of spans) {
+      if (sp.startTime < traceStart) continue; // skew before the root — ignore
+      const e = sp.startTime + sp.duration;
+      if (e > traceEnd) traceEnd = e;
+    }
+  } else {
+    traceStart = Infinity;
+    traceEnd = -Infinity;
+    for (const sp of spans) {
+      if (sp.startTime < traceStart) traceStart = sp.startTime;
+      const e = sp.startTime + sp.duration;
+      if (e > traceEnd) traceEnd = e;
+    }
   }
   const traceDuration = Math.max(1, traceEnd - traceStart);
 
