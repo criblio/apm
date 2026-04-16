@@ -69,66 +69,130 @@ Excluded: `adFailure` (10% Bernoulli — detected but poor SNR for
 trending), `llmInaccurateResponse` (semantic), `imageSlowLoad`
 (client-side / RUM). Can be added later.
 
-### 4. Results storage — flat JSON in `apm-evals` sibling repo
+### 4. Results storage — events in a dedicated Cribl dataset
 
-One file per run, named `results/YYYY-MM-DDTHH-MM-SSZ.json`:
+Dogfooding: the harness sends its results to a dedicated
+`apm_evals` dataset in the same Cribl workspace the app runs
+against, then visualizes the trend in a Cribl Search notebook.
+This replaces the original "flat JSON in sibling repo" plan —
+we get native KQL querying, alerting, and trending without any
+new infrastructure. It also aligns with ROADMAP's "lean on Cribl
+Search" guiding principle.
+
+**Event shape.** One event per surface check + one summary event
+per scenario + one per run, all to the same dataset with a `type`
+discriminator. This lets one dataset answer every useful query
+via a `where type==...` filter.
 
 ```json
+// type=surface_check — one per surface check per scenario per run
 {
-  "runId": "2026-04-17T00:00:00Z",
-  "commitSha": "abc1234",
-  "packVersion": "0.6.0",
-  "durationMin": 240,
-  "scenarios": [
-    {
-      "name": "paymentFailure",
-      "flag": "paymentFailure",
-      "variant": "50%",
-      "surfaces": {
-        "homeErrorChip": { "detected": true, "latencyMs": 12000 },
-        "homeErrorClasses": { "detected": true, "latencyMs": 8000 },
-        "svcDetailRecentErrors": { "detected": true, "latencyMs": 3000 },
-        "investigator": { "score": 0.85, "mentionsRootCause": true }
-      },
-      "detectedCount": 4,
-      "totalChecks": 4,
-      "score": 1.0
-    }
-  ],
-  "summary": {
-    "scenariosRun": 12,
-    "meanScore": 0.91,
-    "fullyDetected": 10,
-    "partiallyDetected": 2,
-    "missed": 0
-  }
+  "_time": 1776300000,
+  "type": "surface_check",
+  "run_id": "2026-04-17T00:00:00Z",
+  "commit_sha": "abc1234",
+  "pack_version": "0.6.0",
+  "scenario": "paymentFailure",
+  "surface": "homeErrorChip",
+  "detected": true,
+  "latency_ms": 12000,
+  "score": 1.0
+}
+
+// type=scenario_summary — one per scenario per run
+{
+  "_time": 1776300120,
+  "type": "scenario_summary",
+  "run_id": "2026-04-17T00:00:00Z",
+  "commit_sha": "abc1234",
+  "scenario": "paymentFailure",
+  "detected_count": 4,
+  "total_checks": 4,
+  "score": 1.0,
+  "investigator_score": 0.85,
+  "duration_sec": 1200
+}
+
+// type=run_summary — one per run
+{
+  "_time": 1776300300,
+  "type": "run_summary",
+  "run_id": "2026-04-17T00:00:00Z",
+  "commit_sha": "abc1234",
+  "pack_version": "0.6.0",
+  "scenarios_run": 12,
+  "mean_score": 0.91,
+  "fully_detected": 10,
+  "partially_detected": 2,
+  "missed": 0,
+  "duration_min": 240
 }
 ```
 
-Mobile-reviewable via GitHub rendered JSON. A `scripts/trend.mjs`
-in that repo reads all JSON files and outputs a per-scenario
-detection-rate table for quick comparison. A proper dashboard can
-come later if the JSON files prove the harness adds value.
+**Ingest.** The orchestrator POSTs events to the workspace's HTTP
+ingest endpoint (HEC-compatible) with the same client-credentials
+Bearer token the Playwright tests already mint. No new auth setup.
 
-### 5. Trigger + reporting — GitHub Actions cron → commit to apm-evals
+**Safety net.** The orchestrator also logs the full event stream to
+stdout and to a local `results/latest.jsonl` file. If the Cribl
+ingest POST fails (workspace down, credentials expired), the run
+data isn't lost; it can be replayed after the fact.
+
+### 5. Trigger + reporting — GitHub Actions cron → Cribl notebook
 
 v1 flow:
 
-1. `.github/workflows/eval.yml` in this repo fires nightly on cron
+1. `.github/workflows/eval.yml` fires nightly on cron
    (`0 4 * * *` UTC = late evening Pacific).
-2. The workflow calls a `repository_dispatch` webhook on clintdev's
-   orchestrator listener (a small HTTP server or a Tailscale-exposed
-   webhook). Payload includes the commit SHA and pack version.
+2. Workflow calls a `repository_dispatch` webhook on clintdev's
+   orchestrator listener (Tailscale-exposed). Payload includes the
+   commit SHA and pack version.
 3. Orchestrator runs the scenario matrix sequentially (see §7
-   "Runtime" below).
-4. On completion, orchestrator `git push`es the result JSON to the
-   `apm-evals` repo and posts a summary as a `gh pr comment` on
-   the most recent merged PR in `criblio/apm` (if any merged that
-   day). If no PR merged, the result is just committed silently.
+   below).
+4. For each scenario, the orchestrator POSTs surface-check events
+   to the `apm_evals` dataset as the checks execute. The
+   scenario_summary event posts after the scenario completes; the
+   run_summary event posts at the end.
 
-No Checks API for v1 — requires a GitHub App setup that isn't
-justified yet. `gh pr comment` with a markdown table is visible
-on mobile and zero-setup.
+**Visualization.** A Cribl Search notebook
+(`criblapm__evals_dashboard`) with saved queries renders the trend.
+The notebook is created once, manually, then auto-refreshes when
+opened. Starter panels:
+
+- **Detection rate over time** (line chart, one series per scenario):
+  ```
+  dataset="apm_evals" | where type=="surface_check"
+  | summarize detection_pct=avg(iff(detected, 1.0, 0.0))*100
+    by scenario, bin(_time, 1d)
+  | sort by _time asc
+  ```
+- **Latest run** (table):
+  ```
+  dataset="apm_evals" | where type=="scenario_summary"
+  | summarize latest_ts=max(_time), score=maxif(score, _time)
+    by scenario
+  | sort by score asc
+  ```
+- **Regression spotter** (score delta vs 7-day median):
+  ```
+  dataset="apm_evals" | where type=="scenario_summary"
+    and _time > ago(14d)
+  | summarize score_today=maxif(score, _time > ago(1d)),
+              score_7d_median=percentile(score, 50)
+    by scenario
+  | extend delta=score_today-score_7d_median
+  | where delta < -0.1
+  | sort by delta asc
+  ```
+
+**Alerts.** A Cribl scheduled search + notification target fires
+when any scenario's mean score drops below 0.8 over the last two
+runs. Uses the same alerting primitives ROADMAP §2 calls for.
+
+No `gh pr comment` and no Checks API for v1 — the notebook is the
+dashboard. If we want per-PR reporting later, a small scheduled
+search can post a comment to the most recent PR via `gh pr
+comment` in a follow-up GitHub Actions job.
 
 ### 6. Investigator scoring — LLM-as-judge, budgeted
 
@@ -241,26 +305,28 @@ cooldown with the next scenario's ramp-up). Could bring total to
 
 ## What this does NOT cover
 
-- **Real-time alerting on detection regressions.** v1 just commits
-  results; a human reads the JSON. Alerting (e.g. Slack when
-  detection rate drops below threshold) is a v2 feature once the
-  trend data proves useful.
 - **Multi-cluster / multi-version testing.** v1 tests one pack
   version against one cluster. Testing across Cribl Cloud versions
   or Lakehouse vs Lake is out of scope.
 - **Synthetic trace injection.** v1 relies on the otel-demo's
   organic traffic + flagd. Synthetic injection for controlled
   baselines is a v2 idea.
+- **PR-level reporting.** The notebook is the dashboard; per-PR
+  comments with the run delta are a cheap v2 add-on.
 
 ## Next steps after review
 
-1. Create the `apm-evals` sibling repo (private, just a README +
-   `results/` directory)
+1. Provision the `apm_evals` dataset on the Lakehouse workspace +
+   create the HTTP ingest endpoint (or confirm an existing one
+   accepts writes from the client-credentials token)
 2. Scaffold `eval-harness/` in this repo with the orchestrator,
-   engine, browser helper, and 2-3 scenario declarations
-   (paymentFailure, kafkaQueueProblems, paymentUnreachable — the
-   three most distinct failure shapes)
+   engine, browser helper, Cribl ingest client, and 2-3 scenario
+   declarations (paymentFailure, kafkaQueueProblems,
+   paymentUnreachable — the three most distinct failure shapes)
 3. Run manually on clintdev to validate one full matrix pass
-4. Wire the GitHub Actions cron trigger
-5. Let it run nightly for a week, review the trend data, decide
-   whether to expand to all 12 scenarios
+4. Create the `criblapm__evals_dashboard` Cribl Search notebook
+   with the three starter panels from §5
+5. Wire the GitHub Actions cron trigger
+6. Let it run nightly for a week, eyeball the notebook, decide
+   whether to expand to all 12 scenarios and wire the regression
+   alert
