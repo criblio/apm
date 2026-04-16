@@ -1,3 +1,5 @@
+> **Stale** — this handoff doc was superseded by `docs/sessions/2026-04-15-scenario-plan-v2.md`, which was itself superseded by ROADMAP.md §1d. Kept for historical context.
+
 # Session handoff: scenario-test → roadmap plan (2026-04-15)
 
 Written to pick up this work on a different machine. Read this first,

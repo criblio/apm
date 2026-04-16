@@ -456,18 +456,18 @@ the flag state.
 
 ## Known UI gaps
 
-These were identified during the scenario walkthrough and are tracked
-as follow-up work. Each is a case where an active failure is harder to
-spot than it should be.
+Pruned 2026-04-16 — three of the original six were implemented
+(verified against source in the detection coverage audit). The
+remaining gaps are tracked in ROADMAP.md §1d with concrete PRs.
 
-| # | Gap | Impact |
-|---|-----|--------|
-| 1 | Messaging edges (kafka producer→consumer) not on System Architecture | kafka scenarios invisible on the graph |
-| 2 | ServiceDetail hero has no p99 tile, Home catalog has no p99 delta chip | GC-pause failures look fine in the stats row |
-| 3 | Slowest trace classes is polluted by `flagd.evaluation.v1.Service/EventStream` (a 600s+ long-poll stream) | Real slow traces are buried under stream noise |
-| 4 | Delta chips misfire on services with naturally noisy tails (accounting) | False alarms / wrong direction on tail latency |
-| 5 | Time range doesn't persist when navigating between pages | Lose context every click |
-| 6 | Service Detail queries are slow (15-30s) when the data includes 400s+ durations | Frustrating loading state during exactly the scenarios you want to diagnose |
+| # | Gap | Impact | Status |
+|---|-----|--------|--------|
+| ~~1~~ | ~~Messaging edges not on arch graph~~ | ~~kafka invisible~~ | **DONE** — `criblapm__sysarch_messaging_deps` + `toMessagingEdges` |
+| ~~2~~ | ~~No p99 tile / p99 delta chip~~ | ~~GC-pause hidden~~ | **DONE** — `ServiceDetailPage.tsx:742` + `HomePage.tsx:743-746` |
+| ~~3~~ | ~~Slow trace classes polluted by flagd streams~~ | ~~noise~~ | **DONE** — `streamFilter.ts` heuristic (duration + child ratio + span count) |
+| 4 | Delta chips misfire on noisy-tail services (accounting) | False alarms | Open — needs investigation |
+| 5 | Time range doesn't persist across pages | Lose context | Open |
+| 6 | ServiceDetail queries slow (10-20s at `-1h`) | Skeleton state during incidents | Open — **tracked as ROADMAP §1d fix 1 (ServiceDetail panel caching)** |
 
 ## Quick reference: which scenarios exercise which feature
 
@@ -478,8 +478,10 @@ spot than it should be.
 | Baseline delta chips (rate) | `loadGeneratorFloodHomepage` |
 | Baseline delta chips (**p99**, bimodal) | `adManualGc` |
 | Edge-level health on graph | `paymentFailure` or `paymentUnreachable` |
-| Messaging edges (once built) | `kafkaQueueProblems` |
+| Messaging edges | `kafkaQueueProblems` |
+| Ghost nodes + rate-drop chip | `paymentUnreachable` |
+| Root-cause hint | `cartFailure` |
 | Log Explorer | `failedReadinessProbe` (if k8s events are in the dataset) |
 | Error classes grouping | `productCatalogFailure` |
-| Slowest trace classes | `kafkaQueueProblems` |
+| Slowest trace classes | `kafkaQueueProblems` (after ROADMAP §1d fix 3) |
 | Sortable Top Operations by p95 | `adHighCpu` |

@@ -1,3 +1,5 @@
+> The concrete PR sequence from this audit now lives in ROADMAP.md §1d. This doc is the supporting analysis.
+
 # Scenario detection coverage + UI fix plan (2026-04-16)
 
 Ran the scenario specs we have today against master, mapped each of
