@@ -235,6 +235,29 @@ export function serviceOperations(service: string): string {
 }
 
 /**
+ * All-services variant of serviceOperations — groups by (svc, name)
+ * instead of just name, with no service filter. Scheduled as
+ * `criblapm__svc_operations` so ServiceDetail can read the Top
+ * Operations table from $vt_results instead of scanning every span
+ * in the window at page-load time.
+ */
+export function allServiceOperations(): string {
+  return `${spansBase()}
+    | extend svc=tostring(resource.attributes['service.name']),
+            dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
+            is_error=(tostring(status.code)=="2")
+    ${streamFilterSpanKqlClause()}
+    | summarize requests=count(),
+                errors=countif(is_error),
+                p50_us=percentile(dur_us, 50),
+                p95_us=percentile(dur_us, 95),
+                p99_us=percentile(dur_us, 99)
+      by svc, name
+    | extend error_rate=toreal(errors)/toreal(requests)
+    | sort by svc asc, requests desc`;
+}
+
+/**
  * Per-(service, operation) latency summary across the full window —
  * every op in the dataset, stream filter applied. Used by the
  * latency-anomaly detector on the Home page: we run this twice

@@ -15,6 +15,7 @@ import {
   listServiceMetricNames,
   getServiceMetricsBatch,
 } from '../api/search';
+import { listCachedSvcDetailPanels } from '../api/panelCache';
 import { serviceColor } from '../utils/spans';
 import { previousWindow } from '../utils/timeRange';
 import { useRangeParam } from '../hooks/useRangeParam';
@@ -226,9 +227,58 @@ export default function ServiceDetailPage() {
     setLoadingDeps(true);
     const binSeconds = binSecondsFor(range);
 
-    // Summary (and "does the service even exist in this range?") —
-    // filtered to just this service at the query level so it stays
-    // fast even during high-traffic scenarios.
+    // Previous-window summary for delta chips. Always live because
+    // the previous window changes with every range pick and isn't
+    // part of the cacheable set. Non-fatal on error.
+    const prev = previousWindow(range);
+    listServiceSummaries(prev.earliest, prev.latest, serviceName)
+      .then((all) => setPrevSummary(all.find((x) => x.service === serviceName) ?? null))
+      .catch(() => setPrevSummary(null));
+
+    // Cache-fast path: when the user is on the default -1h range
+    // with the stream filter enabled, read all five ServiceDetail
+    // panels from $vt_results in one batched query. The cached
+    // scheduled searches run every 5 minutes and contain per-service
+    // data — the reader filters client-side to `serviceName`.
+    // Any cache miss falls through to the live query fan-out below.
+    if (range === '-1h' && streamFilterEnabled) {
+      try {
+        const cached = await listCachedSvcDetailPanels(serviceName);
+        if (cached.summary && cached.buckets && cached.operations) {
+          setSummary(cached.summary);
+          setNotFound(false);
+          setLoadingSummary(false);
+          setBuckets(cached.buckets);
+          setLoadingBuckets(false);
+          setOperations(cached.operations);
+          setLoadingOps(false);
+          if (cached.dependencies) {
+            setEdges(cached.dependencies);
+            setLoadingDeps(false);
+          } else {
+            void getDependencies(range, 'now')
+              .then((e) => setEdges(e))
+              .catch(() => setEdges([]))
+              .finally(() => setLoadingDeps(false));
+          }
+          if (cached.recentErrors && cached.recentErrors.length > 0) {
+            setErrorTraces(cached.recentErrors);
+            setLoadingErrors(false);
+          } else {
+            void listRecentErrorTraces(serviceName, range, 'now')
+              .then((et) => setErrorTraces(et))
+              .catch(() => setErrorTraces([]))
+              .finally(() => setLoadingErrors(false));
+          }
+          return;
+        }
+      } catch {
+        // Cache read failed — fall through to live.
+      }
+    }
+
+    // Live query fan-out — either the user picked a non-default
+    // range, or the cache came back empty.
     listServiceSummaries(range, 'now', serviceName)
       .then((all) => {
         const mine = all.find((x) => x.service === serviceName);
@@ -239,13 +289,6 @@ export default function ServiceDetailPage() {
         setError(err instanceof Error ? err.message : String(err));
       })
       .finally(() => setLoadingSummary(false));
-
-    // Previous-window summary for the delta chips. Also filtered to
-    // just this service. Non-fatal on error.
-    const prev = previousWindow(range);
-    listServiceSummaries(prev.earliest, prev.latest, serviceName)
-      .then((all) => setPrevSummary(all.find((x) => x.service === serviceName) ?? null))
-      .catch(() => setPrevSummary(null));
 
     getServiceTimeSeries(binSeconds, serviceName, range, 'now')
       .then((rows) => setBuckets(rows))
@@ -266,10 +309,6 @@ export default function ServiceDetailPage() {
       .then((e) => setEdges(e))
       .catch(() => setEdges([]))
       .finally(() => setLoadingDeps(false));
-    // streamFilterEnabled is intentionally in the dep list so flipping
-    // the toggle in Settings triggers a re-fetch. It isn't read inside
-    // the callback — the queries pick it up from module state.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [range, serviceName, streamFilterEnabled]);
 
   useEffect(() => {
