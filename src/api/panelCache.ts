@@ -28,6 +28,7 @@ import { runQuery } from './cribl';
 import {
   getHomePanelJobNames,
   getSystemArchPanelJobNames,
+  getSvcDetailPanelJobNames,
 } from './provisionedSearches';
 import { groupSlowTraceClasses, groupErrorClasses } from './search';
 import { toDependencyEdges, toMessagingEdges } from './transform';
@@ -37,6 +38,8 @@ import type {
   SlowTraceClass,
   ErrorClass,
   DependencyEdge,
+  OperationSummary,
+  TraceBrief,
 } from './types';
 
 /** Panels any Cribl APM page can pull from the cache. When a
@@ -215,6 +218,116 @@ function buildCachedPanels(
     serviceBuckets: timeSeriesRows ? parseServiceBuckets(timeSeriesRows) : null,
     slowClasses: slowRows ? groupSlowTraceClasses(slowRows) : null,
     errorClasses: errorRows ? groupErrorClasses(errorRows) : null,
+    dependencies: mergeDependencyEdges(depRows, msgDepRows),
+    lastUpdatedMs,
+  };
+}
+
+// ── ServiceDetail panel cache ─────────────────────────────────
+
+export interface CachedSvcDetailPanels {
+  summary: ServiceSummary | null;
+  buckets: ServiceBucket[] | null;
+  operations: OperationSummary[] | null;
+  recentErrors: TraceBrief[] | null;
+  dependencies: DependencyEdge[] | null;
+  lastUpdatedMs: number | null;
+}
+
+function parseOperationSummaries(
+  rows: Record<string, unknown>[],
+  serviceName: string,
+): OperationSummary[] {
+  return rows
+    .filter((r) => String(r.svc ?? '') === serviceName)
+    .map((r) => ({
+      operation: String(r.name ?? 'unknown'),
+      requests: toNum(r.requests),
+      errors: toNum(r.errors),
+      errorRate: toNum(r.error_rate),
+      p50Us: toNum(r.p50_us),
+      p95Us: toNum(r.p95_us),
+      p99Us: toNum(r.p99_us),
+    }))
+    .sort((a, b) => b.requests - a.requests)
+    .slice(0, 50);
+}
+
+function parseRecentErrorTraces(
+  rows: Record<string, unknown>[],
+  serviceName: string,
+): TraceBrief[] {
+  const byTrace = new Map<string, { traceID: string; startTime: number; errorCount: number }>();
+  for (const r of rows) {
+    if (String(r.svc ?? '') !== serviceName) continue;
+    const tid = String(r.trace_id ?? '');
+    if (!tid) continue;
+    const t = toNum(r._time) * 1_000_000;
+    let acc = byTrace.get(tid);
+    if (!acc) {
+      acc = { traceID: tid, startTime: t, errorCount: 0 };
+      byTrace.set(tid, acc);
+    }
+    acc.errorCount += 1;
+    if (t > acc.startTime) acc.startTime = t;
+  }
+  return Array.from(byTrace.values())
+    .sort((a, b) => b.startTime - a.startTime)
+    .slice(0, 20)
+    .map((a) => ({
+      traceID: a.traceID,
+      durationUs: 0,
+      startTime: a.startTime,
+      errorCount: a.errorCount,
+    }));
+}
+
+/**
+ * Read the ServiceDetail panels from the cache. Reuses five of the
+ * six existing Home + SysArch scheduled searches — their data is
+ * already per-service, just unfiltered. The reader applies the
+ * service-name filter client-side. Only one new scheduled search
+ * is needed: `criblapm__svc_operations` for per-(service, op)
+ * rollups.
+ */
+export async function listCachedSvcDetailPanels(
+  serviceName: string,
+): Promise<CachedSvcDetailPanels> {
+  const names = getSvcDetailPanelJobNames();
+  const partitions = await readCachedPanelsRaw(names);
+
+  let lastUpdatedMs: number | null = null;
+  for (const rows of partitions.values()) {
+    for (const row of rows) {
+      const t = toNum(row._time) * 1000;
+      if (t > 0 && (lastUpdatedMs === null || t > lastUpdatedMs)) {
+        lastUpdatedMs = t;
+      }
+    }
+  }
+
+  const get = (name: string): Record<string, unknown>[] | null => {
+    const rows = partitions.get(name);
+    return rows && rows.length > 0 ? rows : null;
+  };
+
+  const summaryRows = get('criblapm__home_service_summary');
+  const timeSeriesRows = get('criblapm__home_service_time_series');
+  const errorSpanRows = get('criblapm__home_error_spans');
+  const opsRows = get('criblapm__svc_operations');
+  const depRows = get('criblapm__sysarch_dependencies');
+  const msgDepRows = get('criblapm__sysarch_messaging_deps');
+
+  const allSummaries = summaryRows ? parseServiceSummaries(summaryRows) : null;
+  const summary = allSummaries?.find((s) => s.service === serviceName) ?? null;
+  const allBuckets = timeSeriesRows ? parseServiceBuckets(timeSeriesRows) : null;
+  const buckets = allBuckets?.filter((b) => b.service === serviceName) ?? null;
+
+  return {
+    summary,
+    buckets,
+    operations: opsRows ? parseOperationSummaries(opsRows, serviceName) : null,
+    recentErrors: errorSpanRows ? parseRecentErrorTraces(errorSpanRows, serviceName) : null,
     dependencies: mergeDependencyEdges(depRows, msgDepRows),
     lastUpdatedMs,
   };

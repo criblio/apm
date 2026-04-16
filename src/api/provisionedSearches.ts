@@ -181,6 +181,18 @@ export function getProvisioningPlan(): ProvisionedSearch[] {
       sampleRate: 1,
       schedule: { ...everyFiveMin },
     },
+    // ── Service Detail panel cache ──────────────────────────
+    {
+      id: 'criblapm__svc_operations',
+      name: 'Cribl APM - per-service top operations',
+      description:
+        'Cribl APM: per-(service, operation) request/error/percentile rollup for the ServiceDetail Top Operations table. Read via $vt_results, client-filtered to the viewed service.',
+      query: Q.allServiceOperations(),
+      earliest: '-1h',
+      latest: 'now',
+      sampleRate: 1,
+      schedule: { ...everyFiveMin },
+    },
     // ── Op baseline lookup ──────────────────────────────────
     {
       id: 'criblapm__op_baselines',
@@ -216,5 +228,19 @@ export function getSystemArchPanelJobNames(): string[] {
     // Home-shared panels reused on the arch page
     'criblapm__home_service_summary',
     'criblapm__home_service_time_series',
+  ];
+}
+
+/** Service Detail page. Reuses every Home + SysArch panel (they
+ *  already contain per-service data — the reader filters client-side)
+ *  plus the new per-(svc, op) rollup for the Top Operations table. */
+export function getSvcDetailPanelJobNames(): string[] {
+  return [
+    'criblapm__home_service_summary',
+    'criblapm__home_service_time_series',
+    'criblapm__home_error_spans',
+    'criblapm__svc_operations',
+    'criblapm__sysarch_dependencies',
+    'criblapm__sysarch_messaging_deps',
   ];
 }
