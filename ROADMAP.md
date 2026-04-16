@@ -122,51 +122,40 @@ is a 10% Bernoulli trial in upstream `AdService.java`
 `FAILURE-SCENARIOS.md` originally described. §6 has been rewritten
 with a ⚠️ marker and the upstream source link.
 
-### 1d. Detection coverage gaps (from 2026-04-16 audit)
+### ~~1d. Detection coverage gaps~~ — **DONE (3 of 4)**
 
 The detection coverage audit (`docs/sessions/2026-04-16-detection-
-coverage-and-fix-plan.md`) ran the modeled scenarios against master,
-mapped all 15 `FAILURE-SCENARIOS.md` flags to current UI capability,
-and verified each claimed gap against source. Result: **9 fully
-detected, 3 partially detected, 1 design-limited, 2 out of scope.**
+coverage-and-fix-plan.md`) mapped all 15 `FAILURE-SCENARIOS.md` flags
+to current UI capability. Result: **9 fully detected, 3 partially
+detected, 1 design-limited, 2 out of scope.**
 
-Three real gaps remain, each with a concrete fix:
+Three of the four proposed fixes shipped and are validated on staging:
 
-1. **ServiceDetail panel caching.** `ServiceDetailPage::fetchAll()`
-   fires six uncached parallel queries; the slowest take 10-20s on
-   `-1h`, leaving the page in a skeleton state during the incidents
-   when users most need it (FAILURE-SCENARIOS known gap #6). Mirror
-   the Home panel-cache pattern — add `criblapm__svc_operations` and
-   `criblapm__svc_recent_errors` scheduled searches, plus a reader
-   that consults `$vt_results` before live-querying.
-   **Unblocks:** scenarios 1, 5, 6, 8, 9, 10, 14.
-   **Est:** 1-2 days.
-
-2. **Instances tab on ServiceDetail.** Group RED metrics by
-   `resource.attributes['service.instance.id']` instead of only at
-   the service level. A leaking or misbehaving single pod is
-   invisible when aggregated.
-   **Unblocks:** scenario 11 (`emailMemoryLeak`).
-   **Est:** 1-2 days.
-
-3. **Kafka consumer stream-filter exemption.** The stream filter in
-   `streamFilter.ts` hides idle-wait traces that have the same span
-   shape as actual kafka consumer lag. Exempt operations matching
-   `/-consumed$/` or `/\bConsume\b/i` from the filter.
-   **Unblocks:** scenario 2 (`kafkaQueueProblems`).
-   **Est:** ~1 hour.
-
-**Proposed PR sequence:**
-
-| # | PR | Est | Unblocks |
+| # | PR | Status | Validated |
 |---|---|---|---|
-| 1 | `test: bump scenario 1 Recent errors timeout` | 5 min | scenario 1 test goes green |
-| 2 | `fix: exempt kafka consumer ops from stream filter` | ~1 hr | scenario 2 |
-| 3 | `perf: ServiceDetail panel caching` | 1-2 days | scenarios 1, 5, 6, 8, 9, 10, 14 |
-| 4 | `feat: Instances tab on ServiceDetail` | 1-2 days | scenario 11 |
+| 1 | PR #13 `test: bump scenario 1 Recent errors timeout` | ✅ merged | scenario 1 passes (1.8 min) |
+| 2 | PR #14 `fix: exempt kafka consumer ops from stream filter` | ✅ merged | deployed; unblocks scenario 2 |
+| 3 | PR #15 `perf: ServiceDetail panel caching` | ✅ merged | scenario 1 ServiceDetail renders from cache in ~1-2s vs 10-20s before |
+| 4 | `feat: Instances tab on ServiceDetail` | 🔲 not started | unblocks scenario 11 (emailMemoryLeak) |
 
-Total: ~3-4 days. After these, every theoretically-detectable
-scenario (12 of 15) has a working UI surface.
+Validation run results (2026-04-16, sequential against staging):
+
+- **Scenario 1** (`paymentFailure`): all hard + soft assertions green
+  in 1.8 min. ServiceDetail panels now render from cache — the
+  Recent errors soft-failure that triggered this work item no longer
+  reproduces.
+- **Flagd catalog validation** (`adFailure` / `productCatalogFailure`
+  / `llmRateLimitError`): all three flags green.
+
+Remaining: the Instances tab (PR #4) is the last gap for scenario 11.
+Estimated 1-2 days of work. After it ships, every theoretically-
+detectable scenario (12 of 15) has a working UI surface.
+
+**Operational note:** after deploying a pack version that adds new
+scheduled searches, you must re-provision via Settings → Provisioning
+(or a future `npm run provision` script). The deploy step only
+replaces the bundle — scheduled searches are created by the
+provisioner, not by the deploy.
 
 ### 1e. Eval harness design (from 2026-04-15 scoping)
 
@@ -335,14 +324,14 @@ Being honest about the wins too:
 
 ## Completed
 
-### ~~Scenario detection & test harness (1b-1c)~~ — DONE
+### ~~Scenario detection & test harness (1b-1d)~~ — DONE
 
 - **UI gaps** (§1b) — ghost nodes, red rate-drop chip, root-cause
   hint: all three shipped. Verified against source in the 2026-04-16
   coverage audit.
 - **Flagd smoke test** (§1c) — PR #10
   `tests/scenarios/flagd-catalog-validation.spec.ts`. Also surfaced
-  `adFailure`'s 10% Bernoulli rate.
+  `adFailure`'s 10% Bernoulli rate (upstream `AdService.java`).
 - **Home panel cache-miss fallback** — PR #8. When the scheduled
   search for Error classes returns empty, fires a live query
   fallback; adds a "cache Nm stale" chip on the panel header.
@@ -350,9 +339,26 @@ Being honest about the wins too:
   now anchors the chart scale to the root span so a single clock-
   skewed child (e.g. the PHP quote service's ~1s offset) doesn't
   blow the waterfall scale. Out-of-window spans render as warning
-  rows instead of invisible negative-offset bars.
-- **Playwright e2e framework** — PRs #4-#7. Auth0 login, host-global
-  injection, flagd-ui client, scenario 1 spec, Cribl Search helper.
+  rows instead of invisible negative-offset bars. Root cause
+  diagnosed as the PHP OTel SDK's `SystemClock::now()` caching a
+  stale `microtime()` reference after an NTP step.
+- **ServiceDetail panel caching** — PR #15. Mirrors the Home panel
+  cache pattern for ServiceDetail: reads top-operations, recent
+  errors, summary, time series, and dependencies from `$vt_results`
+  in one batched query (~1-2s) instead of six uncached live queries
+  (10-20s). Only one new scheduled search (`criblapm__svc_operations`)
+  — the other five panels reuse existing Home + SysArch caches.
+- **Kafka consumer stream-filter exemption** — PR #14. Operations
+  matching `consumed|Consume` bypass the idle-wait stream filter so
+  kafka lag traces surface in the Slowest trace classes panel during
+  `kafkaQueueProblems` scenarios.
+- **Playwright e2e framework** — PRs #4-#7, #13. Auth0 login,
+  host-global injection, flagd-ui client, Cribl Search helper,
+  scenario 1 spec with cache-path exercise at `-1h`, flagd catalog
+  validation spec with post-flip `_time` filter.
+- **Documentation consolidation** — PR #12. ROADMAP.md is the single
+  source of truth; six session docs marked stale; FAILURE-SCENARIOS
+  known-gaps table pruned of three already-shipped items.
 
 ### ~~AI-powered investigations (Copilot Investigator)~~ — DONE
 
