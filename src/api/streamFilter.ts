@@ -104,11 +104,27 @@ export function subscribeStreamFilter(fn: () => void): () => void {
 }
 
 /**
+ * Regex that matches kafka consumer operation names. When the root
+ * operation of a long trace matches this pattern the stream filter
+ * exempts it — even though kafka consumer traces look structurally
+ * identical to idle-wait traces (large root, tiny children), a
+ * genuine consumer-lag anomaly (scenario 2 / kafkaQueueProblems) is
+ * valuable diagnostic signal.
+ *
+ * The pattern is intentionally generic — no service names, just
+ * operation-name conventions used by OTel kafka instrumentation:
+ *   - `…-consumed` (e.g. `accounting order-consumed`)
+ *   - `…Consume…`  (e.g. `ConsumeMessages`, `kafka.consume`)
+ */
+export const KAFKA_CONSUMER_OP_RE = '(?i)consumed|consume';
+
+/**
  * **Trace-level** KQL fragment for slow-trace listings. Appended to a
  * pipeline that has already summarized by trace_id and computed:
  *   - trace_dur_us (number)
  *   - span_count (number, total spans in the trace)
  *   - max_non_root_dur_us (number, may be null if no non-root spans)
+ *   - root_op (string, the root span's operation name)
  *
  * Used by the Home "Slowest trace classes" panel and equivalent
  * Service Detail panels.
@@ -116,6 +132,13 @@ export function subscribeStreamFilter(fn: () => void): () => void {
  * Returns an empty string when the filter is disabled, so callers can
  * unconditionally splice it into query templates. When enabled it
  * emits an `| extend ... | where not (...)` pair.
+ *
+ * Kafka consumer exemption: traces whose root_op matches
+ * KAFKA_CONSUMER_OP_RE bypass the idle-wait heuristic. Without this,
+ * kafkaQueueProblems (scenario 2) traces are invisible because
+ * consumer-lag traces have the same structural shape as idle-wait
+ * traces — large root span, tiny children — but they represent real
+ * degradation, not background noise.
  *
  * IMPORTANT: this is read at query-build time. Pages that want the
  * filter to take effect immediately on toggle should subscribe via
@@ -125,7 +148,7 @@ export function subscribeStreamFilter(fn: () => void): () => void {
 export function streamFilterKqlClause(): string {
   if (!enabled) return '';
   return `| extend max_child_us=iff(isnull(max_non_root_dur_us), 0.0, toreal(max_non_root_dur_us))
-    | where not (trace_dur_us > ${STREAM_DURATION_US} and (span_count < ${STREAM_MIN_SPAN_COUNT} or (max_child_us / trace_dur_us) < ${STREAM_CHILD_RATIO}))`;
+    | where not (trace_dur_us > ${STREAM_DURATION_US} and (span_count < ${STREAM_MIN_SPAN_COUNT} or (max_child_us / trace_dur_us) < ${STREAM_CHILD_RATIO}) and not (root_op matches regex "${KAFKA_CONSUMER_OP_RE}"))`;
 }
 
 /**
