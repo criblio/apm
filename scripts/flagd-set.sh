@@ -47,6 +47,24 @@ shopt -s inherit_errexit
 
 die() { echo "error: $*" >&2; exit 1; }
 
+# Source .env from the repo root if it exists and FLAGD_UI_URL isn't
+# already set. Matches the pattern in playwright.config.ts: only set
+# vars that aren't already in the environment so explicit exports win.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+if [[ -f "$REPO_ROOT/.env" ]]; then
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%%#*}"                # strip comments
+    line="${line#"${line%%[![:space:]]*}"}" # trim leading whitespace
+    [[ -z "$line" ]] && continue
+    key="${line%%=*}"
+    val="${line#*=}"
+    if [[ -z "${!key:-}" ]]; then
+      export "$key=$val"
+    fi
+  done < "$REPO_ROOT/.env"
+fi
+
 : "${FLAGD_UI_URL:?FLAGD_UI_URL must be set (see .env.example)}"
 FLAGD_UI_URL="${FLAGD_UI_URL%/}"
 
