@@ -5,46 +5,45 @@ Resolves every open question from the 2026-04-15 scoping conversation
 scoring-schema requirement. This is the deliverable ROADMAP §1e calls
 for; orchestrator code comes after review.
 
-## Goal (unchanged from scoping)
+## Goal
 
-A nightly eval suite that flips flagd scenarios against a live Cribl
-environment, drives the deployed APM pack in a headless browser, and
-scores detection efficacy. The value is **trend over time** — "did
-this PR move detection rate on scenario X" — not per-run pass/fail.
+A manual-loop eval tool — run via `npm run eval` — that flips flagd
+scenarios against a live Cribl environment, drives the deployed APM
+pack in a headless browser, scores both UI surface detection and
+Investigator root-cause accuracy, and prints a structured report
+showing what's detected and what's not.
+
+The workflow is an **Autoresearch loop**: run → read the report →
+fix what's failing (UI changes, agent prompt changes) → deploy →
+re-run → repeat until detection scores plateau. Not a nightly
+regression gate — the harness runs manually when you want to
+evaluate where detection stands and what to improve next.
+
+The value is **before/after comparison**: "did this fix move the
+detection score on scenario X?" Historical runs accumulate in a
+Cribl dataset for trending.
 
 ## Decisions
 
-### 1. Orchestrator host — clintdev for v1
+### 1. Where it runs — developer's machine, same env as tests
 
-clintdev already has kubectl access to the otel-demo cluster,
-Tailscale connectivity, Node.js, and the full repo toolchain. A
-dedicated VPS adds cost + setup overhead not justified until the
-harness is proven.
+The harness runs wherever `npm run eval` is invoked — no dedicated
+host, no orchestrator daemon. It uses the same `.env` credentials
+the Playwright tests use (`CRIBL_BASE_URL`, `CRIBL_CLIENT_ID`,
+`CRIBL_CLIENT_SECRET`, `CRIBL_TEST_EMAIL`, `CRIBL_TEST_PASSWORD`,
+`FLAGD_UI_URL`). If the tests work, the eval works.
 
-**Migration path:** the orchestrator is a single Node.js script
-configured via env vars (`FLAGD_UI_URL`, `CRIBL_BASE_URL`,
-`CRIBL_CLIENT_ID`, `CRIBL_CLIENT_SECRET`, `CRIBL_TEST_EMAIL`,
-`CRIBL_TEST_PASSWORD`). Moving to a VPS means deploying the script
-and setting those vars. No structural change needed.
+### 2. Infrastructure — current staging cluster
 
-### 2. Dedicated Lakehouse workspace + otel-demo deployment
+For now, the harness runs against the same staging workspace and
+otel-demo cluster the tests use. A dedicated Lakehouse workspace
+becomes worthwhile when the harness runs unattended or when
+multiple people need to run evals concurrently — defer that until
+the loop proves valuable.
 
-Flipping flagd corrupts everyone else's view of the dataset for the
-run duration, so the eval harness needs its own:
-
-- **Cribl workspace**: a Lakehouse workspace (not Lake — query
-  performance matters for the multi-scenario run) with its own
-  `otel` dataset. The harness authenticates with a dedicated
-  client-credentials pair.
-- **otel-demo cluster**: a dedicated `kind` cluster (or namespace)
-  on clintdev running `criblio/otel-demo-criblcloud`. The three
-  in-place fixes from the 2026-04-15 session (sysctl, product-
-  catalog memory, LOCUST_BROWSER_TRAFFIC_ENABLED) are committed
-  to the cluster's `values.yaml` so fresh deploys come up
-  scenario-ready.
-- **flagd-ui access**: `kubectl port-forward svc/flagd 4001:4000`
-  on a different port than the dev cluster so the two don't
-  collide. `FLAGD_UI_URL=http://localhost:4001`.
+Flag flips do affect the staging cluster's data for other viewers
+during the run. The operator is expected to coordinate (same as
+running scenario tests today).
 
 ### 3. Scenario list for v1 — the 12 fully-detected scenarios
 
@@ -138,61 +137,50 @@ stdout and to a local `results/latest.jsonl` file. If the Cribl
 ingest POST fails (workspace down, credentials expired), the run
 data isn't lost; it can be replayed after the fact.
 
-### 5. Trigger + reporting — GitHub Actions cron → Cribl notebook
+### 5. Running + reporting
 
-v1 flow:
+**Invocation:**
 
-1. `.github/workflows/eval.yml` fires nightly on cron
-   (`0 4 * * *` UTC = late evening Pacific).
-2. Workflow calls a `repository_dispatch` webhook on clintdev's
-   orchestrator listener (Tailscale-exposed). Payload includes the
-   commit SHA and pack version.
-3. Orchestrator runs the scenario matrix sequentially (see §7
-   below).
-4. For each scenario, the orchestrator POSTs surface-check events
-   to the `apm_evals` dataset as the checks execute. The
-   scenario_summary event posts after the scenario completes; the
-   run_summary event posts at the end.
+```bash
+npm run eval                          # full 12-scenario matrix
+npm run eval -- --scenario paymentFailure   # single scenario
+npm run eval -- --no-investigator     # skip Investigator (faster)
+```
 
-**Visualization.** A Cribl Search notebook
-(`criblapm__evals_dashboard`) with saved queries renders the trend.
-The notebook is created once, manually, then auto-refreshes when
-opened. Starter panels:
+The runner prints a live progress line per scenario and a summary
+table at the end. Events are also posted to the `apm_evals` Cribl
+dataset (if reachable) for historical comparison.
 
-- **Detection rate over time** (line chart, one series per scenario):
-  ```
-  dataset="apm_evals" | where type=="surface_check"
-  | summarize detection_pct=avg(iff(detected, 1.0, 0.0))*100
-    by scenario, bin(_time, 1d)
-  | sort by _time asc
-  ```
-- **Latest run** (table):
-  ```
-  dataset="apm_evals" | where type=="scenario_summary"
-  | summarize latest_ts=max(_time), score=maxif(score, _time)
-    by scenario
-  | sort by score asc
-  ```
-- **Regression spotter** (score delta vs 7-day median):
-  ```
-  dataset="apm_evals" | where type=="scenario_summary"
-    and _time > ago(14d)
-  | summarize score_today=maxif(score, _time > ago(1d)),
-              score_7d_median=percentile(score, 50)
-    by scenario
-  | extend delta=score_today-score_7d_median
-  | where delta < -0.1
-  | sort by delta asc
-  ```
+**Console report** (printed at the end of every run):
 
-**Alerts.** A Cribl scheduled search + notification target fires
-when any scenario's mean score drops below 0.8 over the last two
-runs. Uses the same alerting primitives ROADMAP §2 calls for.
+```
+═══════════════════ Eval run 2026-04-19 ═══════════════════
+Commit: abc1234  Pack: 0.6.0  Duration: 3h 42m
 
-No `gh pr comment` and no Checks API for v1 — the notebook is the
-dashboard. If we want per-PR reporting later, a small scheduled
-search can post a comment to the most recent PR via `gh pr
-comment` in a follow-up GitHub Actions job.
+ Scenario                 Surfaces  Investigator  Score
+ ────────────────────────  ────────  ────────────  ─────
+ paymentFailure           4/4       ✓ root cause  1.00
+ kafkaQueueProblems       2/3       ✗ wrong svc   0.50
+ adManualGc               3/3       ✓ root cause  1.00
+ paymentUnreachable       3/4       ✗ timed out   0.60
+ ...
+
+ Mean score: 0.82  |  12 scenarios  |  9 fully detected
+═══════════════════════════════════════════════════════════
+```
+
+**Cribl dataset** (`apm_evals`). Same event shape as §4 — events
+are posted as the run progresses. When the run finishes, the
+`run_summary` event lands. A Cribl Search notebook
+(`criblapm__evals_dashboard`) renders the trend across runs:
+
+- **Score over time** per scenario (line chart)
+- **Latest run breakdown** (table)
+- **Before/after comparison** (diff two run_ids)
+
+The notebook is created once and refreshes on open. Alerting
+(scheduled search that fires when detection regresses) can be
+added later if the loop becomes automated.
 
 ### 6. Investigator scoring — LLM-as-judge, budgeted
 
@@ -253,35 +241,40 @@ cooldown. No service names, no flag names, no operation names in the
 engine code. Adding a scenario means adding a declaration to the
 `scenarios/` directory.
 
-### 8. Playwright fixture shape
+### 8. File layout + Playwright fixture
 
 ```
-eval-harness/
-  orchestrator.mjs        — main loop: parse declarations, run matrix
-  engine.mjs              — per-scenario runner (flip, wait, drive, score)
-  lib/
-    flagd.mjs             — reexports tests/helpers/flagd.ts (or copy)
-    criblSearch.mjs        — reexports tests/helpers/criblSearch.ts
-    browser.mjs            — Playwright launcher with storageState
+eval/
+  run.ts                   — CLI entry point (npm run eval)
+  engine.ts                — per-scenario runner (flip, wait, drive, score)
+  report.ts                — console table + Cribl ingest
   scenarios/
-    paymentFailure.json    — ScenarioDeclaration
-    kafkaQueueProblems.json
-    ...
-  results/                 — gitignored locally; pushed to apm-evals
+    paymentFailure.ts      — ScenarioDeclaration export
+    kafkaQueueProblems.ts
+    ...                    — one file per scenario
 ```
 
-The browser fixture:
+Lives inside the repo as `eval/`, not under `tests/` (these aren't
+Playwright Test specs — they're a standalone runner that imports
+`playwright-core` directly and reuses helpers from
+`tests/helpers/`).
+
+**`package.json` script:**
+```json
+"eval": "tsx eval/run.ts"
+```
+
+**Browser fixture:**
 
 - Launches headless Chromium via `playwright-core`
-- Loads `storageState` from a cached Auth0 login (same flow as
-  `tests/auth.setup.ts`, run once at orchestrator start)
+- Loads `storageState` from the cached Auth0 login
+  (`playwright/.auth/cribl-cloud.json` — created by
+  `tests/auth.setup.ts`; if stale, `run.ts` runs the setup first)
 - Injects `CRIBL_BASE_PATH` + `CRIBL_API_URL` + Bearer token via
   `addInitScript` (same as `tests/helpers/apmSession.ts`)
-- Persistent context across scenarios (no re-login per scenario)
+- Persistent browser context across scenarios (one Auth0 login per
+  run); fresh `page` per scenario so page-level state is clean
 - `gotoApm(page, path)` for SPA navigation (same helper)
-
-Each scenario run gets a fresh `page` within the same context so
-cookies/storageState carry over but page-level state is clean.
 
 ## Runtime estimate
 
@@ -305,28 +298,25 @@ cooldown with the next scenario's ramp-up). Could bring total to
 
 ## What this does NOT cover
 
+- **Automated nightly runs.** The loop is manual for now. When the
+  pace of changes warrants it, add a GitHub Actions cron that fires
+  `npm run eval` on a dedicated host and posts the summary to the
+  Cribl notebook.
 - **Multi-cluster / multi-version testing.** v1 tests one pack
-  version against one cluster. Testing across Cribl Cloud versions
-  or Lakehouse vs Lake is out of scope.
+  version against one cluster.
 - **Synthetic trace injection.** v1 relies on the otel-demo's
-  organic traffic + flagd. Synthetic injection for controlled
-  baselines is a v2 idea.
-- **PR-level reporting.** The notebook is the dashboard; per-PR
-  comments with the run delta are a cheap v2 add-on.
+  organic traffic + flagd.
 
-## Next steps after review
+## Next steps
 
-1. Provision the `apm_evals` dataset on the Lakehouse workspace +
-   create the HTTP ingest endpoint (or confirm an existing one
-   accepts writes from the client-credentials token)
-2. Scaffold `eval-harness/` in this repo with the orchestrator,
-   engine, browser helper, Cribl ingest client, and 2-3 scenario
-   declarations (paymentFailure, kafkaQueueProblems,
-   paymentUnreachable — the three most distinct failure shapes)
-3. Run manually on clintdev to validate one full matrix pass
-4. Create the `criblapm__evals_dashboard` Cribl Search notebook
-   with the three starter panels from §5
-5. Wire the GitHub Actions cron trigger
-6. Let it run nightly for a week, eyeball the notebook, decide
-   whether to expand to all 12 scenarios and wire the regression
-   alert
+1. Scaffold `eval/` in this repo with `run.ts`, `engine.ts`,
+   `report.ts`, and 3 starter scenario declarations
+   (paymentFailure, kafkaQueueProblems, paymentUnreachable)
+2. Wire `npm run eval` in `package.json`
+3. Run a single scenario manually to validate the end-to-end loop
+   (flip → wait → drive → score → report)
+4. Run the full matrix, read the report, and start the first
+   improvement cycle: pick the lowest-scoring scenario, fix it,
+   deploy, re-run, verify the score improved
+5. Provision the `apm_evals` dataset and create the Cribl Search
+   notebook once we have 2-3 runs to trend against
