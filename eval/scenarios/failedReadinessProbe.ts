@@ -5,8 +5,10 @@ const scenario: ScenarioDeclaration = {
   flag: 'failedReadinessProbe',
   variant: 'on',
   expectedService: 'cart',
-  telemetryWaitMs: 3 * 60_000,
-  cooldownMs: 2 * 60_000,
+  // Readiness probe failure → k8s removes cart from endpoints →
+  // upstream callers get connection errors. Propagation is slow.
+  telemetryWaitMs: 4 * 60_000,
+  cooldownMs: 5 * 60_000,
   surfaceChecks: [
     {
       surface: 'homeCartErrorChip',
@@ -21,7 +23,7 @@ const scenario: ScenarioDeclaration = {
       page: 'home',
       locator: '[class*="wrap"]:has(span:text-matches("^Error classes")) li:has-text("cart")',
       assertion: 'countGt0',
-      timeoutMs: 30_000,
+      timeoutMs: 60_000,
     },
   ],
   investigator: {

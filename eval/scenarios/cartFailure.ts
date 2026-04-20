@@ -6,7 +6,7 @@ const scenario: ScenarioDeclaration = {
   variant: 'on',
   expectedService: 'cart',
   telemetryWaitMs: 3 * 60_000,
-  cooldownMs: 2 * 60_000,
+  cooldownMs: 5 * 60_000,
   surfaceChecks: [
     {
       surface: 'homeCartErrorChip',
@@ -14,14 +14,14 @@ const scenario: ScenarioDeclaration = {
       locator: 'table tbody tr:has-text("cart") td:nth-child(3)',
       assertion: 'textMatches',
       pattern: '[1-9]\\d*\\.\\d+%',
-      timeoutMs: 30_000,
+      timeoutMs: 60_000,
     },
     {
       surface: 'homeErrorClasses',
       page: 'home',
       locator: '[class*="wrap"]:has(span:text-matches("^Error classes")) li:has-text("cart")',
       assertion: 'countGt0',
-      timeoutMs: 30_000,
+      timeoutMs: 60_000,
     },
     {
       surface: 'svcDetailErrorsChart',
