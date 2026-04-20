@@ -116,7 +116,9 @@ export function subscribeStreamFilter(fn: () => void): () => void {
  *   - `…-consumed` (e.g. `accounting order-consumed`)
  *   - `…Consume…`  (e.g. `ConsumeMessages`, `kafka.consume`)
  */
-export const KAFKA_CONSUMER_OP_RE = '(?i)consumed|consume';
+// Case-insensitive (?i) flag crashes Cribl KQL in complex pipelines
+// (summarize + extend + nested not). Use explicit case alternation.
+export const KAFKA_CONSUMER_OP_RE = '[Cc]onsume[d]?|CONSUME[D]?';
 
 /**
  * **Trace-level** KQL fragment for slow-trace listings. Appended to a
