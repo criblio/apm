@@ -26,7 +26,7 @@ const scenario: ScenarioDeclaration = {
     {
       surface: 'homeErrorClasses',
       page: 'home',
-      locator: '[class*="wrap"]:has(span:text-matches("^Error classes")) li:has-text("UNAVAILABLE")',
+      locator: '[class*="wrap"]:has(span:text-matches("^Error classes")) li:has-text("payment")',
       assertion: 'countGt0',
       timeoutMs: 30_000,
     },
