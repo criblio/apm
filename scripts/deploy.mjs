@@ -193,6 +193,9 @@ async function main() {
   });
   console.log('▶ Install OK');
   console.log(JSON.stringify(installResp, null, 2));
+
+  console.log('▶ Reconciling scheduled searches …');
+  await runCommand('npx', ['tsx', 'scripts/provision.ts'], APP_ROOT);
 }
 
 main().catch((err) => {

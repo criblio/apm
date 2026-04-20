@@ -10,6 +10,7 @@
     "preview": "vite preview",
     "package": "npm run build && node scripts/package.mjs",
     "deploy": "node scripts/deploy.mjs",
+    "provision": "tsx scripts/provision.ts",
     "browser:smoke": "node scripts/browser-smoke.js",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",

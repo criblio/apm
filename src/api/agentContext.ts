@@ -258,14 +258,38 @@ almost always "what changed recently?".
      | sort by _time desc
    \`\`\`
 
-3. **Error propagation vs. origin.** An error-rate spike on a caller
+3. **Latency anomalies (no errors, just slow).** Some failures show
+   no error-rate change at all — only a p99 spike. Kafka consumer
+   lag, GC pauses, CPU saturation, and connection-pool exhaustion
+   all produce this pattern. Run a per-service latency histogram
+   comparing current vs prior window percentiles:
+   \`\`\`kql
+   dataset="${datasetId}" | where isnotnull(end_time_unix_nano)
+     | extend svc=tostring(resource.attributes['service.name']),
+              dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0
+     | where dur_us < 30000000
+     | summarize p50=percentile(dur_us,50),
+                 p95=percentile(dur_us,95),
+                 p99=percentile(dur_us,99),
+                 cnt=count()
+       by svc
+     | where p99 > p95 * 3 or p99 > 5000000
+   \`\`\`
+   A service whose p99 is 3× its p95 likely has a bimodal
+   distribution (GC pauses, intermittent timeouts). A service
+   whose p99 exceeds 5 seconds likely has stalled consumers or
+   saturated connections. Look for the specific operation driving
+   the tail — kafka consumer operations like \`order-consumed\` or
+   gRPC streaming endpoints.
+
+4. **Error propagation vs. origin.** An error-rate spike on a caller
    (e.g. \`frontend-proxy\`, \`load-generator\`) is almost never the
    root cause. Pull the set of trace_ids involved in the spike and
    look for the *earliest failing span in the tree* — that service
    is the origin. Example propagation query already documented in
    the "Service-to-service dependency call graph" example above.
 
-4. **Representative trace + rendered waterfall.** Once you have a
+5. **Representative trace + rendered waterfall.** Once you have a
    hypothesis, render one trace that illustrates the full call
    chain from root to failing leaf. Don't just list trace_ids — use
    the \`render_trace\` tool.
