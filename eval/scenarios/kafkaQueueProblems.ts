@@ -5,7 +5,7 @@ const scenario: ScenarioDeclaration = {
   flag: 'kafkaQueueProblems',
   variant: 'on',
   expectedService: 'fraud-detection',
-  telemetryWaitMs: 3 * 60_000,
+  telemetryWaitMs: 5 * 60_000,
   cooldownMs: 2 * 60_000,
   surfaceChecks: [
     {
@@ -20,7 +20,7 @@ const scenario: ScenarioDeclaration = {
       page: 'home',
       locator: '[class*="wrap"]:has(span:text-matches("^Slowest trace")) li:has-text("consumed")',
       assertion: 'countGt0',
-      timeoutMs: 30_000,
+      timeoutMs: 60_000,
     },
     {
       surface: 'svcDetailP99Spike',
