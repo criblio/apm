@@ -6,7 +6,7 @@ const scenario: ScenarioDeclaration = {
   variant: 'on',
   expectedService: 'product-reviews',
   telemetryWaitMs: 3 * 60_000,
-  cooldownMs: 2 * 60_000,
+  cooldownMs: 5 * 60_000,
   surfaceChecks: [
     {
       surface: 'homeProductReviewsErrorChip',

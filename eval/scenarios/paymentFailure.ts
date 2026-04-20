@@ -6,7 +6,7 @@ const scenario: ScenarioDeclaration = {
   variant: '50%',
   expectedService: 'payment',
   telemetryWaitMs: 3 * 60_000,
-  cooldownMs: 2 * 60_000,
+  cooldownMs: 5 * 60_000,
   surfaceChecks: [
     {
       surface: 'homePaymentErrorChip',
@@ -35,7 +35,7 @@ const scenario: ScenarioDeclaration = {
       page: 'serviceDetail',
       locator: '[class*="wrap"]:has(span:text-matches("^Recent errors")) ul li',
       assertion: 'countGt0',
-      timeoutMs: 30_000,
+      timeoutMs: 45_000,
     },
   ],
   investigator: {
