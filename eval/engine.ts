@@ -4,36 +4,51 @@ import type {
   ScenarioDeclaration,
   ScenarioResult,
   SurfaceResult,
+  SurfaceCheck,
   InvestigatorResult,
 } from './types.js';
 
-async function checkSurface(
+async function navigateToPage(
   page: Page,
-  check: ScenarioDeclaration['surfaceChecks'][number],
+  pageName: string,
   serviceName: string,
   gotoApm: (page: Page, path: string) => Promise<void>,
+): Promise<boolean> {
+  if (pageName === 'home') {
+    await gotoApm(page, '/?range=-15m');
+    await page.getByText(/^Services \(\d+\)/).waitFor({
+      state: 'visible',
+      timeout: 60_000,
+    }).catch(() => {});
+    return true;
+  } else if (pageName === 'serviceDetail') {
+    await gotoApm(page, '/?range=-15m');
+    await page.waitForTimeout(2000);
+    const row = page.getByRole('row', {
+      name: new RegExp(`^${serviceName}\\s`),
+    });
+    const visible = await row
+      .waitFor({ state: 'visible', timeout: 30_000 })
+      .then(() => true)
+      .catch(() => false);
+    if (!visible) return false;
+    await row.getByRole('link').first().click();
+    await page.waitForURL(/\/service\//, { timeout: 15_000 });
+    await page.getByText(/^Top operations/).waitFor({
+      state: 'visible',
+      timeout: 60_000,
+    }).catch(() => {});
+    return true;
+  }
+  return false;
+}
+
+async function evaluateCheck(
+  page: Page,
+  check: SurfaceCheck,
 ): Promise<SurfaceResult> {
   const start = Date.now();
   try {
-    if (check.page === 'home') {
-      await gotoApm(page, '/?range=-15m');
-    } else if (check.page === 'serviceDetail') {
-      await gotoApm(page, '/');
-      await page.waitForTimeout(2000);
-      const row = page.getByRole('row', {
-        name: new RegExp(`^${serviceName}\\s`),
-      });
-      const visible = await row
-        .waitFor({ state: 'visible', timeout: 30_000 })
-        .then(() => true)
-        .catch(() => false);
-      if (visible) {
-        await row.getByRole('link').first().click();
-        await page.waitForURL(/\/service\//, { timeout: 15_000 });
-        await page.waitForTimeout(3000);
-      }
-    }
-
     const loc = page.locator(check.locator);
     let detected = false;
 
@@ -161,19 +176,46 @@ export async function runScenario(
     );
     await page.waitForTimeout(scenario.telemetryWaitMs);
 
+    // Group checks by page so we navigate once per page, not per check
+    const byPage = new Map<string, SurfaceCheck[]>();
     for (const check of scenario.surfaceChecks) {
-      console.log(`  [${scenario.name}] checking ${check.surface}...`);
-      const result = await checkSurface(
+      const list = byPage.get(check.page) ?? [];
+      list.push(check);
+      byPage.set(check.page, list);
+    }
+
+    for (const [pageName, checks] of byPage) {
+      console.log(`  [${scenario.name}] navigating to ${pageName}...`);
+      const landed = await navigateToPage(
         page,
-        check,
+        pageName,
         scenario.expectedService,
         gotoApm,
       );
-      surfaces.push(result);
-      const mark = result.detected ? '✓' : '✗';
-      console.log(
-        `  [${scenario.name}]   ${mark} ${check.surface} (${result.latencyMs}ms)`,
-      );
+      if (!landed) {
+        for (const check of checks) {
+          surfaces.push({
+            surface: check.surface,
+            detected: false,
+            latencyMs: 0,
+            error: `failed to navigate to ${pageName}`,
+          });
+          console.log(
+            `  [${scenario.name}]   ✗ ${check.surface} (navigation failed)`,
+          );
+        }
+        continue;
+      }
+
+      for (const check of checks) {
+        console.log(`  [${scenario.name}] checking ${check.surface}...`);
+        const result = await evaluateCheck(page, check);
+        surfaces.push(result);
+        const mark = result.detected ? '✓' : '✗';
+        console.log(
+          `  [${scenario.name}]   ${mark} ${check.surface} (${result.latencyMs}ms)`,
+        );
+      }
     }
 
     if (scenario.investigator && !options.skipInvestigator) {

@@ -270,7 +270,11 @@ export default function ServiceDetailPage() {
             setErrorTraces(cached.recentErrors);
             setLoadingErrors(false);
           } else {
-            void listRecentErrorTraces(serviceName, range, 'now')
+            // Tighten the fallback to -15m instead of the full range.
+            // The cache miss means the 5-min scheduled search hasn't
+            // caught the recent errors yet; scanning the full -1h
+            // range is expensive and the errors we want are recent.
+            void listRecentErrorTraces(serviceName, '-15m', 'now')
               .then((et) => setErrorTraces(et))
               .catch(() => setErrorTraces([]))
               .finally(() => setLoadingErrors(false));
