@@ -148,24 +148,27 @@ scheduled searches, you must re-provision via Settings → Provisioning
 replaces the bundle — scheduled searches are created by the
 provisioner, not by the deploy.
 
-### 1e. Eval harness design (from 2026-04-15 scoping)
+### ~~1e. Eval harness~~ — **DONE (v1 shipped, first loop complete)**
 
-Nightly off-Actions eval suite that flips flagd scenarios, drives
-the deployed app headlessly, and scores detection efficacy as a
-trend over time. Design scoped in `docs/sessions/2026-04-15-cicd-
-and-eval-harness.md`. Open questions before implementation:
+Manual Autoresearch eval tool shipped as `npm run eval` (PR #19).
+Design: `docs/research/eval-harness/design.md`. Three starter
+scenarios (paymentFailure, kafkaQueueProblems, paymentUnreachable)
+covering the three most distinct failure shapes: error injection,
+consumer lag, and hard downtime.
 
-- Orchestrator host (clintdev vs. dedicated VPS)
-- Dedicated Lakehouse workspace + otel-demo deployment
-- Scenario list for v1 (the 9 fully-detected ✅ rows from the §1d
-  coverage table)
-- Result storage + trending (flat JSON in `apm-evals` sibling repo)
-- Trigger + reporting (GitHub Actions cron → Checks API)
-- Investigator scoring: LLM-as-judge, not local Playwright
-- Scoring rule schema: parameterized, no service names in engine
+First improvement loop completed (PR #20). Ran 4 rounds, fixed
+every failure, brought mean score from **0.71 → 1.00**:
 
-**Deliverable:** `docs/research/eval-harness/design.md`. Orchestrator
-code comes after review.
+| Fix | What it addressed |
+|---|---|
+| Investigator latency-anomaly preflight | Copilot couldn't diagnose kafka lag (latency-only, no errors) |
+| ServiceDetail Recent errors -15m fallback | Panel too slow during fresh incidents (62s → 18s) |
+| Cribl KQL `(?i)` regex crash | Entire rawSlowestTraces query silently returned zero results |
+| `npm run provision` automation | No more manual Settings clicks after deploy |
+
+**Next:** add more scenario declarations to `eval/scenarios/` and
+run the loop again. Each declaration is ~40 lines of TypeScript.
+The engine and scoring infrastructure are stable.
 
 ### 2. User-facing alerts (via Cribl Saved Searches)
 
