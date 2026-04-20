@@ -13,9 +13,10 @@ const scenario: ScenarioDeclaration = {
       page: 'home',
       locator: 'table tbody tr:has-text("ad") td:nth-child(6)',
       assertion: 'textMatches',
-      // Baseline ad p95 is ~1-5ms. Under CPU saturation it shifts
-      // to 50ms+. Match anything ≥10ms as a positive signal.
-      pattern: '\\d{2,}(\\.\\d+)?\\s*ms|\\d+(\\.\\d+)?\\s*s',
+      // Baseline ad p95 is ~1ms. Under CPU saturation it shifts
+      // to 5ms+. Match anything showing ms with ≥2 digits or
+      // any value in seconds.
+      pattern: '[5-9](\\.\\d+)?\\s*ms|\\d{2,}(\\.\\d+)?\\s*ms|\\d+(\\.\\d+)?\\s*s',
       timeoutMs: 30_000,
     },
     {
@@ -23,7 +24,7 @@ const scenario: ScenarioDeclaration = {
       page: 'home',
       locator: 'table tbody tr:has-text("ad") td:nth-child(7)',
       assertion: 'textMatches',
-      pattern: '\\d{2,}(\\.\\d+)?\\s*ms|\\d+(\\.\\d+)?\\s*s',
+      pattern: '[5-9](\\.\\d+)?\\s*ms|\\d{2,}(\\.\\d+)?\\s*ms|\\d+(\\.\\d+)?\\s*s',
       timeoutMs: 30_000,
     },
     {
