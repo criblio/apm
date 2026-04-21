@@ -28,7 +28,7 @@ export default function App() {
             <Route path="/logs" element={<LogsPage />} />
             <Route path="/metrics" element={<MetricsPage />} />
             <Route path="/investigate" element={<InvestigatePage />} />
-            <Route path="/app-settings" element={<SettingsPage />} />
+            <Route path="/settings" element={<SettingsPage />} />
           </Route>
         </Routes>
       </BrowserRouter>
