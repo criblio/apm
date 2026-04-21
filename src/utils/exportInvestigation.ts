@@ -1,8 +1,5 @@
 interface ExportOptions {
   element: HTMLElement;
-  /** Pre-opened window handle. Must be opened synchronously in the
-   *  click handler so the browser trusts it as a user gesture. */
-  targetWindow?: Window | null;
 }
 
 function inlineStyles(source: HTMLElement, target: HTMLElement) {
@@ -48,7 +45,7 @@ function restoreScrollContainers(saved: Array<{ el: HTMLElement; mh: string; ov:
 const PADDING = 32;
 const BG_COLOR = '#ffffff';
 
-export async function exportAsPng({ element, targetWindow }: ExportOptions): Promise<string> {
+export async function exportAsPng({ element }: ExportOptions): Promise<string> {
   const saved = expandScrollContainers(element);
 
   const innerWidth = element.scrollWidth;
@@ -105,21 +102,6 @@ export async function exportAsPng({ element, targetWindow }: ExportOptions): Pro
     img.onerror = () => reject(new Error('Failed to render SVG to image'));
     img.src = dataUrl;
   });
-
-  // If a pre-opened window was passed, write the image into it
-  if (targetWindow && !targetWindow.closed) {
-    try {
-      targetWindow.document.open();
-      targetWindow.document.write(
-        `<!doctype html><html><head><title>Investigation Export</title>` +
-        `<style>body{margin:0;display:flex;justify-content:center;background:#f5f5f5;}</style>` +
-        `</head><body><img src="${pngDataUrl}" style="max-width:100%;height:auto;"/></body></html>`
-      );
-      targetWindow.document.close();
-    } catch {
-      // Popup was sandboxed and can't be written to — fall through to return
-    }
-  }
 
   return pngDataUrl;
 }

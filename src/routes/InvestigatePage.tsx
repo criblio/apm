@@ -373,24 +373,12 @@ export default function InvestigatePage() {
 
   const handleExportPng = useCallback(async () => {
     if (!transcriptInnerRef.current) return;
-    // Open the popup synchronously in the click handler so the browser
-    // trusts it as a user gesture. The async PNG generation runs after.
-    const popup = window.open('', '_blank');
-    if (popup) {
-      popup.document.write('<html><body style="display:flex;justify-content:center;align-items:center;height:100vh;margin:0;font-family:sans-serif;color:#666;">Generating image...</body></html>');
-    }
     setExporting(true);
     try {
-      const dataUrl = await exportAsPng({
-        element: transcriptInnerRef.current,
-        targetWindow: popup,
-      });
-      if (!popup || popup.closed) {
-        setExportedPng(dataUrl);
-      }
+      const dataUrl = await exportAsPng({ element: transcriptInnerRef.current });
+      setExportedPng(dataUrl);
     } catch {
-      popup?.close();
-      setExportedPng(null);
+      // silent — export failed
     } finally {
       setExporting(false);
     }
