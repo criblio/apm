@@ -373,17 +373,24 @@ export default function InvestigatePage() {
 
   const handleExportPng = useCallback(async () => {
     if (!transcriptInnerRef.current) return;
+    // Open the popup synchronously in the click handler so the browser
+    // trusts it as a user gesture. The async PNG generation runs after.
+    const popup = window.open('', '_blank');
+    if (popup) {
+      popup.document.write('<html><body style="display:flex;justify-content:center;align-items:center;height:100vh;margin:0;font-family:sans-serif;color:#666;">Generating image...</body></html>');
+    }
     setExporting(true);
     try {
-      const dataUrl = await exportAsPng({ element: transcriptInnerRef.current });
-      // The iframe is sandboxed without `allow-downloads`, so `<a download>`
-      // is blocked. Try window.open() to render the PNG in a new tab — the
-      // browser then shows its own download button (one click). If popups
-      // are blocked, fall back to the in-app modal for right-click save.
-      const opened = window.open(dataUrl, '_blank', 'noopener,noreferrer');
-      if (!opened) {
+      const dataUrl = await exportAsPng({
+        element: transcriptInnerRef.current,
+        targetWindow: popup,
+      });
+      if (!popup || popup.closed) {
         setExportedPng(dataUrl);
       }
+    } catch {
+      popup?.close();
+      setExportedPng(null);
     } finally {
       setExporting(false);
     }
