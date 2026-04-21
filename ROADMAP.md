@@ -166,9 +166,28 @@ every failure, brought mean score from **0.71 → 1.00**:
 | Cribl KQL `(?i)` regex crash | Entire rawSlowestTraces query silently returned zero results |
 | `npm run provision` automation | No more manual Settings clicks after deploy |
 
-**Next:** add more scenario declarations to `eval/scenarios/` and
-run the loop again. Each declaration is ~40 lines of TypeScript.
-The engine and scoring infrastructure are stable.
+Full 13-scenario matrix completed (PRs #22-#23). 10 of 13
+fully detected (1.00), 3 at 0.77 with cluster-specific causes
+(adHighCpu flag effectiveness, cartFailure error attribution,
+flaky Copilot latency).
+
+### 1f. Metrics wide-column schema migration — **DONE**
+
+Cribl Search changed the metrics schema on 2026-04-15 from
+`_metric`/`_value` pair format to wide-column (each metric is
+its own top-level field). PR #24 rewrites all 14 query functions
+and 9 search functions to use bracket-quoted field references.
+
+- Metric discovery via regex on `_raw`, pre-computed by the
+  `criblapm__metric_catalog` scheduled search
+- Metrics picker redesigned: fuzzy search, prefix grouping,
+  inline type badges (C/G/H), alphabetical sort
+- Search results table: full 32-char trace IDs, compact layout
+
+**Known limitation:** histogram metrics with cumulative
+temporality (.NET SDK) store running sums — `percentile()`
+over these is nonsensical. Needs delta-based aggregation or
+temporality detection. Tracked for next session.
 
 ### 2. User-facing alerts (via Cribl Saved Searches)
 
@@ -353,6 +372,13 @@ Being honest about the wins too:
 - **Documentation consolidation** — PR #12. ROADMAP.md is the single
   source of truth; six session docs marked stale; FAILURE-SCENARIOS
   known-gaps table pruned of three already-shipped items.
+- **Metrics wide-column migration** — PR #24. All 14 query functions
+  + 9 search functions rewritten for the new schema where each metric
+  is a top-level field instead of `_metric`/`_value`. Metrics picker
+  redesigned with fuzzy search, prefix grouping, inline type badges.
+  `criblapm__metric_catalog` scheduled search for fast discovery.
+- **Search results table density** — PR #24. Full 32-char trace IDs,
+  compact timestamps, service counts, no-wrapping fixed-layout.
 
 ### ~~AI-powered investigations (Copilot Investigator)~~ — DONE
 
