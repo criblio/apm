@@ -193,6 +193,18 @@ export function getProvisioningPlan(): ProvisionedSearch[] {
       sampleRate: 1,
       schedule: { ...everyFiveMin },
     },
+    // ── Metric catalog ──────────────────────────────────────
+    {
+      id: 'criblapm__metric_catalog',
+      name: 'Cribl APM - metric name catalog',
+      description:
+        'Cribl APM: pre-computed metric name catalog with sample counts and service coverage. Extracts metric field names from _raw via regex (wide-column schema). Read via $vt_results by the Metrics page picker.',
+      query: Q.listMetricNames(),
+      earliest: '-1h',
+      latest: 'now',
+      sampleRate: 1,
+      schedule: { ...everyFiveMin },
+    },
     // ── Op baseline lookup ──────────────────────────────────
     {
       id: 'criblapm__op_baselines',
