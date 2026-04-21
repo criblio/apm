@@ -148,7 +148,6 @@ export default function IsometricGraph({
     worldToScreen,
     zoomBy,
     reset: resetPanZoom,
-    fitToBounds,
     consumeLastPan,
   } = usePanZoom(width, height);
   const [hovered, setHovered] = useState<string | null>(null);

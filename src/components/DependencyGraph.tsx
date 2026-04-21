@@ -27,7 +27,7 @@
  * every tick. The eslint rule flags it but the pattern is intentional.
  */
 /* eslint-disable react-hooks/refs */
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import NodeTooltip from './NodeTooltip';
 import EdgeTooltip from './EdgeTooltip';
 import ZoomControls from './ZoomControls';
