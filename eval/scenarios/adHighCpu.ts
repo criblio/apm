@@ -6,20 +6,25 @@ const scenario: ScenarioDeclaration = {
   variant: 'on',
   expectedService: 'ad',
   telemetryWaitMs: 3 * 60_000,
-  cooldownMs: 2 * 60_000,
+  cooldownMs: 5 * 60_000,
   surfaceChecks: [
     {
-      surface: 'homeP95Chip',
+      surface: 'homeAdP95Value',
       page: 'home',
-      locator: 'table tbody tr:has-text("ad") td:nth-child(6) [title*="vs previous window"]',
-      assertion: 'visible',
+      locator: 'table tbody tr:has-text("ad") td:nth-child(6)',
+      assertion: 'textMatches',
+      // Baseline ad p95 is ~1ms. Under CPU saturation it shifts
+      // to 5ms+. Match anything showing ms with ≥2 digits or
+      // any value in seconds.
+      pattern: '[5-9](\\.\\d+)?\\s*ms|\\d{2,}(\\.\\d+)?\\s*ms|\\d+(\\.\\d+)?\\s*s',
       timeoutMs: 30_000,
     },
     {
-      surface: 'homeP99Chip',
+      surface: 'homeAdP99Value',
       page: 'home',
-      locator: 'table tbody tr:has-text("ad") td:nth-child(7) [title*="vs previous window"]',
-      assertion: 'visible',
+      locator: 'table tbody tr:has-text("ad") td:nth-child(7)',
+      assertion: 'textMatches',
+      pattern: '[5-9](\\.\\d+)?\\s*ms|\\d{2,}(\\.\\d+)?\\s*ms|\\d+(\\.\\d+)?\\s*s',
       timeoutMs: 30_000,
     },
     {

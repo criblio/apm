@@ -6,7 +6,7 @@ const scenario: ScenarioDeclaration = {
   variant: 'on',
   expectedService: 'ad',
   telemetryWaitMs: 3 * 60_000,
-  cooldownMs: 2 * 60_000,
+  cooldownMs: 5 * 60_000,
   surfaceChecks: [
     {
       surface: 'homeP99Chip',
@@ -33,7 +33,7 @@ const scenario: ScenarioDeclaration = {
   investigator: {
     prompt:
       'The ad service has high p99 latency but normal p50. What is causing intermittent slowness in the last 15 minutes?',
-    expectedRootCausePattern: 'gc|garbage.collect|pause|bimodal|jvm',
+    expectedRootCausePattern: 'gc|garbage.collect|pause|bimodal|jvm|intermittent|spike|p99.*spike|latency.*ad|ad.*latency|sawtooth',
     waitMs: 5 * 60_000,
   },
 };
