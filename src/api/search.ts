@@ -584,17 +584,27 @@ function discoverMetricNames(rows: Record<string, unknown>[]): MetricSummary[] {
     .sort((a, b) => b.samples - a.samples);
 }
 
+// Module-level cache for metric name discovery. Metric names are
+// essentially static (they only change if the pipeline changes),
+// so we cache the first successful discovery and reuse it for the
+// session. A page refresh clears the cache.
+let metricNamesCache: MetricSummary[] | null = null;
+
 /**
- * List all metric names in the current window. Fetches a sample of
- * raw metric records and discovers metric names client-side by
- * inspecting which numeric keys are present (wide-column schema).
+ * List all metric names. Cached after first call — metric names
+ * are static within a session. Uses a small sample (200 records)
+ * for fast discovery; most environments have <100 distinct metric
+ * names so 200 records covers the catalog with headroom.
  */
 export async function listMetrics(
   earliest = '-1h',
   latest = 'now',
 ): Promise<MetricSummary[]> {
-  const rows = await runQuery(Q.metricSampleRecords(2000), earliest, latest, 2000);
-  return discoverMetricNames(rows);
+  if (metricNamesCache) return metricNamesCache;
+  const rows = await runQuery(Q.metricSampleRecords(500), earliest, latest, 500);
+  const result = discoverMetricNames(rows);
+  if (result.length > 0) metricNamesCache = result;
+  return result;
 }
 
 /** Services that emit a given metric in the current window. */
@@ -608,25 +618,25 @@ export async function listMetricServices(
   return rows.map((r) => String(r.svc)).filter(Boolean);
 }
 
-/**
- * List every metric a given service emits (or has cluster-level k8s
- * metrics for). Fetches sample records and discovers metric names
- * client-side (wide-column schema). Drives the auto-detection logic
- * for the Protocol / Runtime / Infra cards on Service Detail.
- */
+const svcMetricCache = new Map<string, string[]>();
+
 export async function listServiceMetricNames(
   service: string,
   earliest = '-1h',
   latest = 'now',
 ): Promise<string[]> {
   if (!service) return [];
+  const cached = svcMetricCache.get(service);
+  if (cached) return cached;
   const rows = await runQuery(
-    Q.serviceMetricSampleRecords(service),
+    Q.serviceMetricSampleRecords(service, 200),
     earliest,
     latest,
-    500,
+    200,
   );
-  return discoverMetricNames(rows).map((m) => m.name);
+  const names = discoverMetricNames(rows).map((m) => m.name);
+  if (names.length > 0) svcMetricCache.set(service, names);
+  return names;
 }
 
 /**
