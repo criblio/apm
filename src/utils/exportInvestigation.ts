@@ -1,4 +1,4 @@
-import html2canvas from 'html2canvas';
+import { toPng } from 'html-to-image';
 import { jsPDF } from 'jspdf';
 
 interface ExportOptions {
@@ -6,60 +6,71 @@ interface ExportOptions {
   filename: string;
 }
 
-async function captureCanvas(element: HTMLElement): Promise<HTMLCanvasElement> {
-  const scrollContainers = element.querySelectorAll<HTMLElement>('*');
+function expandScrollContainers(element: HTMLElement): Array<{ el: HTMLElement; maxHeight: string; overflow: string }> {
   const overrides: Array<{ el: HTMLElement; maxHeight: string; overflow: string }> = [];
-
-  for (const el of scrollContainers) {
+  for (const el of element.querySelectorAll<HTMLElement>('*')) {
     const style = getComputedStyle(el);
     if (
       (style.overflow === 'auto' || style.overflow === 'scroll' ||
        style.overflowY === 'auto' || style.overflowY === 'scroll') &&
       style.maxHeight !== 'none'
     ) {
-      overrides.push({
-        el,
-        maxHeight: el.style.maxHeight,
-        overflow: el.style.overflow,
-      });
+      overrides.push({ el, maxHeight: el.style.maxHeight, overflow: el.style.overflow });
       el.style.maxHeight = 'none';
       el.style.overflow = 'visible';
     }
   }
+  return overrides;
+}
 
+function restoreScrollContainers(overrides: Array<{ el: HTMLElement; maxHeight: string; overflow: string }>) {
+  for (const { el, maxHeight, overflow } of overrides) {
+    el.style.maxHeight = maxHeight;
+    el.style.overflow = overflow;
+  }
+}
+
+async function captureDataUrl(element: HTMLElement): Promise<string> {
+  const overrides = expandScrollContainers(element);
   try {
-    return await html2canvas(element, {
+    return await toPng(element, {
       backgroundColor: '#ffffff',
-      scale: 2,
-      useCORS: true,
-      logging: false,
+      pixelRatio: 2,
+      filter: (node: HTMLElement) => {
+        if (node.tagName === 'IFRAME') return false;
+        return true;
+      },
     });
   } finally {
-    for (const { el, maxHeight, overflow } of overrides) {
-      el.style.maxHeight = maxHeight;
-      el.style.overflow = overflow;
-    }
+    restoreScrollContainers(overrides);
   }
 }
 
 export async function exportAsPng({ element, filename }: ExportOptions): Promise<void> {
-  const canvas = await captureCanvas(element);
+  const dataUrl = await captureDataUrl(element);
   const link = document.createElement('a');
   link.download = `${filename}.png`;
-  link.href = canvas.toDataURL('image/png');
+  link.href = dataUrl;
   link.click();
 }
 
 export async function exportAsPdf({ element, filename }: ExportOptions): Promise<void> {
-  const canvas = await captureCanvas(element);
-  const pxWidth = canvas.width;
-  const pxHeight = canvas.height;
+  const dataUrl = await captureDataUrl(element);
+
+  const img = new Image();
+  await new Promise<void>((resolve, reject) => {
+    img.onload = () => resolve();
+    img.onerror = reject;
+    img.src = dataUrl;
+  });
+
+  const pxWidth = img.naturalWidth;
+  const pxHeight = img.naturalHeight;
 
   const pdfWidthMm = 210; // A4
-  const pdfHeightMm = 297;
   const margin = 10;
   const contentWidthMm = pdfWidthMm - margin * 2;
-  const contentHeightMm = pdfHeightMm - margin * 2;
+  const contentHeightMm = 297 - margin * 2;
 
   const imgAspect = pxHeight / pxWidth;
   const totalImgHeightMm = contentWidthMm * imgAspect;
@@ -79,7 +90,7 @@ export async function exportAsPdf({ element, filename }: ExportOptions): Promise
     sliceCanvas.width = pxWidth;
     sliceCanvas.height = Math.ceil(srcH);
     const ctx = sliceCanvas.getContext('2d')!;
-    ctx.drawImage(canvas, 0, srcY, pxWidth, srcH, 0, 0, pxWidth, srcH);
+    ctx.drawImage(img, 0, srcY, pxWidth, srcH, 0, 0, pxWidth, Math.ceil(srcH));
 
     const sliceData = sliceCanvas.toDataURL('image/png');
     pdf.addImage(sliceData, 'PNG', margin, margin, contentWidthMm, sliceHeightMm);
