@@ -38,7 +38,7 @@ import type {
 } from '../api/agentTools';
 import SpanTree from '../components/SpanTree';
 import { summarizeTrace } from '../api/transform';
-import { exportAsPng, exportAsPdf } from '../utils/exportInvestigation';
+import { exportAsPng } from '../utils/exportInvestigation';
 import s from './InvestigatePage.module.css';
 
 // ─────────────────────────────────────────────────────────────────
@@ -381,17 +381,6 @@ export default function InvestigatePage() {
     }
   }, []);
 
-  const handleExportPdf = useCallback(async () => {
-    if (!transcriptInnerRef.current) return;
-    setExporting(true);
-    try {
-      const ts = new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-');
-      await exportAsPdf({ element: transcriptInnerRef.current, filename: `investigation-${ts}` });
-    } finally {
-      setExporting(false);
-    }
-  }, []);
-
   const isEmpty = transcript.length === 0;
 
   return (
@@ -413,14 +402,6 @@ export default function InvestigatePage() {
                 title="Save as PNG image"
               >
                 {exporting ? 'Exporting...' : 'Export PNG'}
-              </button>
-              <button
-                className={s.btn}
-                onClick={() => void handleExportPdf()}
-                disabled={exporting}
-                title="Save as PDF document"
-              >
-                {exporting ? 'Exporting...' : 'Export PDF'}
               </button>
             </>
           )}

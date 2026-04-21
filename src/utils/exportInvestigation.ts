@@ -1,103 +1,109 @@
-import { toPng } from 'html-to-image';
-import { jsPDF } from 'jspdf';
-
 interface ExportOptions {
   element: HTMLElement;
   filename: string;
 }
 
-function expandScrollContainers(element: HTMLElement): Array<{ el: HTMLElement; maxHeight: string; overflow: string }> {
-  const overrides: Array<{ el: HTMLElement; maxHeight: string; overflow: string }> = [];
+function inlineStyles(source: HTMLElement, target: HTMLElement) {
+  const computed = getComputedStyle(source);
+  for (let i = 0; i < computed.length; i++) {
+    const prop = computed[i];
+    target.style.setProperty(prop, computed.getPropertyValue(prop));
+  }
+
+  const sourceChildren = source.children;
+  const targetChildren = target.children;
+  for (let i = 0; i < sourceChildren.length; i++) {
+    if (sourceChildren[i] instanceof HTMLElement && targetChildren[i] instanceof HTMLElement) {
+      inlineStyles(sourceChildren[i] as HTMLElement, targetChildren[i] as HTMLElement);
+    }
+  }
+}
+
+function expandScrollContainers(element: HTMLElement): Array<{ el: HTMLElement; mh: string; ov: string }> {
+  const saved: Array<{ el: HTMLElement; mh: string; ov: string }> = [];
   for (const el of element.querySelectorAll<HTMLElement>('*')) {
-    const style = getComputedStyle(el);
+    const s = getComputedStyle(el);
     if (
-      (style.overflow === 'auto' || style.overflow === 'scroll' ||
-       style.overflowY === 'auto' || style.overflowY === 'scroll') &&
-      style.maxHeight !== 'none'
+      (s.overflow === 'auto' || s.overflow === 'scroll' ||
+       s.overflowY === 'auto' || s.overflowY === 'scroll') &&
+      s.maxHeight !== 'none'
     ) {
-      overrides.push({ el, maxHeight: el.style.maxHeight, overflow: el.style.overflow });
+      saved.push({ el, mh: el.style.maxHeight, ov: el.style.overflow });
       el.style.maxHeight = 'none';
       el.style.overflow = 'visible';
     }
   }
-  return overrides;
+  return saved;
 }
 
-function restoreScrollContainers(overrides: Array<{ el: HTMLElement; maxHeight: string; overflow: string }>) {
-  for (const { el, maxHeight, overflow } of overrides) {
-    el.style.maxHeight = maxHeight;
-    el.style.overflow = overflow;
-  }
-}
-
-async function captureDataUrl(element: HTMLElement): Promise<string> {
-  const overrides = expandScrollContainers(element);
-  try {
-    return await toPng(element, {
-      backgroundColor: '#ffffff',
-      pixelRatio: 2,
-      filter: (node: HTMLElement) => {
-        if (node.tagName === 'IFRAME') return false;
-        return true;
-      },
-    });
-  } finally {
-    restoreScrollContainers(overrides);
+function restoreScrollContainers(saved: Array<{ el: HTMLElement; mh: string; ov: string }>) {
+  for (const { el, mh, ov } of saved) {
+    el.style.maxHeight = mh;
+    el.style.overflow = ov;
   }
 }
 
 export async function exportAsPng({ element, filename }: ExportOptions): Promise<void> {
-  const dataUrl = await captureDataUrl(element);
-  const link = document.createElement('a');
-  link.download = `${filename}.png`;
-  link.href = dataUrl;
-  link.click();
-}
+  const saved = expandScrollContainers(element);
 
-export async function exportAsPdf({ element, filename }: ExportOptions): Promise<void> {
-  const dataUrl = await captureDataUrl(element);
+  const width = element.scrollWidth;
+  const height = element.scrollHeight;
 
-  const img = new Image();
-  await new Promise<void>((resolve, reject) => {
-    img.onload = () => resolve();
-    img.onerror = reject;
-    img.src = dataUrl;
-  });
+  const clone = element.cloneNode(true) as HTMLElement;
+  inlineStyles(element, clone);
 
-  const pxWidth = img.naturalWidth;
-  const pxHeight = img.naturalHeight;
-
-  const pdfWidthMm = 210; // A4
-  const margin = 10;
-  const contentWidthMm = pdfWidthMm - margin * 2;
-  const contentHeightMm = 297 - margin * 2;
-
-  const imgAspect = pxHeight / pxWidth;
-  const totalImgHeightMm = contentWidthMm * imgAspect;
-
-  const pdf = new jsPDF('p', 'mm', 'a4');
-  let yOffsetMm = 0;
-  let page = 0;
-
-  while (yOffsetMm < totalImgHeightMm) {
-    if (page > 0) pdf.addPage();
-
-    const sliceHeightMm = Math.min(contentHeightMm, totalImgHeightMm - yOffsetMm);
-    const srcY = (yOffsetMm / totalImgHeightMm) * pxHeight;
-    const srcH = (sliceHeightMm / totalImgHeightMm) * pxHeight;
-
-    const sliceCanvas = document.createElement('canvas');
-    sliceCanvas.width = pxWidth;
-    sliceCanvas.height = Math.ceil(srcH);
-    const ctx = sliceCanvas.getContext('2d')!;
-    ctx.drawImage(img, 0, srcY, pxWidth, srcH, 0, 0, pxWidth, Math.ceil(srcH));
-
-    const sliceData = sliceCanvas.toDataURL('image/png');
-    pdf.addImage(sliceData, 'PNG', margin, margin, contentWidthMm, sliceHeightMm);
-
-    yOffsetMm += contentHeightMm;
-    page++;
+  // Remove any iframe elements from the clone
+  for (const iframe of clone.querySelectorAll('iframe')) {
+    iframe.remove();
   }
 
-  pdf.save(`${filename}.pdf`);
+  restoreScrollContainers(saved);
+
+  clone.style.width = `${width}px`;
+  clone.style.height = `${height}px`;
+  clone.style.position = 'static';
+  clone.style.overflow = 'visible';
+  clone.style.maxHeight = 'none';
+
+  const xmlns = 'http://www.w3.org/1999/xhtml';
+  const serializer = new XMLSerializer();
+  const html = serializer.serializeToString(clone);
+
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">
+    <foreignObject width="100%" height="100%">
+      <div xmlns="${xmlns}">${html}</div>
+    </foreignObject>
+  </svg>`;
+
+  const svgBlob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
+  const url = URL.createObjectURL(svgBlob);
+
+  const img = new Image();
+  const scale = 2;
+  await new Promise<void>((resolve, reject) => {
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = width * scale;
+      canvas.height = height * scale;
+      const ctx = canvas.getContext('2d')!;
+      ctx.scale(scale, scale);
+      ctx.drawImage(img, 0, 0);
+      URL.revokeObjectURL(url);
+
+      canvas.toBlob((blob) => {
+        if (!blob) { reject(new Error('Canvas toBlob failed')); return; }
+        const a = document.createElement('a');
+        a.download = `${filename}.png`;
+        a.href = URL.createObjectURL(blob);
+        a.click();
+        URL.revokeObjectURL(a.href);
+        resolve();
+      }, 'image/png');
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('Failed to render SVG to image'));
+    };
+    img.src = url;
+  });
 }
