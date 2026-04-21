@@ -1,6 +1,5 @@
 interface ExportOptions {
   element: HTMLElement;
-  filename: string;
 }
 
 function inlineStyles(source: HTMLElement, target: HTMLElement) {
@@ -43,7 +42,7 @@ function restoreScrollContainers(saved: Array<{ el: HTMLElement; mh: string; ov:
   }
 }
 
-export async function exportAsPng({ element, filename }: ExportOptions): Promise<void> {
+export async function exportAsPng({ element }: ExportOptions): Promise<string> {
   const saved = expandScrollContainers(element);
 
   const width = element.scrollWidth;
@@ -88,12 +87,7 @@ export async function exportAsPng({ element, filename }: ExportOptions): Promise
       ctx.scale(scale, scale);
       ctx.drawImage(img, 0, 0);
 
-      const pngDataUrl = canvas.toDataURL('image/png');
-      const a = document.createElement('a');
-      a.download = `${filename}.png`;
-      a.href = pngDataUrl;
-      a.click();
-      resolve();
+      resolve(canvas.toDataURL('image/png'));
     };
     img.onerror = () => {
       reject(new Error('Failed to render SVG to image'));

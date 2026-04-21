@@ -187,6 +187,7 @@ export default function InvestigatePage() {
 
   const transcriptInnerRef = useRef<HTMLDivElement>(null);
   const [exporting, setExporting] = useState(false);
+  const [exportedPng, setExportedPng] = useState<string | null>(null);
 
   const transcriptRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -374,8 +375,8 @@ export default function InvestigatePage() {
     if (!transcriptInnerRef.current) return;
     setExporting(true);
     try {
-      const ts = new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-');
-      await exportAsPng({ element: transcriptInnerRef.current, filename: `investigation-${ts}` });
+      const dataUrl = await exportAsPng({ element: transcriptInnerRef.current });
+      setExportedPng(dataUrl);
     } finally {
       setExporting(false);
     }
@@ -457,6 +458,21 @@ export default function InvestigatePage() {
           </button>
         </div>
       </div>
+
+      {exportedPng && (
+        <div className={s.exportOverlay} onClick={() => setExportedPng(null)}>
+          <div className={s.exportModal} onClick={(e) => e.stopPropagation()}>
+            <div className={s.exportHeader}>
+              <span className={s.exportTitle}>Investigation snapshot</span>
+              <span className={s.exportHint}>Right-click the image → Save image as...</span>
+              <button className={s.btn} onClick={() => setExportedPng(null)}>Close</button>
+            </div>
+            <div className={s.exportBody}>
+              <img src={exportedPng} alt="Investigation export" className={s.exportImg} />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
