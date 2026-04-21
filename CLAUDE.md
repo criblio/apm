@@ -112,20 +112,24 @@ they become reusable — the repo already has enough one-offs.
 
 ### Deploying to staging
 
-`npm run deploy` builds, packages, and uploads the pack to Cribl
-Cloud. **It does not provision scheduled searches.** If the deploy
-includes new or changed `criblapm__*` scheduled searches (defined
-in `src/api/provisionedSearches.ts`), you must re-provision
-afterwards:
+`npm run deploy` builds, packages, uploads the pack, and
+**automatically reconciles scheduled searches** via
+`scripts/provision.ts`. The provisioner diffs the plan in
+`provisionedSearches.ts` against what's on the server and
+creates/updates/noops as needed. Output shows each action:
 
-1. Open the deployed app on staging
-2. Navigate to **Settings → Provisioning**
-3. Click **Apply** to reconcile (creates new searches, updates
-   changed ones, leaves unchanged ones alone)
+```
+▶ Reconciling scheduled searches …
+✓  + create criblapm__metric_catalog
+✓  ~ update criblapm__home_slow_traces
+✓  · noop   criblapm__home_service_summary
+```
 
-Without this step, new panels that read from `$vt_results` (like
-the ServiceDetail cache added in PR #15) will fall through to
-live queries because the scheduled search hasn't been created yet.
+You can also run provisioning standalone:
+```bash
+npm run provision          # reconcile
+npm run provision -- --dry # dry-run (show plan without applying)
+```
 
 ### Running scenario tests
 
@@ -154,6 +158,50 @@ Between scenario runs, allow **15–30 minutes** for the previous
 run's error signal to decay out of the lookback window. Running
 back-to-back is fine for development iteration but produces noisy
 baselines for detection-quality measurements.
+
+### Eval harness (Autoresearch loop)
+
+`npm run eval` runs the detection eval harness — 13 scenarios from
+`FAILURE-SCENARIOS.md` driven against the deployed pack with
+surface checks + Investigator scoring. See
+`docs/research/eval-harness/design.md` for the full design.
+
+```bash
+npm run eval                              # full 13-scenario matrix (~2.5h)
+npm run eval -- --scenario paymentFailure # single scenario (~8min)
+npm run eval -- --no-investigator         # surface-only (~45min)
+```
+
+Scenarios are declarations in `eval/scenarios/*.ts`. Adding a
+scenario means writing ~40 lines of TypeScript with the flag,
+expected service, surface locators, and Investigator prompt.
+
+### Metrics schema (wide-column format)
+
+As of 2026-04-15, Cribl Search stores metrics in **wide-column
+format**: each metric is a top-level field (e.g.,
+`postgresql.backends: 2`) instead of the old `_metric`/`_value`
+pair. `_metric_type` still exists. All metric queries use
+bracket-quoted field references: `toreal(['metric.name'])`.
+
+Metric discovery uses a regex on `_raw` to extract the numeric
+field name, pre-computed by the `criblapm__metric_catalog`
+scheduled search. Histogram metrics with cumulative temporality
+(e.g., .NET SDK's `http.server.request.duration`) store running
+sums — `percentile()` over these gives nonsense. Use `rate`
+aggregation for cumulative histograms. This is a known limitation
+tracked for the next session.
+
+### Cribl KQL caveats
+
+- **`(?i)` inline regex flag crashes** in complex pipelines
+  (summarize + extend + nested negation). Use character-class
+  alternation `[Cc]onsume[d]?` instead.
+- **`foldkeys`** operator exists but the output `key`/`value`
+  columns don't support type filtering. Use `_raw` regex parsing
+  for field-name discovery instead.
+- **Route conflicts**: avoid using `/settings` in pack routes —
+  the Cribl host shell intercepts paths containing "settings".
 
 ### End-to-end tests (Playwright)
 
