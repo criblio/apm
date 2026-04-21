@@ -75,8 +75,7 @@ export async function exportAsPng({ element, filename }: ExportOptions): Promise
     </foreignObject>
   </svg>`;
 
-  const svgBlob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
-  const url = URL.createObjectURL(svgBlob);
+  const dataUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 
   const img = new Image();
   const scale = 2;
@@ -88,22 +87,17 @@ export async function exportAsPng({ element, filename }: ExportOptions): Promise
       const ctx = canvas.getContext('2d')!;
       ctx.scale(scale, scale);
       ctx.drawImage(img, 0, 0);
-      URL.revokeObjectURL(url);
 
-      canvas.toBlob((blob) => {
-        if (!blob) { reject(new Error('Canvas toBlob failed')); return; }
-        const a = document.createElement('a');
-        a.download = `${filename}.png`;
-        a.href = URL.createObjectURL(blob);
-        a.click();
-        URL.revokeObjectURL(a.href);
-        resolve();
-      }, 'image/png');
+      const pngDataUrl = canvas.toDataURL('image/png');
+      const a = document.createElement('a');
+      a.download = `${filename}.png`;
+      a.href = pngDataUrl;
+      a.click();
+      resolve();
     };
     img.onerror = () => {
-      URL.revokeObjectURL(url);
       reject(new Error('Failed to render SVG to image'));
     };
-    img.src = url;
+    img.src = dataUrl;
   });
 }
