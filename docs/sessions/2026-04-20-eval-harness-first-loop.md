@@ -178,7 +178,7 @@ query change and updated `criblapm__home_slow_traces` (1 update,
 | Cribl KQL `(?i)` flag crashes in complex pipelines | Slowest trace classes panel silently empty for kafka scenarios | Replaced with character-class alternation |
 | Deploy doesn't re-provision scheduled searches | New/changed queries aren't picked up until manual Settings click | `npm run deploy` now calls `npm run provision` automatically |
 
-## Eval progression across all rounds
+## Eval progression — 3-scenario loop (rounds 1-4)
 
 | Round | kafkaQueueProblems | paymentFailure | paymentUnreachable | Mean |
 |---|---|---|---|---|
@@ -187,8 +187,86 @@ query change and updated `criblapm__home_slow_traces` (1 update,
 | 3 (kafka timing) | 0.77 | 1.00 | 1.00 | 0.92 |
 | 4 (KQL regex fix) | **1.00** | **1.00** | **1.00** | **1.00** |
 
+## Full 13-scenario matrix (rounds 5-7)
+
+Added 10 more scenario declarations (PR #22) covering every
+detectable failure in FAILURE-SCENARIOS.md. Three full-matrix
+runs with iterative fixes.
+
+### Round 5 — first full matrix (mean 0.91)
+
+| Scenario | Score | Failure |
+|---|---|---|
+| adFailure | 1.00 | |
+| adHighCpu | 0.77 | p99 chip — delta contaminated by prior adManualGc run |
+| adManualGc | 0.85 | Investigator — regex too narrow for Copilot's wording |
+| cartFailure | 0.77 | error chip — pattern rejected sub-1% rates |
+| emailMemoryLeak | 1.00 | |
+| failedReadinessProbe | 0.65 | checked cart (down, no spans) instead of checkout (caller) |
+| kafkaQueueProblems | 1.00 | |
+| llmRateLimitError | 1.00 | |
+| loadGeneratorFloodHomepage | 1.00 | |
+| paymentFailure | 0.83 | svcDetailRecentErrors — 30s timeout too tight |
+| paymentUnreachable | 1.00 | |
+| productCatalogFailure | 1.00 | |
+| recommendationCacheFailure | 1.00 | |
+
+### Fixes applied (PR #23)
+
+- Global cooldown 2min → 5min (prevents cross-scenario contamination)
+- adManualGc Investigator regex broadened (caught Copilot's natural
+  language descriptions of GC pauses)
+- failedReadinessProbe: changed from checking cart (downed service,
+  zero spans) to checkout (upstream caller that sees connection
+  errors) — the key insight is that a downed service doesn't
+  report its own failures
+- cartFailure error rate pattern accepts sub-1% rates ("0.50%")
+- adHighCpu: absolute p95/p99 value check instead of delta chip
+  (delta depends on clean previous window)
+- paymentFailure svcDetailRecentErrors timeout → 45s
+
+### Round 6 — after fixes (mean 0.94)
+
+failedReadinessProbe fixed (0.65 → 1.00), adManualGc fixed
+(0.85 → 1.00). Three persistent issues remained:
+adHighCpu p99, cartFailure error chip, paymentFailure Investigator.
+
+### Round 7 — final (mean 0.94)
+
+Same three persistent issues. Analysis:
+
+| Failure | Root cause | Recommendation |
+|---|---|---|
+| adHighCpu p99 value | Flag may not produce enough CPU pressure on this cluster — baseline p99 is 2.5ms and saturation may not shift it above 5ms | Verify manually on staging; may need to file upstream if flag is ineffective |
+| cartFailure error chip | Cart's own spans may not carry `status.code=2` — errors only appear on callers' outgoing spans | Investigate whether Home catalog should show caller-observed error rates in addition to self-reported |
+| paymentFailure Investigator | Flaky Copilot latency — scored 1.0 in rounds 5 and 6, timed out in round 7 | Non-deterministic; accept the 5-min budget |
+
+## Detection coverage summary
+
+Of 13 detectable scenarios: **10 fully detected (1.00), 3 at
+0.70-0.77 with known cluster-specific or non-deterministic causes.**
+
+The product fixes that emerged from the Autoresearch loop:
+
+| Fix | Scenarios improved |
+|---|---|
+| Investigator latency-anomaly preflight | kafkaQueueProblems, adManualGc, adHighCpu |
+| ServiceDetail Recent errors -15m fallback | paymentFailure |
+| Cribl KQL `(?i)` regex crash | kafkaQueueProblems |
+| `npm run provision` automation | all (operational) |
+| failedReadinessProbe caller-side detection | failedReadinessProbe |
+
 ## PRs shipped
 
 - PR #18 — eval harness design doc (reshaped to Autoresearch loop)
 - PR #19 — eval harness scaffold (3 scenarios, engine, report)
 - PR #20 — four product fixes + KQL regex crash from first loop
+- PR #22 — 10 more scenario declarations (13 total)
+- PR #23 — round 2 fixes (cooldowns, patterns, failedReadinessProbe)
+
+## Next session
+
+- Investigate adHighCpu flag effectiveness on this cluster
+- Investigate cartFailure error attribution (self vs caller spans)
+- Consider adding caller-observed error rates to Home catalog
+- Expand eval harness with Cribl dataset ingest for trending
