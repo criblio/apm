@@ -25,6 +25,8 @@
     "d3-shape": "^3.2.0",
     "d3-time": "^3.1.0",
     "d3-time-format": "^4.1.0",
+    "html2canvas": "^1.4.1",
+    "jspdf": "^4.2.1",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "react-router-dom": "^7.14.0"
@@ -57,15 +59,47 @@
   "description": "Application performance monitoring on top of Cribl Search — traces, logs, and metrics from the OpenTelemetry demo.",
   "author": "Clint Sharp",
   "navItems": [
-    { "path": "/", "label": "Home" },
-    { "path": "/search", "label": "Search" },
-    { "path": "/logs", "label": "Logs" },
-    { "path": "/metrics", "label": "Metrics" },
-    { "path": "/architecture", "label": "System Architecture" },
-    { "path": "/compare", "label": "Compare" },
-    { "path": "/investigate", "label": "Investigate" },
-    { "path": "/settings", "label": "Settings" },
-    { "path": "/service/:serviceName", "label": "Service Detail", "hidden": true },
-    { "path": "/trace/:traceId", "label": "Trace Detail", "hidden": true }
+    {
+      "path": "/",
+      "label": "Home"
+    },
+    {
+      "path": "/search",
+      "label": "Search"
+    },
+    {
+      "path": "/logs",
+      "label": "Logs"
+    },
+    {
+      "path": "/metrics",
+      "label": "Metrics"
+    },
+    {
+      "path": "/architecture",
+      "label": "System Architecture"
+    },
+    {
+      "path": "/compare",
+      "label": "Compare"
+    },
+    {
+      "path": "/investigate",
+      "label": "Investigate"
+    },
+    {
+      "path": "/settings",
+      "label": "Settings"
+    },
+    {
+      "path": "/service/:serviceName",
+      "label": "Service Detail",
+      "hidden": true
+    },
+    {
+      "path": "/trace/:traceId",
+      "label": "Trace Detail",
+      "hidden": true
+    }
   ]
 }
