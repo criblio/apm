@@ -432,7 +432,11 @@ export default function MetricsPage() {
               onChange={(e) => setService(e.target.value)}
               disabled={!selected || services.length === 0}
             >
-              <option value="">All services</option>
+              <option value="">
+                {services.length === 0 && selected
+                  ? 'Host-level metric (no service)'
+                  : 'All services'}
+              </option>
               {services.map((svc) => (
                 <option key={svc} value={svc}>
                   {svc}
