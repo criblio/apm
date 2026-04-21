@@ -376,7 +376,14 @@ export default function InvestigatePage() {
     setExporting(true);
     try {
       const dataUrl = await exportAsPng({ element: transcriptInnerRef.current });
-      setExportedPng(dataUrl);
+      // The iframe is sandboxed without `allow-downloads`, so `<a download>`
+      // is blocked. Try window.open() to render the PNG in a new tab — the
+      // browser then shows its own download button (one click). If popups
+      // are blocked, fall back to the in-app modal for right-click save.
+      const opened = window.open(dataUrl, '_blank', 'noopener,noreferrer');
+      if (!opened) {
+        setExportedPng(dataUrl);
+      }
     } finally {
       setExporting(false);
     }
