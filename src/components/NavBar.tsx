@@ -58,7 +58,7 @@ export default function NavBar() {
       />
 
       <NavLink
-        to="/settings"
+        to="/app-settings"
         className={({ isActive }) => `${s.iconBtn} ${isActive ? s.iconBtnActive : ''}`}
         title="Settings"
         aria-label="Settings"
