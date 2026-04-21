@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import AppShell from './components/AppShell';
 import DatasetProvider from './components/DatasetProvider';
 import HomePage from './routes/HomePage';
@@ -11,6 +11,7 @@ import LogsPage from './routes/LogsPage';
 import MetricsPage from './routes/MetricsPage';
 import InvestigatePage from './routes/InvestigatePage';
 import SettingsPage from './routes/SettingsPage';
+import ServicesListPage from './routes/ServicesListPage';
 
 export default function App() {
   return (
@@ -23,7 +24,9 @@ export default function App() {
             <Route path="/trace/:traceId" element={<TraceView />} />
             <Route path="/compare" element={<ComparePage />} />
             <Route path="/compare/:idA/:idB" element={<ComparePage />} />
-            <Route path="/architecture" element={<SystemArchPage />} />
+            <Route path="/services" element={<ServicesListPage />} />
+            <Route path="/services/architecture" element={<SystemArchPage />} />
+            <Route path="/architecture" element={<Navigate to="/services/architecture" replace />} />
             <Route path="/service/:serviceName" element={<ServiceDetailPage />} />
             <Route path="/logs" element={<LogsPage />} />
             <Route path="/metrics" element={<MetricsPage />} />
