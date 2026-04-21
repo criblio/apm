@@ -314,6 +314,9 @@ export default function MetricsPage() {
       if (!list) { list = []; groups.set(prefix, list); }
       list.push(m);
     }
+    for (const list of groups.values()) {
+      list.sort((a, b) => a.name.localeCompare(b.name));
+    }
     return Array.from(groups.entries()).sort((a, b) => a[0].localeCompare(b[0]));
   }, [filteredMetrics]);
 
