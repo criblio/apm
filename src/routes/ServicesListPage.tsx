@@ -172,7 +172,7 @@ export default function ServicesListPage() {
   const [errorClasses, setErrorClasses] = useState<ErrorClass[]>([]);
   const [anomalies, setAnomalies] = useState<OperationAnomaly[]>([]);
   const [loadingSummaries, setLoadingSummaries] = useState(true);
-  const [loadingBuckets, setLoadingBuckets] = useState(true);
+  const [, setLoadingBuckets] = useState(true);
   const [loadingSlow, setLoadingSlow] = useState(true);
   const [loadingErrors, setLoadingErrors] = useState(true);
   const [loadingAnomalies, setLoadingAnomalies] = useState(true);
