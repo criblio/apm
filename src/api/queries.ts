@@ -582,12 +582,30 @@ export function dependencies(): string {
 // ─────────────────────────────────────────────────────────────────
 
 /**
- * Fetch a sample of raw metric records for client-side metric-name
- * discovery. In the wide-column schema each metric is a top-level
- * numeric field (e.g. `postgresql.backends: 2`) — there is no single
- * `_metric` column to summarize over. The caller (search.ts) inspects
- * the returned rows to identify which keys are numeric and builds the
- * MetricSummary list.
+ * Discover all metric names in the window by extracting the numeric
+ * field name from each record's _raw JSON. In the wide-column schema
+ * each metric is a top-level field; this regex finds the first key
+ * with a numeric value that isn't a known meta field.
+ *
+ * Also used as the scheduled search `criblapm__metric_catalog` so
+ * the Metrics page reads the catalog from $vt_results in ~1s.
+ */
+export function listMetricNames(): string {
+  return `${metricsBase()}
+    | extend metric_name=extract("\\"([a-zA-Z][a-zA-Z0-9._]*)\\"\\\\s*:\\\\s*-?[0-9]", 1, _raw)
+    | where isnotempty(metric_name)
+        and metric_name != "_metric_type"
+        and metric_name != "_datatype_detection"
+    | extend svc=tostring(['service.name'])
+    | summarize samples=count(), services=dcount(svc)
+      by name=metric_name
+    | sort by samples desc
+    | limit 500`;
+}
+
+/**
+ * Raw sample records for client-side metric-name discovery as a
+ * fallback when the scheduled search cache isn't populated yet.
  */
 export function metricSampleRecords(limit: number = 500): string {
   return `${metricsBase()} | limit ${limit}`;

@@ -3,6 +3,7 @@
  * into the verbs the UI calls.
  */
 import { runQuery } from './cribl';
+import { listCachedMetricCatalog } from './panelCache';
 import * as Q from './queries';
 import { toJaegerTraces, summarizeTrace, toDependencyEdges, toMessagingEdges } from './transform';
 import type {
@@ -584,25 +585,41 @@ function discoverMetricNames(rows: Record<string, unknown>[]): MetricSummary[] {
     .sort((a, b) => b.samples - a.samples);
 }
 
-// Module-level cache for metric name discovery. Metric names are
-// essentially static (they only change if the pipeline changes),
-// so we cache the first successful discovery and reuse it for the
-// session. A page refresh clears the cache.
 let metricNamesCache: MetricSummary[] | null = null;
 
 /**
- * List all metric names. Cached after first call — metric names
- * are static within a session. Uses a small sample (200 records)
- * for fast discovery; most environments have <100 distinct metric
- * names so 200 records covers the catalog with headroom.
+ * List all metric names. Tries the cached scheduled search first
+ * (criblapm__metric_catalog in $vt_results, ~1s); falls back to a
+ * live query if the cache isn't populated. Result is cached in
+ * memory for the session since metric names are static.
  */
 export async function listMetrics(
   earliest = '-1h',
   latest = 'now',
 ): Promise<MetricSummary[]> {
   if (metricNamesCache) return metricNamesCache;
-  const rows = await runQuery(Q.metricSampleRecords(500), earliest, latest, 500);
-  const result = discoverMetricNames(rows);
+  // Try the pre-computed catalog from the scheduled search cache
+  try {
+    const cached = await listCachedMetricCatalog();
+    if (cached && cached.length > 0) {
+      const result = cached.map((r) => ({
+        name: String(r.name ?? ''),
+        samples: toNum(r.samples),
+        services: toNum(r.services),
+      })).filter((m) => m.name);
+      if (result.length > 0) {
+        metricNamesCache = result;
+        return result;
+      }
+    }
+  } catch { /* cache miss — fall through */ }
+  // Live fallback
+  const rows = await runQuery(Q.listMetricNames(), earliest, latest, 500);
+  const result = rows.map((r) => ({
+    name: String(r.name ?? ''),
+    samples: toNum(r.samples),
+    services: toNum(r.services),
+  })).filter((m) => m.name);
   if (result.length > 0) metricNamesCache = result;
   return result;
 }
