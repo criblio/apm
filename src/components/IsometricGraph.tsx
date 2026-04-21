@@ -148,6 +148,7 @@ export default function IsometricGraph({
     worldToScreen,
     zoomBy,
     reset: resetPanZoom,
+    fitToBounds,
     consumeLastPan,
   } = usePanZoom(width, height);
   const [hovered, setHovered] = useState<string | null>(null);
@@ -293,7 +294,7 @@ export default function IsometricGraph({
     const isoH = Math.max(1, pyMax - pyMin + CYL_HEIGHT);
     const availW = Math.max(1, width - 2 * pad);
     const availH = Math.max(1, height - 2 * pad);
-    const scale = Math.min(availW / isoW, availH / isoH, 1);
+    const scale = Math.min(availW / isoW, availH / isoH, 0.85);
     const offsetX = width / 2 - (pxMin + pxMax) * 0.5 * scale;
     const offsetY = height / 2 - (pyMin + pyMax) * 0.5 * scale;
     return { scale, offsetX, offsetY };

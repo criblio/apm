@@ -79,6 +79,7 @@ export default function DependencyGraph({
     worldToScreen,
     zoomBy,
     reset: resetPanZoom,
+    fitToBounds,
     consumeLastPan,
   } = usePanZoom(width, height);
   const [hovered, setHovered] = useState<string | null>(null);
@@ -181,13 +182,31 @@ export default function DependencyGraph({
     return Math.max(10, Math.min(34, 10 + Math.log10(volume + 1) * 6));
   }
 
-  const { simNodesRef, simLinksRef, pinNode, releaseNode } = useForceLayout({
+  const { simNodesRef, simLinksRef, tick, pinNode, releaseNode } = useForceLayout({
     nodes,
     links,
     width,
     height,
     nodeRadius,
   });
+
+  const didFitRef = useRef(false);
+  useEffect(() => {
+    didFitRef.current = false;
+  }, [edges]);
+  useEffect(() => {
+    if (didFitRef.current || tick < 30) return;
+    didFitRef.current = true;
+    const sn = simNodesRef.current;
+    if (sn.length === 0) return;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const n of sn) {
+      const r = nodeRadius(n);
+      if (n.x != null) { minX = Math.min(minX, n.x - r); maxX = Math.max(maxX, n.x + r); }
+      if (n.y != null) { minY = Math.min(minY, n.y - r); maxY = Math.max(maxY, n.y + r); }
+    }
+    if (isFinite(minX)) fitToBounds({ minX, minY, maxX, maxY });
+  }, [tick, edges, fitToBounds, simNodesRef]);
 
   const focusId = pinned ?? hovered;
   const focusNode = focusId
