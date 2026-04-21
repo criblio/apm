@@ -5,7 +5,8 @@ import { binSecondsFor } from '../components/timeRanges';
 import Sparkline from '../components/Sparkline';
 import StatusBanner from '../components/StatusBanner';
 import TraceClassList, { type ClassItem } from '../components/TraceClassList';
-import OperationAnomalyList from '../components/OperationAnomalyList';
+import DetectedIssuesPanel from '../components/DetectedIssuesPanel';
+import SystemArchGraph from '../components/SystemArchGraph';
 import {
   listServiceSummaries,
   getServiceTimeSeries,
@@ -17,6 +18,7 @@ import {
 import { listCachedHomePanels } from '../api/panelCache';
 import { serviceColor } from '../utils/spans';
 import { serviceHealth, healthRowBg } from '../utils/health';
+import { buildDetectedIssues } from '../utils/detectedIssues';
 import { previousWindow } from '../utils/timeRange';
 import { useRangeParam } from '../hooks/useRangeParam';
 import { useStreamFilterEnabled } from '../hooks/useStreamFilter';
@@ -48,11 +50,8 @@ interface SortState {
 
 const DEFAULT_RANGE = '-1h';
 
-/** Minimum previous-window sample count before we trust its percentiles
- * enough to render a delta chip. Smaller windows produce noisy tails. */
 const MIN_PREV_SAMPLES = 10;
 
-/** Auto-refresh interval options. 0 = off. */
 const REFRESH_OPTIONS: Array<{ label: string; ms: number }> = [
   { label: 'Off', ms: 0 },
   { label: '15s', ms: 15_000 },
@@ -63,13 +62,6 @@ const REFRESH_OPTIONS: Array<{ label: string; ms: number }> = [
 ];
 const DEFAULT_REFRESH_MS = 60_000;
 
-/** Threshold beyond which the "cached panels" stamp is treated as
- *  stale and surfaced as a chip on the affected panel headers. Set to
- *  3× the 5-minute scheduled-search cadence: a single missed run is
- *  still within normal drift, but three missed runs means the scheduler
- *  is not keeping up (cluster outage, Cribl Search backpressure, etc.)
- *  and the UI should warn the user before they mistake cached emptiness
- *  for a healthy system. */
 const PANEL_CACHE_STALE_THRESHOLD_MS = 15 * 60_000;
 
 function fmtRate(requestsPerMin: number): string {
@@ -92,8 +84,6 @@ function fmtErrorRate(rate: number): { text: string; className: string } {
   return { text: `${pct.toFixed(2)}%`, className: cls };
 }
 
-/** Format a Date.now() - lastSeenMs gap as a short "Ns ago" / "Nm ago"
- *  string for the stale-row pill. */
 function fmtAgo(ms: number): string {
   const sec = Math.round(ms / 1000);
   if (sec < 60) return `${sec}s ago`;
@@ -103,12 +93,6 @@ function fmtAgo(ms: number): string {
   return `${hr}h ago`;
 }
 
-/** Decide whether a service row is "stale" relative to the current
- *  range — i.e. its newest span is older than ~25% of the lookback
- *  window. The fraction is conservative on purpose: a service that's
- *  been silent for >¼ of the window is definitely showing residue
- *  and the user needs to know, but routine same-minute jitter
- *  shouldn't fire. */
 function staleAge(
   lastSeenMs: number | undefined,
   rangeMs: number,
@@ -122,12 +106,6 @@ function staleAge(
   return { ageMs };
 }
 
-/**
- * Build an InvestigationSeed for a Home catalog row. Threads the
- * known anomaly signals (error rate delta, p95 delta, health bucket,
- * traffic rate) into the agent so it starts with the right
- * hypothesis instead of re-discovering them.
- */
 function buildHomeRowSeed(
   svc: ServiceSummary,
   bucket: string,
@@ -178,7 +156,6 @@ function buildHomeRowSeed(
   };
 }
 
-/** Parse relative-time string like "-1h" / "-30m" into ms duration. */
 function relativeTimeMs(rel: string): number {
   const m = rel.match(/^-(\d+)([smhd])$/);
   if (!m) return 3600_000;
@@ -191,8 +168,6 @@ export default function HomePage() {
   const [range, setRange] = useRangeParam(DEFAULT_RANGE);
   const navigate = useNavigate();
   const location = useLocation();
-  // Passthrough the current search string (including ?range=) so
-  // clicking into a service detail keeps the range context.
   const drillSuffix = location.search;
   const [summaries, setSummaries] = useState<ServiceSummary[]>([]);
   const [prevSummaries, setPrevSummaries] = useState<ServiceSummary[]>([]);
@@ -206,19 +181,12 @@ export default function HomePage() {
   const [loadingSlow, setLoadingSlow] = useState(true);
   const [loadingErrors, setLoadingErrors] = useState(true);
   const [loadingAnomalies, setLoadingAnomalies] = useState(true);
-  // Timestamp (ms since epoch) of the latest bucket observed in the
-  // most recent cached-panels read, or null when the current fetch
-  // didn't read from cache. Used to render a "cache Nm stale" chip on
-  // the Home panels when the scheduled-search cadence has slipped.
+  const [loadingEdges, setLoadingEdges] = useState(true);
   const [panelCacheUpdatedMs, setPanelCacheUpdatedMs] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshMs, setRefreshMs] = useState<number>(DEFAULT_REFRESH_MS);
   const [sort, setSort] = useState<SortState>({ key: 'requests', dir: 'desc' });
-  // Lazy initializer keeps Date.now() out of the render body (purity rule).
   const [lastRefresh, setLastRefresh] = useState<number>(() => Date.now());
-  // Subscribing to the stream-filter toggle so the page re-fetches
-  // when the user flips it in Settings. The value isn't used directly
-  // in render; it just needs to be in fetchAll's dep list below.
   const streamFilterEnabled = useStreamFilterEnabled();
 
   const fetchAll = useCallback(async () => {
@@ -229,52 +197,24 @@ export default function HomePage() {
     setLoadingSlow(true);
     setLoadingErrors(true);
     setLoadingAnomalies(true);
-    // Reset the cache stamp so the stale chip disappears when the
-    // user navigates away from a cached range. It is repopulated
-    // below only if the cache-fast path actually reads cached rows.
+    setLoadingEdges(true);
     setPanelCacheUpdatedMs(null);
 
-    // Previous window of the same length — fuels the delta-vs-baseline
-    // chips. Failure here is non-fatal; we just skip the chips. Fired
-    // unconditionally because it's not part of the cacheable set
-    // (the prior window changes with every user range pick).
     const prev = previousWindow(range);
     const pPrevSummaries = listServiceSummaries(prev.earliest, prev.latest)
       .then((r) => setPrevSummaries(r))
       .catch(() => setPrevSummaries([]));
 
-    // Dependency edges — fuels the per-row "errors on call to <child>"
-    // root-cause hint. Async, non-blocking; the catalog renders fine
-    // without it, the hints just light up when the query lands.
-    // Drawn from the same dependency query SystemArchPage uses, so
-    // the data shape is consistent between Home and the graph view.
     const pEdges = getDependencies(range, 'now')
       .then((r) => setEdges(r))
-      .catch(() => setEdges([]));
+      .catch(() => setEdges([]))
+      .finally(() => setLoadingEdges(false));
 
-    // Latency anomaly detection — joins the current window against
-    // the criblapm_op_baselines lookup maintained by the scheduled
-    // baseline search (ROADMAP §2b.1). Fires unconditionally in the
-    // background; populates the anomaly widget when it lands. If
-    // the lookup doesn't exist yet (fresh install), the query
-    // returns zero rows and the widget shows its empty state.
     const pAnomalies = listOperationAnomalies(range, 'now')
       .then((r) => setAnomalies(r))
       .catch(() => setAnomalies([]))
       .finally(() => setLoadingAnomalies(false));
 
-    // Cache-fast path: when the user is on the default -1h range,
-    // try a single batched $vt_results read for all four panels
-    // before firing the live queries. A full cache hit returns
-    // ~1 s end-to-end instead of the 8-15 s the live path needs.
-    // Any miss (cache not populated, scheduled search hasn't run,
-    // partial panel failure) transparently falls through to the
-    // live queries.
-    //
-    // Stream-filter state is baked into the scheduled queries at
-    // provision time, so when the user toggles the stream filter
-    // we skip the cache too — otherwise they'd see stale filtered
-    // data until the next scheduled run + re-provision.
     if (range === '-1h' && streamFilterEnabled) {
       try {
         const cached = await listCachedHomePanels();
@@ -291,14 +231,6 @@ export default function HomePage() {
           setLoadingSlow(false);
           setPanelCacheUpdatedMs(cached.lastUpdatedMs);
 
-          // The error-spans scheduled search can write zero rows
-          // during a cluster outage and then take several scheduled
-          // runs to re-populate once telemetry recovers. Fall back
-          // to a live listErrorClasses call when the cache returns
-          // null or an empty array so the panel catches up on the
-          // next render instead of waiting out the scheduler. The
-          // other cached panels keep their fast-path values — only
-          // the error classes panel pays the live-query latency.
           if (cached.errorClasses && cached.errorClasses.length > 0) {
             setErrorClasses(cached.errorClasses);
             setLoadingErrors(false);
@@ -309,22 +241,14 @@ export default function HomePage() {
               .finally(() => setLoadingErrors(false));
           }
 
-          // Don't await the prev summary or anomaly query here —
-          // let them resolve in the background and light up the
-          // delta chips + anomaly widget when they land. The main
-          // catalog is already usable.
           setLastRefresh(Date.now());
           return;
         }
       } catch {
-        // Cache read failed — fall through to live fetch. Common on
-        // fresh installs before the first scheduled run lands.
+        // Cache miss — fall through to live fetch.
       }
     }
 
-    // Fan out live queries — either because the user picked a
-    // non-default range, flipped off the stream filter, or because
-    // the cache came back empty.
     const pSummaries = listServiceSummaries(range, 'now')
       .then((r) => setSummaries(r))
       .catch((e: unknown) => {
@@ -358,17 +282,12 @@ export default function HomePage() {
       pEdges,
     ]);
     setLastRefresh(Date.now());
-    // streamFilterEnabled is in the dep list so (a) flipping the
-    // toggle triggers a re-fetch and (b) the cache-fast path
-    // above reads the current value directly.
   }, [range, streamFilterEnabled]);
 
-  // Initial load + on range change
   useEffect(() => {
     void fetchAll();
   }, [fetchAll]);
 
-  // Auto-refresh with configurable interval. refreshMs === 0 disables.
   const timerRef = useRef<number | null>(null);
   useEffect(() => {
     if (refreshMs <= 0) return;
@@ -381,35 +300,18 @@ export default function HomePage() {
     };
   }, [refreshMs, fetchAll]);
 
-  // Index previous-window summaries for O(1) lookup in the render loop.
   const prevByService = useMemo(() => {
     const m = new Map<string, ServiceSummary>();
     for (const svc of prevSummaries) m.set(svc.service, svc);
     return m;
   }, [prevSummaries]);
 
-  // Services with at least one anomalous operation — used by
-  // serviceHealth() to tint the catalog row cyan when any op for
-  // that service is flagged, regardless of where it ranks in the
-  // anomaly widget's own table.
   const anomalousServices = useMemo(() => {
     const set = new Set<string>();
     for (const a of anomalies) set.add(a.service);
     return set;
   }, [anomalies]);
 
-  // Per-service "likely root cause" hint, derived from the dependency
-  // edges. For each service, look at its outgoing rpc edges and pick
-  // the downstream child with the highest error-rate-on-edge (errors
-  // attributed to spans where this parent called that child). The
-  // intent is to cut through error-propagation cascades like
-  // cartFailure: frontend-proxy is the row tinted red, but the
-  // outgoing-edge view shows the failure is on calls to its
-  // downstream — and the user can click straight to the actual
-  // root-cause service. Renders as a small "→ <child>" hint chip
-  // next to the service name on rows where any downstream edge has
-  // a meaningful error rate. Excludes ghost / silent / messaging
-  // edges to keep the hint focused on the most common pattern.
   const rootCauseHints = useMemo(() => {
     const out = new Map<string, { child: string; errorRate: number }>();
     type EdgeAgg = { child: string; calls: number; errors: number };
@@ -417,7 +319,7 @@ export default function HomePage() {
     for (const e of edges) {
       if ((e.kind ?? 'rpc') !== 'rpc') continue;
       if (e.parent === e.child) continue;
-      if (e.callCount < 5) continue; // skip noise-floor edges
+      if (e.callCount < 5) continue;
       const list = byParent.get(e.parent) ?? [];
       list.push({
         child: e.child,
@@ -431,7 +333,7 @@ export default function HomePage() {
       for (const ed of edgeList) {
         if (ed.errors === 0) continue;
         const rate = ed.errors / ed.calls;
-        if (rate < 0.005) continue; // sub-0.5% is below the noise floor
+        if (rate < 0.005) continue;
         if (!best || rate > best.errorRate) {
           best = { child: ed.child, errorRate: rate };
         }
@@ -441,7 +343,6 @@ export default function HomePage() {
     return out;
   }, [edges]);
 
-  // Group time-series buckets by service for sparklines
   const sparksByService = useMemo(() => {
     const byService = new Map<string, { t: number; v: number }[]>();
     const p95ByService = new Map<string, { t: number; v: number }[]>();
@@ -451,13 +352,11 @@ export default function HomePage() {
       byService.get(b.service)!.push({ t: b.bucketMs, v: b.requests });
       p95ByService.get(b.service)!.push({ t: b.bucketMs, v: b.p95Us });
     }
-    // sort each series by time
     for (const arr of byService.values()) arr.sort((a, b) => a.t - b.t);
     for (const arr of p95ByService.values()) arr.sort((a, b) => a.t - b.t);
     return { requests: byService, p95: p95ByService };
   }, [buckets]);
 
-  // Sort service table
   const sortedSummaries = useMemo(() => {
     const arr = [...summaries];
     const { key, dir } = sort;
@@ -478,22 +377,12 @@ export default function HomePage() {
     return arr;
   }, [summaries, sort]);
 
-  // Convert total requests over range → requests per minute
   const rangeMs = relativeTimeMs(range);
   const rangeMinutes = rangeMs / 60_000;
   function reqPerMin(totalRequests: number): number {
     return rangeMinutes > 0 ? totalRequests / rangeMinutes : 0;
   }
 
-  // Age of the panel-cache snapshot, in ms, when the current
-  // fetch actually read from cache AND that snapshot is older than
-  // the staleness threshold. Passed to each panel whose data came
-  // from the same cached scheduled-search batch so they can render
-  // a "cache Nm stale" chip. When the current fetch bypassed the
-  // cache (non-default range, stream filter off, cache-miss
-  // fallback) or the snapshot is still within the expected
-  // cadence, this stays null and no chip is rendered. Recomputes
-  // on every refresh tick so the chip age ticks forward visibly.
   const panelCacheStaleAgeMs = useMemo(() => {
     if (panelCacheUpdatedMs == null) return null;
     const age = lastRefresh - panelCacheUpdatedMs;
@@ -501,10 +390,46 @@ export default function HomePage() {
     return age;
   }, [panelCacheUpdatedMs, lastRefresh]);
 
+  // Data for the SystemArchGraph embed
+  const servicesMap = useMemo(() => {
+    const m = new Map<string, ServiceSummary>();
+    for (const sv of summaries) m.set(sv.service, sv);
+    return m;
+  }, [summaries]);
+
+  const prevServicesMap = useMemo(() => {
+    const m = new Map<string, ServiceSummary>();
+    for (const sv of prevSummaries) m.set(sv.service, sv);
+    return m;
+  }, [prevSummaries]);
+
+  const bucketsByService = useMemo(() => {
+    const m = new Map<string, ServiceBucket[]>();
+    for (const b of buckets) {
+      if (!m.has(b.service)) m.set(b.service, []);
+      m.get(b.service)!.push(b);
+    }
+    for (const arr of m.values()) arr.sort((a, b) => a.bucketMs - b.bucketMs);
+    return m;
+  }, [buckets]);
+
+  // Detected issues for the alerts panel
+  const detectedIssues = useMemo(
+    () =>
+      buildDetectedIssues(
+        sortedSummaries,
+        prevByService,
+        edges,
+        anomalies,
+        anomalousServices,
+        rangeMinutes,
+      ),
+    [sortedSummaries, prevByService, edges, anomalies, anomalousServices, rangeMinutes],
+  );
+
   function toggleSort(key: SortKey) {
     setSort((cur) => {
       if (cur.key === key) return { key, dir: cur.dir === 'asc' ? 'desc' : 'asc' };
-      // Default direction: text = asc, numeric = desc (show highest first)
       return { key, dir: key === 'service' ? 'asc' : 'desc' };
     });
   }
@@ -515,10 +440,11 @@ export default function HomePage() {
   }
 
   const lastRefreshText = new Date(lastRefresh).toLocaleTimeString();
+  const issuesLoading = loadingSummaries || loadingAnomalies;
 
   return (
     <div className={s.page}>
-      {/* Hero bar with title, range picker, auto-refresh toggle */}
+      {/* Hero bar */}
       <div className={s.hero}>
         <div>
           <h1 className={s.heroTitle}>Cribl APM</h1>
@@ -560,7 +486,25 @@ export default function HomePage() {
 
       {error && <StatusBanner kind="error">{error}</StatusBanner>}
 
-      {/* Service catalog */}
+      {/* Section 1: Detected issues panel */}
+      <DetectedIssuesPanel
+        issues={detectedIssues}
+        loading={issuesLoading}
+        lookback={range}
+      />
+
+      {/* Section 2: System Architecture graph */}
+      <SystemArchGraph
+        edges={edges}
+        services={servicesMap}
+        prevServices={prevServicesMap}
+        bucketsByService={bucketsByService}
+        loading={loadingEdges && loadingSummaries}
+        lookback={range}
+        height={480}
+      />
+
+      {/* Section 3: Service catalog table */}
       <div className={s.catalog}>
         <div className={s.catalogHeader}>
           <span className={s.catalogTitle}>
@@ -614,20 +558,8 @@ export default function HomePage() {
                 const err = fmtErrorRate(svc.errorRate);
                 const reqSpark = sparksByService.requests.get(svc.service) ?? [];
                 const p95Spark = sparksByService.p95.get(svc.service) ?? [];
-                // Only compare against the previous window when it had
-                // enough samples to trust the percentiles. Without this,
-                // services with tiny prev-window volume (flagd, image-
-                // provider) produce noisy chips that misfire in the
-                // wrong direction.
                 const prevRaw = prevByService.get(svc.service);
                 const prev = prevRaw && prevRaw.requests >= MIN_PREV_SAMPLES ? prevRaw : undefined;
-                // serviceHealth takes the previous window + the
-                // anomalous-services set so it can promote a row
-                // to `traffic_drop` (rate fell off sharply vs
-                // baseline) or `latency_anomaly` (some op for this
-                // service is 5×+ slower than its durable baseline).
-                // Both signals that error-rate-only bucketing
-                // misses.
                 const health = serviceHealth(svc, prevRaw, anomalousServices);
                 const rowBg = healthRowBg(health.bucket);
                 const prevReqPerMin = prev ? reqPerMin(prev.requests) : undefined;
@@ -649,13 +581,6 @@ export default function HomePage() {
                         <span className={s.svcDot} style={{ background: color }} />
                         <span className={s.svcName}>{svc.service}</span>
                         {(() => {
-                          // Stale-row indicator: when the newest span
-                          // for this service is older than ~25% of
-                          // the lookback window, the row is showing
-                          // residue, not live data. Pin a small
-                          // "last seen Ns ago" pill so the user knows
-                          // they're looking at a snapshot of a
-                          // service that's stopped reporting.
                           const stale = staleAge(svc.lastSeenMs, rangeMs, lastRefresh);
                           if (!stale) return null;
                           return (
@@ -671,13 +596,6 @@ export default function HomePage() {
                           );
                         })()}
                         {(() => {
-                          // Root-cause hint: only show when this row
-                          // is itself anomalous (warn / critical) AND
-                          // there's a downstream edge with meaningful
-                          // errors. Without the row-level gate every
-                          // service that calls anything erroring
-                          // would carry a hint and the column gets
-                          // noisy.
                           const noisy =
                             health.bucket === 'warn' ||
                             health.bucket === 'critical' ||
@@ -686,7 +604,6 @@ export default function HomePage() {
                           if (!noisy) return null;
                           const hint = rootCauseHints.get(svc.service);
                           if (!hint) return null;
-                          // Don't suggest the row's own service.
                           if (hint.child === svc.service) return null;
                           const pct = (hint.errorRate * 100).toFixed(1);
                           return (
@@ -779,17 +696,6 @@ export default function HomePage() {
             </tbody>
           </table>
         )}
-      </div>
-
-      {/* Latency anomaly panel — full width, sits above the
-          slow / error row. Only surfaces actionable rows; when
-          nothing is anomalous the widget shows its empty state. */}
-      <div className={s.panelsFull}>
-        <OperationAnomalyList
-          items={anomalies}
-          loading={loadingAnomalies}
-          lookback={range}
-        />
       </div>
 
       {/* Bottom panels: slow trace classes + error classes */}
