@@ -332,3 +332,16 @@ export async function listCachedSvcDetailPanels(
     lastUpdatedMs,
   };
 }
+
+// ── Metric catalog cache ──────────────────────────────────
+
+/**
+ * Read the cached metric sample records from $vt_results. Returns
+ * the raw rows so the caller can run discoverMetricNames(). Returns
+ * null if the scheduled search hasn't run yet.
+ */
+export async function listCachedMetricCatalog(): Promise<Record<string, unknown>[] | null> {
+  const partitions = await readCachedPanelsRaw(['criblapm__metric_catalog']);
+  const rows = partitions.get('criblapm__metric_catalog');
+  return rows && rows.length > 0 ? rows : null;
+}

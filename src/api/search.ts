@@ -3,6 +3,7 @@
  * into the verbs the UI calls.
  */
 import { runQuery } from './cribl';
+import { listCachedMetricCatalog } from './panelCache';
 import * as Q from './queries';
 import { toJaegerTraces, summarizeTrace, toDependencyEdges, toMessagingEdges } from './transform';
 import type {
@@ -545,22 +546,91 @@ export async function getTraceLogs(
 // ─────────────────────────────────────────────────────────────────
 
 /**
- * List all metric names in the current window. The picker on the
- * Metrics tab feeds from this, sorted by raw sample volume (most
- * frequently-reported metric first).
+ * Keys on metric records that are never metric values — metadata,
+ * infrastructure, or deprecated columns from the old schema.
+ */
+const METRIC_EXCLUDE_KEYS = new Set([
+  '_time', 'source', 'datatype', '_raw', 'dataset',
+  '_metric_type', '_datatype_detection', '_metric', '_value',
+]);
+
+/**
+ * Client-side metric-name discovery from a set of raw wide-column
+ * sample records. Each numeric key that isn't in METRIC_EXCLUDE_KEYS
+ * is treated as a metric name. Returns MetricSummary[] sorted by
+ * sample count descending.
+ */
+function discoverMetricNames(rows: Record<string, unknown>[]): MetricSummary[] {
+  const metrics = new Map<string, { count: number; services: Set<string> }>();
+  for (const row of rows) {
+    const svc = String(row['service.name'] ?? '');
+    for (const [key, val] of Object.entries(row)) {
+      if (METRIC_EXCLUDE_KEYS.has(key)) continue;
+      if (typeof val !== 'number') continue;
+      let entry = metrics.get(key);
+      if (!entry) {
+        entry = { count: 0, services: new Set() };
+        metrics.set(key, entry);
+      }
+      entry.count++;
+      if (svc) entry.services.add(svc);
+    }
+  }
+  return Array.from(metrics.entries())
+    .map(([name, { count, services }]) => ({
+      name,
+      samples: count,
+      services: services.size,
+    }))
+    .sort((a, b) => b.samples - a.samples);
+}
+
+function parseMetricType(raw: string): MetricType {
+  if (raw === 'counter') return 'counter';
+  if (raw === 'gauge') return 'gauge';
+  if (raw === 'histogram') return 'histogram';
+  return 'unknown';
+}
+
+let metricNamesCache: MetricSummary[] | null = null;
+
+/**
+ * List all metric names. Tries the cached scheduled search first
+ * (criblapm__metric_catalog in $vt_results, ~1s); falls back to a
+ * live query if the cache isn't populated. Result is cached in
+ * memory for the session since metric names are static.
  */
 export async function listMetrics(
   earliest = '-1h',
   latest = 'now',
 ): Promise<MetricSummary[]> {
+  if (metricNamesCache) return metricNamesCache;
+  // Try the pre-computed catalog from the scheduled search cache
+  try {
+    const cached = await listCachedMetricCatalog();
+    if (cached && cached.length > 0) {
+      const result = cached.map((r) => ({
+        name: String(r.name ?? ''),
+        samples: toNum(r.samples),
+        services: toNum(r.services),
+        type: parseMetricType(String(r.metric_type ?? '')),
+      })).filter((m) => m.name);
+      if (result.length > 0) {
+        metricNamesCache = result;
+        return result;
+      }
+    }
+  } catch { /* cache miss — fall through */ }
+  // Live fallback
   const rows = await runQuery(Q.listMetricNames(), earliest, latest, 500);
-  return rows
-    .map((r) => ({
-      name: String(r.name ?? ''),
-      samples: toNum(r.samples),
-      services: toNum(r.services),
-    }))
-    .filter((m) => m.name);
+  const result = rows.map((r) => ({
+    name: String(r.name ?? ''),
+    samples: toNum(r.samples),
+    services: toNum(r.services),
+    type: parseMetricType(String(r.metric_type ?? '')),
+  })).filter((m) => m.name);
+  if (result.length > 0) metricNamesCache = result;
+  return result;
 }
 
 /** Services that emit a given metric in the current window. */
@@ -574,24 +644,25 @@ export async function listMetricServices(
   return rows.map((r) => String(r.svc)).filter(Boolean);
 }
 
-/**
- * List every metric a given service emits (or has cluster-level k8s
- * metrics for). Drives the auto-detection logic for the Protocol /
- * Runtime / Infra cards on Service Detail.
- */
+const svcMetricCache = new Map<string, string[]>();
+
 export async function listServiceMetricNames(
   service: string,
   earliest = '-1h',
   latest = 'now',
 ): Promise<string[]> {
   if (!service) return [];
+  const cached = svcMetricCache.get(service);
+  if (cached) return cached;
   const rows = await runQuery(
-    Q.listServiceMetrics(service),
+    Q.serviceMetricSampleRecords(service, 200),
     earliest,
     latest,
-    500,
+    200,
   );
-  return rows.map((r) => String(r._metric ?? '')).filter(Boolean);
+  const names = discoverMetricNames(rows).map((m) => m.name);
+  if (names.length > 0) svcMetricCache.set(service, names);
+  return names;
 }
 
 /**
@@ -645,11 +716,9 @@ export async function getServiceMetricDelta(
 /**
  * Single-query batch fetch of per-service sparklines for many
  * metrics at once. Returns a Map keyed by metric name with sorted
- * (t, v) series. The Service Detail Protocol/Runtime/Infrastructure
- * cards share one call instead of firing one query per row, which
- * was the main cause of a 30+ second Service Detail load time under
- * the previous implementation (every extra row queued behind the
- * others in the search worker pool).
+ * (t, v) series. In the wide-column schema the query returns raw
+ * rows where each metric is a separate numeric field; this function
+ * unpivots them client-side into per-metric (bucket, value) arrays.
  */
 export async function getServiceMetricsBatch(
   service: string,
@@ -664,15 +733,20 @@ export async function getServiceMetricsBatch(
     Q.serviceMetricsBatch(service, metrics, binSeconds),
     earliest,
     latest,
-    5000,
+    10000,
   );
-  for (const r of rows) {
-    const m = String(r.metric ?? '');
-    if (!m) continue;
-    if (!out.has(m)) out.set(m, []);
-    out.get(m)!.push({ t: toNum(r.bucket) * 1000, v: toNum(r.val) });
+  const metricSet = new Set(metrics);
+  for (const row of rows) {
+    const bucket = toNum(row.bucket) * 1000;
+    for (const [key, val] of Object.entries(row)) {
+      if (!metricSet.has(key)) continue;
+      if (typeof val !== 'number') continue;
+      let arr = out.get(key);
+      if (!arr) { arr = []; out.set(key, arr); }
+      arr.push({ t: bucket, v: val });
+    }
   }
-  for (const series of out.values()) series.sort((a, b) => a.t - b.t);
+  for (const arr of out.values()) arr.sort((a, b) => a.t - b.t);
   return out;
 }
 
@@ -787,16 +861,14 @@ function deriveRate(
  * at a single sample record. Cached by the caller — each metric
  * should only be sniffed once per session.
  *
- * Detection rules:
- *  - Counter: has a `${name}_otel` subobject with `is_monotonic == true`
- *  - Histogram: has a `${name}_data` subobject with a `_buckets` map
- *  - Gauge: anything else with a valid sample
- *  - Unknown: query returned nothing
+ * Detection: the wide-column schema stores `_metric_type` ("counter",
+ * "gauge", "histogram") directly on the record — no need to inspect
+ * `_otel`/`_data` sub-objects.
  *
  * Dimensions are every top-level key that looks attribute-like:
  * contains a `.` (matches OTel semconv like `service.name`,
- * `rpc.method`) and isn't part of the metric's own data subobject or
- * generic Cribl metadata.
+ * `rpc.method`) and is a string value — numeric keys are metric
+ * values themselves, not dimensions.
  */
 export async function getMetricInfo(
   metric: string,
@@ -810,59 +882,20 @@ export async function getMetricInfo(
 
   const row = rows[0] as Record<string, unknown>;
 
-  // Metadata / non-attribute keys we never treat as dimensions.
-  const IGNORE = new Set([
-    '_time',
-    '_raw',
-    '_metric',
-    '_value',
-    'source',
-    'datatype',
-    'dataset',
-    'schema_url',
-    'scope',
-    'cribl_route',
-    '_datatype_detection',
-  ]);
+  // Detect type from the wide-column _metric_type field.
+  const metricType = String(row._metric_type ?? 'unknown');
+  let type: MetricType = 'unknown';
+  if (metricType === 'counter') type = 'counter';
+  else if (metricType === 'gauge') type = 'gauge';
+  else if (metricType === 'histogram') type = 'histogram';
 
-  let type: MetricType = 'gauge';
+  // Discover dimensions from row keys — string-valued dotted keys
+  // are resource/scope attributes (e.g. "service.name", "rpc.method").
   const dimensions: string[] = [];
-
-  for (const [key, value] of Object.entries(row)) {
-    if (IGNORE.has(key)) continue;
-
-    // The collector stores per-metric structural info under
-    // keys like `${metric}_otel` and `${metric}_data`. Inspect
-    // these to classify the metric, then skip them as dimensions.
-    if (key.endsWith('_otel') || key.endsWith('_data')) {
-      if (
-        key.endsWith('_otel') &&
-        value &&
-        typeof value === 'object' &&
-        'is_monotonic' in (value as Record<string, unknown>) &&
-        (value as Record<string, unknown>).is_monotonic === true
-      ) {
-        type = 'counter';
-      }
-      if (
-        key.endsWith('_data') &&
-        value &&
-        typeof value === 'object' &&
-        '_buckets' in (value as Record<string, unknown>)
-      ) {
-        type = 'histogram';
-      }
-      continue;
-    }
-
-    // Attribute-like keys: dotted names (OTel semconv). Accept
-    // scalars — objects would be sub-structures we don't care about.
-    if (
-      key.includes('.') &&
-      (typeof value === 'string' ||
-        typeof value === 'number' ||
-        typeof value === 'boolean')
-    ) {
+  for (const key of Object.keys(row)) {
+    if (METRIC_EXCLUDE_KEYS.has(key)) continue;
+    if (typeof row[key] === 'number') continue; // metric value itself
+    if (key.includes('.') && typeof row[key] === 'string') {
       dimensions.push(key);
     }
   }

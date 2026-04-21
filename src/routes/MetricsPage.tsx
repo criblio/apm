@@ -269,12 +269,56 @@ export default function MetricsPage() {
     void fetchSeries();
   }, [fetchSeries]);
 
-  // Filter the metric picker by substring.
+  // Fuzzy search: matches if all query chars appear in order in the
+  // metric name (subsequence match). Scores by how compact the match
+  // is — tighter matches rank higher. Falls back to substring match
+  // for single-word queries.
   const filteredMetrics = useMemo(() => {
     const q = filter.trim().toLowerCase();
-    if (!q) return metrics;
-    return metrics.filter((m) => m.name.toLowerCase().includes(q));
+    if (!q) return [...metrics].sort((a, b) => a.name.localeCompare(b.name));
+
+    type Scored = MetricSummary & { score: number };
+    const results: Scored[] = [];
+    for (const m of metrics) {
+      const name = m.name.toLowerCase();
+      // Exact substring match scores highest
+      const subIdx = name.indexOf(q);
+      if (subIdx >= 0) {
+        results.push({ ...m, score: 1000 - subIdx });
+        continue;
+      }
+      // Subsequence match: all query chars appear in order
+      let qi = 0;
+      for (let ni = 0; ni < name.length && qi < q.length; ni++) {
+        if (name[ni] === q[qi]) qi++;
+      }
+      if (qi === q.length) {
+        results.push({ ...m, score: 500 - q.length });
+      }
+    }
+    return results.sort((a, b) => b.score - a.score);
   }, [metrics, filter]);
+
+  // Group metrics by prefix for the picker. Split on first '.' or '_'.
+  const groupedMetrics = useMemo(() => {
+    const groups = new Map<string, MetricSummary[]>();
+    for (const m of filteredMetrics) {
+      const dotIdx = m.name.indexOf('.');
+      const uscIdx = m.name.indexOf('_');
+      let sep = -1;
+      if (dotIdx >= 0 && uscIdx >= 0) sep = Math.min(dotIdx, uscIdx);
+      else if (dotIdx >= 0) sep = dotIdx;
+      else if (uscIdx >= 0) sep = uscIdx;
+      const prefix = sep > 0 ? m.name.slice(0, sep) : '(other)';
+      let list = groups.get(prefix);
+      if (!list) { list = []; groups.set(prefix, list); }
+      list.push(m);
+    }
+    for (const list of groups.values()) {
+      list.sort((a, b) => a.name.localeCompare(b.name));
+    }
+    return Array.from(groups.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+  }, [filteredMetrics]);
 
   // Build LineChart series from the (possibly multi-group) result.
   // When there's group-by, apply top-N limiting by most recent value
@@ -356,21 +400,26 @@ export default function MetricsPage() {
               {!metricsLoading && filteredMetrics.length === 0 && (
                 <div className={s.metricHint}>No metrics match.</div>
               )}
-              {filteredMetrics.map((m) => (
-                <button
-                  key={m.name}
-                  type="button"
-                  className={`${s.metricItem} ${selected === m.name ? s.metricItemActive : ''}`}
-                  onClick={() => setSelected(m.name)}
-                  title={`${m.samples.toLocaleString()} samples · ${m.services} service${m.services === 1 ? '' : 's'}`}
-                >
-                  <span className={s.metricName}>{m.name}</span>
-                  <span className={s.metricCount}>
-                    {m.samples >= 1000
-                      ? `${(m.samples / 1000).toFixed(1)}k`
-                      : m.samples}
-                  </span>
-                </button>
+              {groupedMetrics.map(([prefix, items]) => (
+                <div key={prefix}>
+                  <div className={s.metricGroupHeader}>{prefix}</div>
+                  {items.map((m) => (
+                    <button
+                      key={m.name}
+                      type="button"
+                      className={`${s.metricItem} ${selected === m.name ? s.metricItemActive : ''}`}
+                      onClick={() => setSelected(m.name)}
+                      title={`${m.samples.toLocaleString()} samples · ${m.services} service${m.services === 1 ? '' : 's'}`}
+                    >
+                      <span className={s.metricName}>{m.name}</span>
+                      {m.type && m.type !== 'unknown' && (
+                        <span className={`${s.metricTypeBadge} ${s['mtype_' + m.type]}`}>
+                          {m.type === 'counter' ? 'C' : m.type === 'gauge' ? 'G' : 'H'}
+                        </span>
+                      )}
+                    </button>
+                  ))}
+                </div>
               ))}
             </div>
           </div>
@@ -383,7 +432,11 @@ export default function MetricsPage() {
               onChange={(e) => setService(e.target.value)}
               disabled={!selected || services.length === 0}
             >
-              <option value="">All services</option>
+              <option value="">
+                {services.length === 0 && selected
+                  ? 'Host-level metric (no service)'
+                  : 'All services'}
+              </option>
               {services.map((svc) => (
                 <option key={svc} value={svc}>
                   {svc}

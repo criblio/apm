@@ -41,6 +41,10 @@ function metricsBase(): string {
   return `${datasetClause()} | where datatype == "generic_metrics"`;
 }
 
+/** Bracket-quoted field reference for wide-column metric names. */
+function mf(metric: string): string {
+  return `['${metric.replace(/'/g, "\\'")}']`;
+}
 
 /** All distinct service names. */
 export function services(): string {
@@ -578,18 +582,34 @@ export function dependencies(): string {
 // ─────────────────────────────────────────────────────────────────
 
 /**
- * List every distinct metric name in the window along with a sample
- * count and the number of services that emit it. Drives the metric
- * picker autocomplete on the Metrics tab — users see "here are the
- * metrics, these are the volumes, these are the services" before
- * they commit to a chart.
+ * Discover all metric names in the window by extracting the numeric
+ * field name from each record's _raw JSON. In the wide-column schema
+ * each metric is a top-level field; this regex finds the first key
+ * with a numeric value that isn't a known meta field.
+ *
+ * Also used as the scheduled search `criblapm__metric_catalog` so
+ * the Metrics page reads the catalog from $vt_results in ~1s.
  */
 export function listMetricNames(): string {
   return `${metricsBase()}
+    | extend metric_name=extract("\\"([a-zA-Z][a-zA-Z0-9._]*)\\"\\\\s*:\\\\s*-?[0-9]", 1, _raw)
+    | where isnotempty(metric_name)
+        and metric_name != "_metric_type"
+        and metric_name != "_datatype_detection"
     | extend svc=tostring(['service.name'])
-    | summarize samples=count(), services=dcount(svc) by name=_metric
-    | sort by samples desc
+    | summarize samples=count(), services=dcount(svc),
+                metric_type=any(_metric_type)
+      by name=metric_name
+    | sort by name asc
     | limit 500`;
+}
+
+/**
+ * Raw sample records for client-side metric-name discovery as a
+ * fallback when the scheduled search cache isn't populated yet.
+ */
+export function metricSampleRecords(limit: number = 500): string {
+  return `${metricsBase()} | limit ${limit}`;
 }
 
 /**
@@ -599,9 +619,8 @@ export function listMetricNames(): string {
  * includes services that don't emit this particular metric.
  */
 export function metricServices(metricName: string): string {
-  const m = metricName.replace(/"/g, '\\"');
   return `${metricsBase()}
-    | where _metric == "${m}"
+    | where isnotnull(${mf(metricName)})
     | extend svc=tostring(['service.name'])
     | where isnotempty(svc)
     | summarize by svc
@@ -637,11 +656,15 @@ export interface MetricSeriesParams {
 }
 
 /**
- * Translate an aggregation choice to a KQL expression over `_value`.
- * `count` has no argument, `rate` is really `max(_value)` (client
- * computes the delta), and `pN` goes through `percentile`.
+ * Translate an aggregation choice to a KQL expression over a named
+ * metric field. In the wide-column schema the metric value lives in
+ * a top-level field (e.g. `['postgresql.backends']`) rather than the
+ * old `_value` column. `count` has no argument, `rate` is really
+ * `max(field)` (client computes the delta), and `pN` goes through
+ * `percentile`.
  */
-function metricAggExpr(agg: MetricSeriesParams['agg']): string {
+function metricAggExpr(metric: string, agg: MetricSeriesParams['agg']): string {
+  const field = `toreal(${mf(metric)})`;
   switch (agg) {
     case 'count':
       return 'count()';
@@ -649,17 +672,17 @@ function metricAggExpr(agg: MetricSeriesParams['agg']): string {
       // Rate is computed client-side from successive bucket maxes —
       // for monotonic counters the max within a bucket is the latest
       // cumulative count, and the rate is (Δcount / Δbucket).
-      return 'max(toreal(_value))';
+      return `max(${field})`;
     case 'p50':
-      return 'percentile(toreal(_value), 50)';
+      return `percentile(${field}, 50)`;
     case 'p75':
-      return 'percentile(toreal(_value), 75)';
+      return `percentile(${field}, 75)`;
     case 'p95':
-      return 'percentile(toreal(_value), 95)';
+      return `percentile(${field}, 95)`;
     case 'p99':
-      return 'percentile(toreal(_value), 99)';
+      return `percentile(${field}, 99)`;
     default:
-      return `${agg}(toreal(_value))`;
+      return `${agg}(${field})`;
   }
 }
 
@@ -689,11 +712,10 @@ function metricAggExpr(agg: MetricSeriesParams['agg']): string {
  *    checks.
  */
 export function metricTimeSeries(params: MetricSeriesParams): string {
-  const m = params.metric.replace(/"/g, '\\"');
   const svcFilter = params.service
     ? `| where svc == "${params.service.replace(/"/g, '\\"')}"`
     : '';
-  const aggExpr = metricAggExpr(params.agg);
+  const aggExpr = metricAggExpr(params.metric, params.agg);
   // Group-by: append a dimension column to the summarize. Dimension
   // values are accessed via bracket-quoted syntax (resource attributes
   // live at the top level of metric records) and coerced to strings.
@@ -702,7 +724,7 @@ export function metricTimeSeries(params: MetricSeriesParams): string {
     : '';
   const groupBy = params.groupBy ? ', grp' : '';
   return `${metricsBase()}
-    | where _metric == "${m}"
+    | where isnotnull(${mf(params.metric)})
     | extend svc=tostring(['service.name'])${groupExt}
     ${svcFilter}
     | summarize val=${aggExpr}
@@ -716,9 +738,8 @@ export function metricTimeSeries(params: MetricSeriesParams): string {
  * the Cribl query layer materialized. Used by getMetricInfo().
  */
 export function metricSampleRow(metricName: string): string {
-  const m = metricName.replace(/"/g, '\\"');
   return `${metricsBase()}
-    | where _metric == "${m}"
+    | where isnotnull(${mf(metricName)})
     | limit 1`;
 }
 
@@ -761,7 +782,7 @@ function spanmetricsBase(metric: string, service?: string): string {
     ? `| where tostring(['service.name'])=="${service.replace(/"/g, '\\"')}"`
     : '';
   return `${metricsBase()}
-    | where _metric == "${metric}"
+    | where isnotnull(${mf(metric)})
     | extend svc=tostring(['service.name']),
              op=tostring(['span.name']),
              status=tostring(['status.code'])
@@ -791,28 +812,28 @@ export function spanmetricsServiceSummary(service?: string): string {
   // the error count so services with zero errors land at 0 instead
   // of the null that `sumif` returns on empty input.
   const calls = `${metricsBase()}
-    | where _metric == "traces.span.metrics.calls"
+    | where isnotnull(['traces.span.metrics.calls'])
     | extend svc=tostring(['service.name']),
              op=tostring(['span.name']),
              status=tostring(['status.code'])
     ${svcFilter}
-    | summarize delta=max(toreal(_value))-min(toreal(_value))
+    | summarize delta=max(toreal(['traces.span.metrics.calls']))-min(toreal(['traces.span.metrics.calls']))
       by svc, op, status
     | summarize requests=sum(delta),
                 errors_raw=sumif(delta, status=="STATUS_CODE_ERROR")
       by svc
     | extend errors=iff(isnull(errors_raw), 0.0, toreal(errors_raw))
     | extend error_rate=iff(requests>0, errors/toreal(requests), 0.0)`;
-  // Duration side — percentile-of-means on the histogram's _value
+  // Duration side — percentile-of-means on the histogram's value
   // (which is the per-export mean the spanmetrics connector computes).
   // We multiply by 1000 to convert ms → µs.
   const duration = `${metricsBase()}
-    | where _metric == "traces.span.metrics.duration"
+    | where isnotnull(['traces.span.metrics.duration'])
     | extend svc=tostring(['service.name'])
     ${svcFilter}
-    | summarize p50_us=percentile(toreal(_value), 50)*1000,
-                p95_us=percentile(toreal(_value), 95)*1000,
-                p99_us=percentile(toreal(_value), 99)*1000
+    | summarize p50_us=percentile(toreal(['traces.span.metrics.duration']), 50)*1000,
+                p95_us=percentile(toreal(['traces.span.metrics.duration']), 95)*1000,
+                p99_us=percentile(toreal(['traces.span.metrics.duration']), 99)*1000
       by svc`;
   return `${calls}
     | join kind=leftouter (${duration}) on svc
@@ -839,24 +860,24 @@ export function spanmetricsServiceTimeSeries(
   // Per-tuple delta first so cross-operation counter values don't get
   // conflated; then sum per (svc, bucket) and coalesce nulls.
   const calls = `${metricsBase()}
-    | where _metric == "traces.span.metrics.calls"
+    | where isnotnull(['traces.span.metrics.calls'])
     | extend svc=tostring(['service.name']),
              op=tostring(['span.name']),
              status=tostring(['status.code'])
     ${svcFilter}
-    | summarize delta=max(toreal(_value))-min(toreal(_value))
+    | summarize delta=max(toreal(['traces.span.metrics.calls']))-min(toreal(['traces.span.metrics.calls']))
       by svc, op, status, bucket=bin(_time, ${binSeconds}s)
     | summarize requests=sum(delta),
                 errors_raw=sumif(delta, status=="STATUS_CODE_ERROR")
       by svc, bucket
     | extend errors=iff(isnull(errors_raw), 0.0, toreal(errors_raw))`;
   const duration = `${metricsBase()}
-    | where _metric == "traces.span.metrics.duration"
+    | where isnotnull(['traces.span.metrics.duration'])
     | extend svc=tostring(['service.name'])
     ${svcFilter}
-    | summarize p50_us=percentile(toreal(_value), 50)*1000,
-                p95_us=percentile(toreal(_value), 95)*1000,
-                p99_us=percentile(toreal(_value), 99)*1000
+    | summarize p50_us=percentile(toreal(['traces.span.metrics.duration']), 50)*1000,
+                p95_us=percentile(toreal(['traces.span.metrics.duration']), 95)*1000,
+                p99_us=percentile(toreal(['traces.span.metrics.duration']), 99)*1000
       by svc, bucket=bin(_time, ${binSeconds}s)`;
   return `${calls}
     | join kind=leftouter (${duration}) on svc, bucket
@@ -875,12 +896,12 @@ export function spanmetricsServiceOperations(service: string): string {
   // we're scoped to one service — one span.name with one status
   // value is a single time series. Coalesce null errors to 0.
   const calls = `${metricsBase()}
-    | where _metric == "traces.span.metrics.calls"
+    | where isnotnull(['traces.span.metrics.calls'])
     | extend svc=tostring(['service.name']),
              name=tostring(['span.name']),
              status=tostring(['status.code'])
     | where svc=="${svc}"
-    | summarize delta=max(toreal(_value))-min(toreal(_value))
+    | summarize delta=max(toreal(['traces.span.metrics.calls']))-min(toreal(['traces.span.metrics.calls']))
       by name, status
     | summarize requests=sum(delta),
                 errors_raw=sumif(delta, status=="STATUS_CODE_ERROR")
@@ -888,13 +909,13 @@ export function spanmetricsServiceOperations(service: string): string {
     | extend errors=iff(isnull(errors_raw), 0.0, toreal(errors_raw))
     | extend error_rate=iff(requests>0, errors/toreal(requests), 0.0)`;
   const duration = `${metricsBase()}
-    | where _metric == "traces.span.metrics.duration"
+    | where isnotnull(['traces.span.metrics.duration'])
     | extend svc=tostring(['service.name']),
              name=tostring(['span.name'])
     | where svc=="${svc}"
-    | summarize p50_us=percentile(toreal(_value), 50)*1000,
-                p95_us=percentile(toreal(_value), 95)*1000,
-                p99_us=percentile(toreal(_value), 99)*1000
+    | summarize p50_us=percentile(toreal(['traces.span.metrics.duration']), 50)*1000,
+                p95_us=percentile(toreal(['traces.span.metrics.duration']), 95)*1000,
+                p99_us=percentile(toreal(['traces.span.metrics.duration']), 99)*1000
       by name`;
   return `${calls}
     | join kind=leftouter (${duration}) on name
@@ -910,9 +931,9 @@ export function spanmetricsServiceOperations(service: string): string {
  */
 export function spanmetricsPresence(): string {
   return `${metricsBase()}
-    | where _metric == "traces.span.metrics.calls"
+    | where isnotnull(['traces.span.metrics.calls'])
     | limit 1
-    | project _metric`;
+    | project _metric_type`;
 }
 
 // Silence unused-export lint for the helper that's only used from
@@ -925,10 +946,11 @@ void spanmetricsBase;
 // ─────────────────────────────────────────────────────────────────
 
 /**
- * List every metric the given service emits. Drives the
- * auto-detection logic for the Service Detail cards — we don't
- * want to query a protocol/runtime/infra metric if the service
- * isn't emitting it. Scoped by both `service.name` and
+ * Fetch a sample of raw metric records for a given service, for
+ * client-side metric-name discovery. In the wide-column schema each
+ * metric is a top-level numeric field — there is no single `_metric`
+ * column. The caller (search.ts) inspects the returned rows to build
+ * the metric name list. Scoped by both `service.name` and
  * `k8s.deployment.name` so the k8s-cluster-receiver metrics
  * (which don't set service.name) are also picked up.
  *
@@ -937,38 +959,35 @@ void spanmetricsBase;
  * have to `extend` the columns first, then filter. Same pattern
  * in the other per-service queries below.
  */
-export function listServiceMetrics(service: string): string {
+export function serviceMetricSampleRecords(service: string, limit: number = 500): string {
   const s = service.replace(/"/g, '\\"');
   return `${metricsBase()}
     | extend svc=tostring(['service.name']),
              dep=tostring(['k8s.deployment.name'])
     | where svc == "${s}" or dep == "${s}"
-    | summarize samples=count() by _metric
-    | sort by samples desc
-    | limit 500`;
+    | limit ${limit}`;
 }
 
 /**
  * Latest-value query for a single metric scoped to a service.
  * Uses the same service-name-or-k8s-deployment-name fallback as
- * listServiceMetrics so k8s cluster metrics (which have null
- * service.name) still correlate back to app services by deployment
- * name. Returns one row with the most recent _value in the window.
+ * serviceMetricSampleRecords so k8s cluster metrics (which have
+ * null service.name) still correlate back to app services by
+ * deployment name. Returns one row with the most recent value.
  */
 export function serviceMetricLatest(
   service: string,
   metric: string,
 ): string {
   const s = service.replace(/"/g, '\\"');
-  const m = metric.replace(/"/g, '\\"');
   return `${metricsBase()}
-    | where _metric == "${m}"
+    | where isnotnull(${mf(metric)})
     | extend svc=tostring(['service.name']),
              dep=tostring(['k8s.deployment.name'])
     | where svc == "${s}" or dep == "${s}"
     | sort by _time desc
     | limit 1
-    | project val=toreal(_value)`;
+    | project val=toreal(${mf(metric)})`;
 }
 
 /**
@@ -983,22 +1002,21 @@ export function serviceMetricDelta(
   metric: string,
 ): string {
   const s = service.replace(/"/g, '\\"');
-  const m = metric.replace(/"/g, '\\"');
   return `${metricsBase()}
-    | where _metric == "${m}"
+    | where isnotnull(${mf(metric)})
     | extend svc=tostring(['service.name']),
              dep=tostring(['k8s.deployment.name']),
              pod=tostring(['k8s.pod.name']),
              container=tostring(['k8s.container.name'])
     | where svc == "${s}" or dep == "${s}"
-    | summarize d=max(toreal(_value))-min(toreal(_value))
+    | summarize d=max(toreal(${mf(metric)}))-min(toreal(${mf(metric)}))
       by pod, container
     | summarize delta=sum(d)`;
 }
 
 /**
  * Time-series for a service metric with the same service matching
- * fallback as listServiceMetrics. Used by the runtime/infra/protocol
+ * fallback as serviceMetricSampleRecords. Used by the runtime/infra/protocol
  * cards to populate their sparklines. Returns (bucket, val) rows
  * where val is percentile(_value, 95) for histogram-like metrics,
  * or the aggregation the caller picks.
@@ -1010,17 +1028,17 @@ export function serviceMetricTimeSeries(
   agg: 'avg' | 'max' | 'p95' = 'p95',
 ): string {
   const s = service.replace(/"/g, '\\"');
-  const m = metric.replace(/"/g, '\\"');
+  const field = `toreal(${mf(metric)})`;
   let aggExpr: string;
   if (agg === 'p95') {
-    aggExpr = 'percentile(toreal(_value), 95)';
+    aggExpr = `percentile(${field}, 95)`;
   } else if (agg === 'max') {
-    aggExpr = 'max(toreal(_value))';
+    aggExpr = `max(${field})`;
   } else {
-    aggExpr = 'avg(toreal(_value))';
+    aggExpr = `avg(${field})`;
   }
   return `${metricsBase()}
-    | where _metric == "${m}"
+    | where isnotnull(${mf(metric)})
     | extend svc=tostring(['service.name']),
              dep=tostring(['k8s.deployment.name'])
     | where svc == "${s}" or dep == "${s}"
@@ -1088,19 +1106,11 @@ export function operationAnomaliesFromLookup(
 }
 
 /**
- * Batched time-series: fetch (metric, bucket) → value for multiple
- * metrics in a single query. Used by the Service Detail page to
- * collapse 15+ per-row fetches on the Protocol/Runtime/Infrastructure
- * cards into one round trip. Saturating the Cribl search worker pool
- * with per-row fetches queued each request for 30+ seconds behind
- * the others; batching eliminates that entirely.
- *
- * Returns rows shaped as (metric, bucket, val), where val is
- * percentile(_value, 95) — a reasonable default for both histograms
- * (the spanmetrics/OTel histograms report means, so p95-of-means is
- * effectively max-of-means) and gauges (p95 of a gauge is close to
- * its peak). Callers that need a different aggregation per metric
- * can still fire the single-metric query.
+ * Batched time-series: fetch raw rows for multiple metrics in a single
+ * query. In the wide-column schema each metric is a separate numeric
+ * field, so we filter for rows where ANY of the requested metrics is
+ * non-null, then return the raw rows. Client-side (search.ts) unpivots
+ * the wide columns into per-metric (bucket, value) series.
  */
 export function serviceMetricsBatch(
   service: string,
@@ -1108,16 +1118,12 @@ export function serviceMetricsBatch(
   binSeconds: number,
 ): string {
   const s = service.replace(/"/g, '\\"');
-  // Dedupe + quote-escape
-  const metricList = Array.from(new Set(metrics))
-    .map((m) => `"${m.replace(/"/g, '\\"')}"`)
-    .join(', ');
+  const whereClause = metrics.map((m) => `isnotnull(${mf(m)})`).join(' or ');
   return `${metricsBase()}
-    | where _metric in (${metricList})
+    | where ${whereClause}
     | extend svc=tostring(['service.name']),
              dep=tostring(['k8s.deployment.name'])
     | where svc == "${s}" or dep == "${s}"
-    | summarize val=percentile(toreal(_value), 95)
-      by metric=_metric, bucket=bin(_time, ${binSeconds}s)
-    | sort by metric asc, bucket asc`;
+    | extend bucket=bin(_time, ${binSeconds}s)
+    | sort by bucket asc`;
 }

@@ -134,6 +134,42 @@
   padding-right: 2px;
 }
 
+.metricGroupHeader {
+  padding: 6px 10px 3px;
+  font-size: 10px;
+  font-weight: var(--cds-font-weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--cds-color-fg-subtle);
+  background: var(--cds-color-bg-subtle);
+  border-bottom: 1px solid var(--cds-color-border-subtle);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.metricTypeBadge {
+  flex-shrink: 0;
+  font-size: 9px;
+  font-weight: var(--cds-font-weight-semibold);
+  padding: 0 4px;
+  border-radius: var(--cds-radius-sm);
+  line-height: 16px;
+  letter-spacing: 0.3px;
+}
+.mtype_counter {
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+.mtype_gauge {
+  background: #e3f2fd;
+  color: #1565c0;
+}
+.mtype_histogram {
+  background: #fce4ec;
+  color: #c62828;
+}
+
 .metricItem {
   display: flex;
   align-items: baseline;

@@ -10,7 +10,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--cds-space-md) var(--cds-space-lg);
+  padding: var(--cds-space-sm) var(--cds-space-lg);
   border-bottom: 1px solid var(--cds-color-border-subtle);
   background: var(--cds-color-bg-subtle);
 }
@@ -30,19 +30,30 @@
   width: 100%;
   border-collapse: collapse;
   font-size: var(--cds-font-size-sm);
+  table-layout: fixed;
 }
 
 .table thead th {
   text-align: left;
-  padding: var(--cds-space-sm) var(--cds-space-lg);
+  padding: var(--cds-space-xs) var(--cds-space-md);
   font-weight: var(--cds-font-weight-semibold);
   color: var(--cds-color-fg-muted);
   background: var(--cds-color-bg-subtle);
   border-bottom: 1px solid var(--cds-color-border-subtle);
   text-transform: uppercase;
-  font-size: var(--cds-font-size-xs);
+  font-size: 10px;
   letter-spacing: 0.4px;
+  white-space: nowrap;
 }
+
+/* Column widths — trace ID gets the most room since it's the
+   primary identifier and should never truncate. */
+.table thead th:nth-child(1) { width: 280px; }  /* Trace ID */
+.table thead th:nth-child(2) { }                 /* Root — flex */
+.table thead th:nth-child(3) { width: 48px; }    /* Svcs */
+.table thead th:nth-child(4) { width: 52px; }    /* Spans */
+.table thead th:nth-child(5) { width: 80px; }    /* Duration */
+.table thead th:nth-child(6) { width: 130px; }   /* Started */
 
 .table tbody tr {
   border-bottom: 1px solid var(--cds-color-border-subtle);
@@ -57,54 +68,71 @@
 }
 
 .table td {
-  padding: var(--cds-space-md) var(--cds-space-lg);
+  padding: var(--cds-space-xs) var(--cds-space-md);
   vertical-align: middle;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .traceId {
   font-family: var(--cds-font-mono);
-  font-size: var(--cds-font-size-xs);
+  font-size: 11px;
   color: var(--cds-color-accent);
+  letter-spacing: -0.2px;
+}
+
+.rootCol {
+  display: flex;
+  align-items: center;
+  gap: var(--cds-space-xs);
+  min-width: 0;
 }
 
 .opName {
   font-weight: var(--cds-font-weight-medium);
   color: var(--cds-color-fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .svcChip {
   display: inline-block;
-  padding: 2px 8px;
-  font-size: var(--cds-font-size-xs);
+  padding: 1px 6px;
+  font-size: 10px;
   background: var(--cds-color-accent-subtle);
   color: var(--cds-color-accent-hover);
   border-radius: var(--cds-radius-sm);
   font-weight: var(--cds-font-weight-medium);
+  flex-shrink: 0;
 }
 
 .errorChip {
   display: inline-block;
-  padding: 2px 8px;
-  font-size: var(--cds-font-size-xs);
+  padding: 1px 5px;
+  font-size: 10px;
   background: var(--cds-color-danger-subtle);
   color: var(--cds-color-danger);
   border-radius: var(--cds-radius-sm);
   font-weight: var(--cds-font-weight-medium);
-  margin-left: var(--cds-space-xs);
+  flex-shrink: 0;
 }
 
 .numeric {
   font-variant-numeric: tabular-nums;
   color: var(--cds-color-fg-muted);
+  text-align: right;
+}
+
+.timeCol {
+  font-family: var(--cds-font-mono);
+  font-size: 11px;
+  color: var(--cds-color-fg-muted);
+  letter-spacing: -0.2px;
 }
 
 .empty {
   padding: var(--cds-space-xxl);
   text-align: center;
   color: var(--cds-color-fg-subtle);
-}
-
-.servicesCol {
-  color: var(--cds-color-fg-muted);
-  font-size: var(--cds-font-size-xs);
 }
