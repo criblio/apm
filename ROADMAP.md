@@ -35,9 +35,13 @@ intentions into saved searches and alerts behind the scenes.
 
 Concretely, that shapes every roadmap item:
 
-- "Alerting" → a **"Create alert"** button on Home catalog rows,
-  ServiceDetail, and arch graph that builds a saved-search + alert
-  definition under the hood, then calls the Cribl API to persist it
+- "Detected issues" → the health-bucket signals we already compute
+  (error rate thresholds, traffic drops, latency anomalies) should be
+  **materialized by scheduled searches** and rendered as a prominent
+  alerts panel on the home page — not buried in row tints
+- "User-created alerts" → a **"Create alert"** button that builds a
+  saved-search + alert definition under the hood, then calls the Cribl
+  API to persist it
 - "Saved views" → Cribl saved searches owned by the app, tagged with
   a `criblapm:view` tag so we can list and render them
 - "Dashboards" → a set of saved searches composed into a page; still
@@ -52,21 +56,14 @@ capability they'd ride on.
 
 ## Priorities (in rough order)
 
-### ~~1. AI-powered investigations (Copilot Investigator)~~ — **DONE (foundation)**
-
-Foundation and all integration points shipped in PR #14. See
-`docs/research/copilot-investigator.md` for the API spike and A/B
-comparison, and `docs/sessions/2026-04-12-copilot-implementation.md`
-for the implementation log.
-
-### 1a. Copilot Investigator — accuracy follow-ups (NEW, from scenario eval)
+### 1. Copilot Investigator — accuracy follow-ups
 
 The 2026-04-12 scenario evaluation
 (`docs/sessions/2026-04-12-scenario-evaluation.md`) ran five error-
 injection flags paired against the UI and Investigator. The Investigator
 nailed `cartFailure` (131s, exact Redis error + rendered trace) but
 **missed `paymentUnreachable`** — the UI surfaces it cleanly (94% rate
-drop, ▲+88023% p95) while the agent got anchored on stale cart data and
+drop, +88023% p95) while the agent got anchored on stale cart data and
 self-inflicted flagd-bounce noise. Three gaps, impact-ordered:
 
 1. **Traffic-drop detection pass.** Today the agent only looks at error
@@ -74,7 +71,7 @@ self-inflicted flagd-bounce noise. Three gaps, impact-ordered:
    signal is a service whose per-minute rate collapsed to near-zero.
    Add a client-side anomaly preflight that runs before the first LLM
    turn: compute per-service rate deltas vs the prior window, inject
-   "services with traffic drops ≥50%" into the preamble as known
+   "services with traffic drops >=50%" into the preamble as known
    signals. Home already does this for its `traffic_drop` health bucket;
    reuse that query.
 
@@ -83,7 +80,7 @@ self-inflicted flagd-bounce noise. Three gaps, impact-ordered:
    levels:
    - **Prompt:** add a "run an error histogram per minute first,
      distinguish recent from old signal" instruction to
-     `agentContext.ts`. Landing in this PR.
+     `agentContext.ts`.
    - **Code:** when the user prompt says "right now" or "in the last
      N minutes", the first `run_search` should tighten `earliest`
      accordingly instead of inheriting `-15m`.
@@ -95,112 +92,99 @@ self-inflicted flagd-bounce noise. Three gaps, impact-ordered:
    options: filter
    `grpc.flagd.evaluation.v1.Service/EventStream` at dataset ingest,
    or add a preamble paragraph explicitly marking those as expected
-   noise. Start with the preamble paragraph (landing in this PR).
+   noise.
 
-### ~~1b. UI gaps surfaced by the scenario eval~~ — **DONE**
+### 2. Home page: alerts surface + architecture-first layout
 
-All three items shipped (verified in the 2026-04-16 detection
-coverage audit against current source):
+The home page should be the place you go to answer "what's wrong
+right now?" Today the signals are there (health buckets, delta chips,
+root-cause hints) but they're spread across row tints and small
+pills in a table. This item reshapes the home page into an
+**alerts-first experience** with the system architecture graph as
+the primary visual.
 
-1. **Ghost nodes** — `SystemArchPage.tsx:199-290`. `traffic_drop`
-   and `silent` health buckets render dashed/outlined nodes with a
-   "no traffic" badge; clickable through to Service Detail.
-2. **Red rate-drop chip** — `DeltaChip.tsx` `rateDrop` mode with
-   `RATE_DROP_THRESHOLD = 0.5`. Wired on Home catalog rate column.
-3. **Root-cause hint** — `HomePage.tsx:378-407`. `rootCauseHints`
-   map derived from outgoing RPC edges; renders `→ likely <child>`
-   on anomalous rows.
+#### 2a. Home page layout + Services nav item
 
-### ~~1c. FAILURE-SCENARIOS.md smoke test~~ — **DONE**
+**Home page** becomes a single scrollable page with three sections,
+top to bottom:
 
-PR #10 (`tests/scenarios/flagd-catalog-validation.spec.ts`) validates
-`adFailure`, `productCatalogFailure`, and `llmRateLimitError`
-end-to-end against the deployed pack's Cribl Search endpoint. All
-three flags produce post-flip error spans. Key finding: `adFailure`
-is a 10% Bernoulli trial in upstream `AdService.java`
-(`random.nextInt(10) == 0`), not the hard-error pattern §6 of
-`FAILURE-SCENARIOS.md` originally described. §6 has been rewritten
-with a ⚠️ marker and the upstream source link.
+1. **Detected issues panel** (2b) — alerts/warnings at the very top
+2. **System Architecture graph** — force-directed / isometric view
+   with edge-level health, messaging edges, ghost nodes, node hover
+   tooltips. This is the primary visual — it answers "what does the
+   system look like right now?" at a glance.
+3. **Service list table** — the current catalog with rate / error /
+   p50 / p95 / p99 columns, delta chips, sparklines, and investigate
+   buttons. Detailed numeric view below the graph.
 
-### ~~1d. Detection coverage gaps~~ — **DONE**
+**"Services" nav item** — a new top-level menu entry after Home,
+with a mouseover dropdown:
 
-The detection coverage audit (`docs/sessions/2026-04-16-detection-
-coverage-and-fix-plan.md`) mapped all 15 `FAILURE-SCENARIOS.md` flags
-to current UI capability. Result: **9 fully detected, 3 partially
-detected, 1 design-limited, 2 out of scope.** All four proposed
-fixes shipped:
+- **List** (default) — navigates to a standalone service list page
+  (same table as section 3 of Home, but full-page for focused
+  exploration, filtering, and later expansion)
+- **Architecture** — navigates to a standalone System Architecture
+  page (same graph as section 2 of Home, full-page for pan/zoom
+  exploration)
 
-| # | PR | Status |
+The current separate "System Architecture" nav entry goes away,
+replaced by the Services dropdown. Both standalone pages share the
+same time range and health data as Home. The Home page is the
+"dashboard at a glance" that shows everything together; the Services
+pages are the drill-down views for when you want to focus on one
+representation.
+
+#### 2b. Detected issues panel (warnings / alerts)
+
+When any service is in a non-healthy state, show a **detected issues
+panel** prominently at the top of the home page (above both graph
+and list). Each row is one detected issue:
+
+| Signal type | Trigger | Example detail |
 |---|---|---|
-| 1 | PR #13 `test: bump scenario 1 Recent errors timeout` | ✅ merged |
-| 2 | PR #14 `fix: exempt kafka consumer ops from stream filter` | ✅ merged |
-| 3 | PR #15 `perf: ServiceDetail panel caching` | ✅ merged |
-| 4 | PR #17 `feat: Instances section on ServiceDetail` | ✅ merged |
+| **Error rate critical** | >5% error rate | `payment` error rate 12.3% (was 0.2%) |
+| **Error rate warn** | 1-5% error rate | `product-catalog` error rate 2.1% (was 0.0%) |
+| **Traffic drop** | Rate fell >=50% vs prior window | `payment` request rate dropped 94% |
+| **Latency anomaly** | Operation p95 >= 5x baseline | `fraud-detection consume` p95 48s (baseline 0.8s) |
+| **Service silent** | Was active, now zero traffic | `email` no traffic in last 15m (was 12 req/min) |
 
-Every theoretically-detectable scenario (12 of 15) now has a working
-UI surface. The remaining 3 are documented limitations: `adFailure`
-(10% Bernoulli rate), `llmInaccurateResponse` (semantic), and
-`imageSlowLoad` (client-side / RUM).
+Each row shows: severity indicator, service name, signal type,
+detail with before/after numbers, root-cause hint (if downstream
+edge attribution is available), and an Investigate button.
 
-**Operational note:** after deploying a pack version that adds new
-scheduled searches, you must re-provision via Settings → Provisioning
-(or a future `npm run provision` script). The deploy step only
-replaces the bundle — scheduled searches are created by the
-provisioner, not by the deploy.
+**Backend**: a new scheduled search (`criblapm__home_alerts`)
+materializes the current set of detected issues every 5 minutes.
+It joins the existing service summary, previous-window comparison,
+and operation anomaly data into a single result set of active
+alerts. The panel reads from `$vt_results` cache (same pattern as
+the existing home panels). When the panel is empty (all services
+healthy), it collapses to a single "All services healthy" line.
 
-### ~~1e. Eval harness~~ — **DONE (v1 shipped, first loop complete)**
+Sorted by severity (critical > silent > traffic_drop >
+latency_anomaly > warn), then by magnitude of change within each
+severity tier.
 
-Manual Autoresearch eval tool shipped as `npm run eval` (PR #19).
-Design: `docs/research/eval-harness/design.md`. Three starter
-scenarios (paymentFailure, kafkaQueueProblems, paymentUnreachable)
-covering the three most distinct failure shapes: error injection,
-consumer lag, and hard downtime.
+#### 2c. User-created alerts (via Cribl Saved Searches)
 
-First improvement loop completed (PR #20). Ran 4 rounds, fixed
-every failure, brought mean score from **0.71 → 1.00**:
+Build on the detected-issues panel to let users **persist** alerts:
 
-| Fix | What it addressed |
-|---|---|
-| Investigator latency-anomaly preflight | Copilot couldn't diagnose kafka lag (latency-only, no errors) |
-| ServiceDetail Recent errors -15m fallback | Panel too slow during fresh incidents (62s → 18s) |
-| Cribl KQL `(?i)` regex crash | Entire rawSlowestTraces query silently returned zero results |
-| `npm run provision` automation | No more manual Settings clicks after deploy |
-
-Full 13-scenario matrix completed (PRs #22-#23). 10 of 13
-fully detected (1.00), 3 at 0.77 with cluster-specific causes
-(adHighCpu flag effectiveness, cartFailure error attribution,
-flaky Copilot latency).
-
-### 1f. Metrics wide-column schema migration — **DONE**
-
-Cribl Search changed the metrics schema on 2026-04-15 from
-`_metric`/`_value` pair format to wide-column (each metric is
-its own top-level field). PR #24 rewrites all 14 query functions
-and 9 search functions to use bracket-quoted field references.
-
-- Metric discovery via regex on `_raw`, pre-computed by the
-  `criblapm__metric_catalog` scheduled search
-- Metrics picker redesigned: fuzzy search, prefix grouping,
-  inline type badges (C/G/H), alphabetical sort
-- Search results table: full 32-char trace IDs, compact layout
-
-**Known limitation:** histogram metrics with cumulative
-temporality (.NET SDK) store running sums — `percentile()`
-over these is nonsensical. Needs delta-based aggregation or
-temporality detection. Tracked for next session.
-
-### 2. User-facing alerts (via Cribl Saved Searches)
-
-- "Create alert" button on Home catalog rows, Service Detail, edges,
-  and logs — captures the current filter context and surfaces a
-  plain-language threshold form ("error rate > 5%", "p95 > 2s",
-  "request rate drops by 50%", "op p95 > N× baseline")
+- "Create alert" button on detected-issue rows, Service Detail,
+  edges, and logs — captures the current filter context and surfaces
+  a plain-language threshold form ("error rate > 5%", "p95 > 2s",
+  "request rate drops by 50%", "op p95 > Nx baseline")
 - Under the hood the app generates a KQL saved search, creates a
   Cribl alert against it via the same provisioning pipeline, and
   stores app-level metadata (alert name, owning view, UI context)
-- Rendered on an "Alerts" page that lists all app-managed alerts,
+  in the pack-scoped KV store
+- Rendered on an "Alerts" page that lists all user-created alerts,
   their current state, recent firings, and a link back to the view
   where they were created
+
+The distinction: 2b is **automatic detection** (the app tells you
+what's wrong right now, every 5 minutes, no configuration needed);
+2c is **user-defined alerting** (the user says "notify me when X
+happens" and gets Slack / email / PagerDuty via Cribl's notification
+targets).
 
 ### 3. SLO budgets
 
@@ -230,9 +214,9 @@ first-class feature surface:
 Users need to bookmark a filter configuration and return to it. Today
 we have zero persistence; every Search or Logs session starts empty.
 
-- "Save this view" button on Home / Search / Logs / ServiceDetail /
-  SystemArch — writes the current filter state to a Cribl saved
-  search with a pack tag
+- "Save this view" button on Home / Search / Logs / ServiceDetail —
+  writes the current filter state to a Cribl saved search with a pack
+  tag
 - A "Saved views" menu in the navbar that lists them, groups by tag
 - Composable dashboards: a page that renders multiple saved views as
   widgets
@@ -337,50 +321,10 @@ Being honest about the wins too:
 
 ## Completed
 
-### ~~Scenario detection & test harness (1b-1d)~~ — DONE
+Items below shipped and are kept for historical reference. See git
+log and linked PRs for implementation details.
 
-- **UI gaps** (§1b) — ghost nodes, red rate-drop chip, root-cause
-  hint: all three shipped. Verified against source in the 2026-04-16
-  coverage audit.
-- **Flagd smoke test** (§1c) — PR #10
-  `tests/scenarios/flagd-catalog-validation.spec.ts`. Also surfaced
-  `adFailure`'s 10% Bernoulli rate (upstream `AdService.java`).
-- **Home panel cache-miss fallback** — PR #8. When the scheduled
-  search for Error classes returns empty, fires a live query
-  fallback; adds a "cache Nm stale" chip on the panel header.
-- **Trace waterfall clock-skew resilience** — PR #9. `buildTimeline`
-  now anchors the chart scale to the root span so a single clock-
-  skewed child (e.g. the PHP quote service's ~1s offset) doesn't
-  blow the waterfall scale. Out-of-window spans render as warning
-  rows instead of invisible negative-offset bars. Root cause
-  diagnosed as the PHP OTel SDK's `SystemClock::now()` caching a
-  stale `microtime()` reference after an NTP step.
-- **ServiceDetail panel caching** — PR #15. Mirrors the Home panel
-  cache pattern for ServiceDetail: reads top-operations, recent
-  errors, summary, time series, and dependencies from `$vt_results`
-  in one batched query (~1-2s) instead of six uncached live queries
-  (10-20s). Only one new scheduled search (`criblapm__svc_operations`)
-  — the other five panels reuse existing Home + SysArch caches.
-- **Kafka consumer stream-filter exemption** — PR #14. Operations
-  matching `consumed|Consume` bypass the idle-wait stream filter so
-  kafka lag traces surface in the Slowest trace classes panel during
-  `kafkaQueueProblems` scenarios.
-- **Playwright e2e framework** — PRs #4-#7, #13. Auth0 login,
-  host-global injection, flagd-ui client, Cribl Search helper,
-  scenario 1 spec with cache-path exercise at `-1h`, flagd catalog
-  validation spec with post-flip `_time` filter.
-- **Documentation consolidation** — PR #12. ROADMAP.md is the single
-  source of truth; six session docs marked stale; FAILURE-SCENARIOS
-  known-gaps table pruned of three already-shipped items.
-- **Metrics wide-column migration** — PR #24. All 14 query functions
-  + 9 search functions rewritten for the new schema where each metric
-  is a top-level field instead of `_metric`/`_value`. Metrics picker
-  redesigned with fuzzy search, prefix grouping, inline type badges.
-  `criblapm__metric_catalog` scheduled search for fast discovery.
-- **Search results table density** — PR #24. Full 32-char trace IDs,
-  compact timestamps, service counts, no-wrapping fixed-layout.
-
-### ~~AI-powered investigations (Copilot Investigator)~~ — DONE
+### AI-powered investigations (Copilot Investigator) — DONE
 
 Cribl Search ships a "Run an Investigation" feature (Copilot
 Investigator) — a chat-based AI agent that runs KQL queries, reads
@@ -411,97 +355,123 @@ throughout Cribl APM so users can drill into problems with one click.
   transcript, inline Run Query approval cards, result tables,
   rendered trace waterfall (reuses the existing `SpanTree`
   component), and a dedicated Final Report card
-- **Investigate buttons** on:
-  - Home catalog rows (service + health + delta signals)
-  - Service Detail hero (service + top erroring/slow operations)
-  - Trace Detail header (trace_id + error spans; seeds the agent
-    to call `render_trace` first)
-  - System Architecture node tooltip
-  - System Architecture edges (click an edge line to investigate
-    parent→child with call count + error rate)
-  - Latency anomaly widget rows (p95 ratio + baseline context)
+- **Investigate buttons** on Home catalog rows, Service Detail hero,
+  Trace Detail header, System Architecture nodes and edges, and
+  Latency anomaly widget rows
 
-### ~~Metrics support~~ — DONE
+### Eval harness (Autoresearch loop) — DONE
+
+Manual Autoresearch eval tool shipped as `npm run eval` (PR #19).
+Design: `docs/research/eval-harness/design.md`. Three starter
+scenarios (paymentFailure, kafkaQueueProblems, paymentUnreachable)
+covering the three most distinct failure shapes: error injection,
+consumer lag, and hard downtime.
+
+First improvement loop completed (PR #20). Ran 4 rounds, fixed
+every failure, brought mean score from **0.71 -> 1.00**:
+
+| Fix | What it addressed |
+|---|---|
+| Investigator latency-anomaly preflight | Copilot couldn't diagnose kafka lag (latency-only, no errors) |
+| ServiceDetail Recent errors -15m fallback | Panel too slow during fresh incidents (62s -> 18s) |
+| Cribl KQL `(?i)` regex crash | Entire rawSlowestTraces query silently returned zero results |
+| `npm run provision` automation | No more manual Settings clicks after deploy |
+
+Full 13-scenario matrix completed (PRs #22-#23). 10 of 13
+fully detected (1.00), 3 at 0.77 with cluster-specific causes
+(adHighCpu flag effectiveness, cartFailure error attribution,
+flaky Copilot latency).
+
+### Scenario detection & test harness (1b-1d) — DONE
+
+- **UI gaps** (1b) — ghost nodes, red rate-drop chip, root-cause
+  hint: all three shipped. Verified against source in the 2026-04-16
+  coverage audit.
+- **Flagd smoke test** (1c) — PR #10
+  `tests/scenarios/flagd-catalog-validation.spec.ts`. Also surfaced
+  `adFailure`'s 10% Bernoulli rate (upstream `AdService.java`).
+- **Detection coverage gaps** (1d) — mapped all 15
+  `FAILURE-SCENARIOS.md` flags to current UI capability. Result:
+  **9 fully detected, 3 partially detected, 1 design-limited,
+  2 out of scope.** All four proposed fixes shipped (PRs #13-#17).
+
+### Metrics wide-column migration — DONE
+
+Cribl Search changed the metrics schema on 2026-04-15 from
+`_metric`/`_value` pair format to wide-column (each metric is
+its own top-level field). PR #24 rewrites all 14 query functions
+and 9 search functions to use bracket-quoted field references.
+
+- Metric discovery via regex on `_raw`, pre-computed by the
+  `criblapm__metric_catalog` scheduled search
+- Metrics picker redesigned: fuzzy search, prefix grouping,
+  inline type badges (C/G/H), alphabetical sort
+- Search results table: full 32-char trace IDs, compact layout
+
+**Known limitation:** histogram metrics with cumulative
+temporality (.NET SDK) store running sums — `percentile()`
+over these is nonsensical. Needs delta-based aggregation or
+temporality detection.
+
+### Metrics support — DONE
 
 The app now covers spans, logs, and metrics. The Metrics explorer tab
 supports metric type detection (counter/gauge/histogram), smart
-aggregation defaults (counter→rate, histogram→p95), group-by dimension
-picker, multi-series line charts, and rate derivation for counters.
+aggregation defaults (counter->rate, histogram->p95), group-by
+dimension picker, multi-series line charts, and rate derivation for
+counters.
 
-### ~~Durable baselines + panel caching~~ — DONE
+### Durable baselines + panel caching — DONE
 
-#### Research (2a) — DONE
+- **Research** — saved search provisioning API, persistence
+  mechanisms (`$vt_results`, `export to lookup`, `| send`),
+  notification targets, idempotent `criblapm__` naming. See
+  [`docs/research/cribl-saved-searches.md`](docs/research/cribl-saved-searches.md).
+- **Durable baselines** — scheduled search computes per-(service,
+  operation) p50/p95/p99 over a rolling 24h window, exports to
+  `lookup criblapm_op_baselines`. Anomaly detector reads via
+  hash-join. Graceful degradation when lookup doesn't exist yet.
+- **Panel caching** — Home and System Architecture read precomputed
+  data from `$vt_results` in one batched query (~1-2s). Scheduled
+  searches: `criblapm__home_service_summary`,
+  `criblapm__home_service_time_series`, `criblapm__home_slow_traces`,
+  `criblapm__home_error_spans`, `criblapm__sysarch_dependencies`,
+  `criblapm__sysarch_messaging_deps`, `criblapm__op_baselines`,
+  `criblapm__svc_operations`, `criblapm__metric_catalog`.
+- **Provisioning workflow** — Settings page reconciles scheduled
+  saved searches (preview -> apply). `npm run provision` for CLI.
+  `npm run deploy` auto-reconciles.
 
-Detailed findings in
-[`docs/research/cribl-saved-searches.md`](docs/research/cribl-saved-searches.md).
-The REST surface, persistence mechanism, POST shape, notification
-target collection, and idempotent-naming path are all resolved.
+### Core APM surfaces — DONE
 
-Key findings:
-- Saved search provisioning API at `/api/v1/m/default_search/search/saved`
-- Client-chosen `id` is respected — enables idempotent naming
-- Auth: platform fetch proxy injects Bearer JWT automatically
-- Three persistence mechanisms confirmed: `$vt_results` (auto-retained
-  7 days), `export to lookup` (hash-join, sub-ms reads, 10k row cap),
-  `| send` (no cap, heavier setup)
-- Notification targets at `GET /api/v1/notification-targets` (cross-product)
-- Convention: prefix app-managed IDs with `criblapm__`
-
-#### Durable baselines (2b.1) — DONE
-
-Scheduled search computes per-(service, operation) p50/p95/p99 over
-a rolling 24h window, exports to `lookup criblapm_op_baselines`.
-The anomaly detector reads baselines via lookup hash-join. Graceful
-degradation when lookup doesn't exist yet.
-
-#### Panel caching (2b.2) — DONE
-
-Home and System Architecture pages read precomputed panel data from
-`$vt_results` cache via batched single-query reads. Reduces Home
-page load from ~8s (5-7 independent queries) to ~1-2s (one
-`$vt_results` read). Scheduled searches provisioned:
-
-| Saved search ID | Cron |
-|---|---|
-| `criblapm__home_service_summary` | `*/5 * * * *` |
-| `criblapm__home_service_time_series` | `*/5 * * * *` |
-| `criblapm__home_slow_traces` | `*/5 * * * *` |
-| `criblapm__home_error_spans` | `*/5 * * * *` |
-| `criblapm__sysarch_dependencies` | `*/5 * * * *` |
-| `criblapm__sysarch_messaging_deps` | `*/5 * * * *` |
-| `criblapm__op_baselines` | `0 * * * *` |
-
-#### Provisioning workflow (2e) — DONE (basic)
-
-Settings page includes a provisioning panel that reconciles scheduled
-saved searches (preview → apply workflow with create/update/delete/noop
-actions). Stores `provisioned-version` in KV. First-run dialog
-not yet implemented (manual trigger from Settings for now).
-
-### ~~Core APM surfaces~~ — DONE (shipped on `jaeger-clone`)
-
-- Home: service catalog with rate / error / p50/p95/p99 columns, delta
-  chips vs. previous window, error classes, slowest trace classes,
-  latency anomalies widget (ops ≥5× baseline p95), sortable columns
-- Health buckets: error-rate (watch/warn/critical) + traffic_drop
-  (rate fell ≥50% vs prior window) + latency_anomaly (op p95 ≥5×
-  baseline). Precedence: critical > warn > latency_anomaly >
-  traffic_drop > watch > healthy > idle. Row tints on Home catalog,
-  halo rings on System Architecture nodes.
-- Search: fixed-shape form with service / operation / tags / duration
-  / limit / lookback; results table; stream-noise trace filter
-- Logs: standalone log search tab with service / severity / body / limit
-  / range filters; sticky facet sidebar; fills vertical viewport
-- Metrics: Datadog-style explorer with metric picker, group-by
-  dimensions, rate-of-counter derivation, histogram percentile
+- Home: service catalog with rate / error / p50/p95/p99 columns,
+  delta chips, error classes, slowest trace classes, latency anomalies
+- Health buckets: error-rate + traffic_drop + latency_anomaly with
+  precedence ordering. Row tints on catalog, halos on arch graph.
+- Search: fixed-shape form with results table and stream-noise filter
+- Logs: service / severity / body / range filters, sticky facet sidebar
+- Metrics: explorer with picker, group-by, rate derivation, percentile
 - Compare: two-trace structural diff
-- System Architecture: force-directed + isometric graphs, pan+zoom,
-  edge-level health, messaging edges, node hover tooltip with
-  lazy-loaded operations breakdown + traffic-drop delta
-- Service Detail: RED charts (rate, error, p50/p95/p99), top
-  operations, recent errors, dependencies, p99 delta chip, dependency
-  latencies / runtime health / infrastructure metric cards (batched)
+- System Architecture: force-directed + isometric, edge-level health,
+  messaging edges, ghost nodes, node hover tooltips
+- Service Detail: RED charts, top operations, recent errors,
+  dependencies, instances, metric cards (batched)
 - Trace detail: waterfall, span detail with attributes / events /
   logs / process tags / exception stack traces, trace logs tab
 - Settings: dataset selection + stream-filter toggle + provisioning
-  panel, persisted in pack-scoped KV
+
+### Infrastructure & testing — DONE
+
+- **ServiceDetail panel caching** — PR #15. Mirrors Home panel
+  cache for ServiceDetail (~1-2s vs 10-20s).
+- **Kafka consumer stream-filter exemption** — PR #14. Consumer
+  ops bypass idle-wait filter for kafka lag scenarios.
+- **Home panel cache-miss fallback** — PR #8. Live query fallback
+  with "cache Nm stale" indicator.
+- **Trace waterfall clock-skew resilience** — PR #9. Root-span
+  anchoring for clock-skewed children.
+- **Playwright e2e framework** — PRs #4-#7, #13. Auth0 login,
+  host-global injection, flagd-ui client, Cribl Search helper,
+  scenario specs.
+- **Documentation consolidation** — PR #12.
+- **Search results table density** — PR #24.
