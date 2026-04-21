@@ -8,13 +8,18 @@ interface Props {
 
 function formatDuration(us: number): string {
   if (us < 1000) return `${us.toFixed(0)} μs`;
-  if (us < 1_000_000) return `${(us / 1000).toFixed(2)} ms`;
+  if (us < 1_000_000) return `${(us / 1000).toFixed(1)} ms`;
   return `${(us / 1_000_000).toFixed(2)} s`;
 }
 
 function formatTime(us: number): string {
-  const ms = us / 1000;
-  return new Date(ms).toLocaleString();
+  const d = new Date(us / 1000);
+  const h = d.getHours().toString().padStart(2, '0');
+  const m = d.getMinutes().toString().padStart(2, '0');
+  const sec = d.getSeconds().toString().padStart(2, '0');
+  const mon = d.toLocaleString('en', { month: 'short' });
+  const day = d.getDate();
+  return `${mon} ${day} ${h}:${m}:${sec}`;
 }
 
 export default function TraceTable({ traces }: Props) {
@@ -40,7 +45,7 @@ export default function TraceTable({ traces }: Props) {
           <tr>
             <th>Trace ID</th>
             <th>Root</th>
-            <th>Services</th>
+            <th>Svcs</th>
             <th>Spans</th>
             <th>Duration</th>
             <th>Started</th>
@@ -50,21 +55,26 @@ export default function TraceTable({ traces }: Props) {
           {traces.map((t) => (
             <tr key={t.traceID} onClick={() => navigate(`/trace/${t.traceID}`)}>
               <td>
-                <span className={s.traceId}>{t.traceID.slice(0, 16)}…</span>
+                <span className={s.traceId}>{t.traceID}</span>
               </td>
-              <td>
-                <span className={s.svcChip}>{t.rootService}</span>{' '}
+              <td className={s.rootCol}>
+                <span className={s.svcChip}>{t.rootService}</span>
                 <span className={s.opName}>{t.rootOperation}</span>
                 {t.errorCount > 0 && (
                   <span className={s.errorChip}>
-                    {t.errorCount} error{t.errorCount > 1 ? 's' : ''}
+                    {t.errorCount} err{t.errorCount > 1 ? 's' : ''}
                   </span>
                 )}
               </td>
-              <td className={s.servicesCol}>{t.services.join(', ')}</td>
+              <td
+                className={s.numeric}
+                title={t.services.join(', ')}
+              >
+                {t.services.length}
+              </td>
               <td className={s.numeric}>{t.spanCount}</td>
               <td className={s.numeric}>{formatDuration(t.duration)}</td>
-              <td className={s.numeric}>{formatTime(t.startTime)}</td>
+              <td className={s.timeCol}>{formatTime(t.startTime)}</td>
             </tr>
           ))}
         </tbody>
