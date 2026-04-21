@@ -52,8 +52,6 @@ export async function exportAsPng({ element, filename }: ExportOptions): Promise
 
 export async function exportAsPdf({ element, filename }: ExportOptions): Promise<void> {
   const canvas = await captureCanvas(element);
-  const imgData = canvas.toDataURL('image/png');
-
   const pxWidth = canvas.width;
   const pxHeight = canvas.height;
 
