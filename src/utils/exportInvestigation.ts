@@ -78,7 +78,7 @@ export async function exportAsPng({ element }: ExportOptions): Promise<string> {
 
   const img = new Image();
   const scale = 2;
-  await new Promise<void>((resolve, reject) => {
+  return new Promise<string>((resolve, reject) => {
     img.onload = () => {
       const canvas = document.createElement('canvas');
       canvas.width = width * scale;
