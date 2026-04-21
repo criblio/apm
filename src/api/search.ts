@@ -585,6 +585,13 @@ function discoverMetricNames(rows: Record<string, unknown>[]): MetricSummary[] {
     .sort((a, b) => b.samples - a.samples);
 }
 
+function parseMetricType(raw: string): MetricType {
+  if (raw === 'counter') return 'counter';
+  if (raw === 'gauge') return 'gauge';
+  if (raw === 'histogram') return 'histogram';
+  return 'unknown';
+}
+
 let metricNamesCache: MetricSummary[] | null = null;
 
 /**
@@ -606,6 +613,7 @@ export async function listMetrics(
         name: String(r.name ?? ''),
         samples: toNum(r.samples),
         services: toNum(r.services),
+        type: parseMetricType(String(r.metric_type ?? '')),
       })).filter((m) => m.name);
       if (result.length > 0) {
         metricNamesCache = result;
@@ -619,6 +627,7 @@ export async function listMetrics(
     name: String(r.name ?? ''),
     samples: toNum(r.samples),
     services: toNum(r.services),
+    type: parseMetricType(String(r.metric_type ?? '')),
   })).filter((m) => m.name);
   if (result.length > 0) metricNamesCache = result;
   return result;
