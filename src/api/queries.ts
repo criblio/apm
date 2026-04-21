@@ -597,9 +597,10 @@ export function listMetricNames(): string {
         and metric_name != "_metric_type"
         and metric_name != "_datatype_detection"
     | extend svc=tostring(['service.name'])
-    | summarize samples=count(), services=dcount(svc)
+    | summarize samples=count(), services=dcount(svc),
+                metric_type=any(_metric_type)
       by name=metric_name
-    | sort by samples desc
+    | sort by name asc
     | limit 500`;
 }
 

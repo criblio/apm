@@ -220,6 +220,7 @@ export interface MetricSummary {
   name: string;
   samples: number;
   services: number;
+  type?: MetricType;
 }
 
 /** A single point on a metric time series. Ms since epoch, numeric value. */
