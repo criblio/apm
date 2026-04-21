@@ -42,11 +42,14 @@ function restoreScrollContainers(saved: Array<{ el: HTMLElement; mh: string; ov:
   }
 }
 
+const PADDING = 32;
+const BG_COLOR = '#ffffff';
+
 export async function exportAsPng({ element }: ExportOptions): Promise<string> {
   const saved = expandScrollContainers(element);
 
-  const width = element.scrollWidth;
-  const height = element.scrollHeight;
+  const innerWidth = element.scrollWidth;
+  const innerHeight = element.scrollHeight;
 
   const clone = element.cloneNode(true) as HTMLElement;
   inlineStyles(element, clone);
@@ -58,19 +61,24 @@ export async function exportAsPng({ element }: ExportOptions): Promise<string> {
 
   restoreScrollContainers(saved);
 
-  clone.style.width = `${width}px`;
-  clone.style.height = `${height}px`;
+  clone.style.width = `${innerWidth}px`;
+  clone.style.height = `${innerHeight}px`;
   clone.style.position = 'static';
   clone.style.overflow = 'visible';
   clone.style.maxHeight = 'none';
+  clone.style.background = 'transparent';
+
+  const totalWidth = innerWidth + PADDING * 2;
+  const totalHeight = innerHeight + PADDING * 2;
 
   const xmlns = 'http://www.w3.org/1999/xhtml';
   const serializer = new XMLSerializer();
   const html = serializer.serializeToString(clone);
 
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">
-    <foreignObject width="100%" height="100%">
-      <div xmlns="${xmlns}">${html}</div>
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${totalWidth}" height="${totalHeight}">
+    <rect width="100%" height="100%" fill="${BG_COLOR}"/>
+    <foreignObject x="${PADDING}" y="${PADDING}" width="${innerWidth}" height="${innerHeight}">
+      <div xmlns="${xmlns}" style="background:${BG_COLOR};width:${innerWidth}px;height:${innerHeight}px;">${html}</div>
     </foreignObject>
   </svg>`;
 
@@ -81,9 +89,14 @@ export async function exportAsPng({ element }: ExportOptions): Promise<string> {
   return new Promise<string>((resolve, reject) => {
     img.onload = () => {
       const canvas = document.createElement('canvas');
-      canvas.width = width * scale;
-      canvas.height = height * scale;
+      canvas.width = totalWidth * scale;
+      canvas.height = totalHeight * scale;
       const ctx = canvas.getContext('2d')!;
+      // Paint solid background first — guards against any transparent
+      // regions in the SVG (assistant messages have no bg in CSS, they
+      // rely on the page body color).
+      ctx.fillStyle = BG_COLOR;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
       ctx.scale(scale, scale);
       ctx.drawImage(img, 0, 0);
 
