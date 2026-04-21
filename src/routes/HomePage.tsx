@@ -5,6 +5,7 @@ import { binSecondsFor } from '../components/timeRanges';
 import Sparkline from '../components/Sparkline';
 import StatusBanner from '../components/StatusBanner';
 import TraceClassList, { type ClassItem } from '../components/TraceClassList';
+import OperationAnomalyList from '../components/OperationAnomalyList';
 import DetectedIssuesPanel from '../components/DetectedIssuesPanel';
 import SystemArchGraph from '../components/SystemArchGraph';
 import {
@@ -698,7 +699,15 @@ export default function HomePage() {
         )}
       </div>
 
-      {/* Bottom panels: slow trace classes + error classes */}
+      {/* Bottom panels: anomalies, slow trace classes, error classes */}
+      <div className={s.panelsFull}>
+        <OperationAnomalyList
+          items={anomalies}
+          loading={loadingAnomalies}
+          lookback={range}
+        />
+      </div>
+
       <div className={s.panels}>
         <TraceClassList
           title="Slowest trace classes"
