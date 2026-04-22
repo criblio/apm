@@ -79,35 +79,57 @@ export function useForceLayout({
   const [tick, setTick] = useState(0);
 
   useEffect(() => {
-    // Clone the inputs so d3 can mutate without affecting parent state.
-    const simNodes: SimNode[] = nodes.map((n) => ({ ...n }));
+    // Preserve positions from the previous simulation so data refreshes
+    // don't randomize the layout. Only genuinely new nodes start at the
+    // center; existing nodes keep their settled x/y.
+    const prevById = new Map<string, SimNode>();
+    for (const n of simNodesRef.current) prevById.set(n.id, n);
+
+    const simNodes: SimNode[] = nodes.map((n) => {
+      const prev = prevById.get(n.id);
+      if (prev) {
+        return { ...n, x: prev.x, y: prev.y, vx: 0, vy: 0 };
+      }
+      return { ...n };
+    });
     const simLinks: SimLink[] = links.map((l) => ({ ...l }));
+
+    const hadPrevious = prevById.size > 0;
+    const existingNodeCount = simNodes.filter((n) => prevById.has(n.id)).length;
+    const isStructuralChange = !hadPrevious || existingNodeCount < simNodes.length;
+
     simNodesRef.current = simNodes;
     simLinksRef.current = simLinks;
+
+    if (simRef.current) {
+      simRef.current.stop();
+    }
 
     const sim = forceSimulation<SimNode>(simNodes)
       .force(
         'link',
         forceLink<SimNode, SimLink>(simLinks)
           .id((d) => d.id)
-          // Looser spacing so the graph is more readable when there are
-          // many hub-spoke relationships.
           .distance(200)
           .strength(0.4),
       )
-      // Stronger repulsion — pushes unrelated nodes apart.
       .force('charge', forceManyBody().strength(-1000).distanceMax(600))
       .force('center', forceCenter(width / 2, height / 2).strength(0.05))
-      // Extra padding so labels don't overlap adjacent nodes.
       .force(
         'collision',
         forceCollide<SimNode>().radius((d) => nodeRadius(d) + 14).strength(1),
       )
-      // Slower cooldown keeps the layout settling smoothly after drags.
       .alphaDecay(0.03)
       .on('tick', () => {
         setTick((t) => t + 1);
       });
+
+    // When only data changed (same nodes, updated metrics), start nearly
+    // cooled so the graph barely moves. Only do a full warm start when
+    // the topology actually changed (new/removed nodes).
+    if (hadPrevious && !isStructuralChange) {
+      sim.alpha(0.05);
+    }
 
     simRef.current = sim;
     return () => {

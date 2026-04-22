@@ -190,10 +190,17 @@ export default function DependencyGraph({
     nodeRadius,
   });
 
+  // Fit-to-viewport once on initial layout. Only re-fit when the
+  // number of nodes changes (topology change), not on every data
+  // refresh (which just updates metrics on the same nodes).
   const didFitRef = useRef(false);
+  const prevNodeCountRef = useRef(0);
   useEffect(() => {
-    didFitRef.current = false;
-  }, [edges]);
+    if (nodes.length !== prevNodeCountRef.current) {
+      didFitRef.current = false;
+      prevNodeCountRef.current = nodes.length;
+    }
+  }, [nodes.length]);
   useEffect(() => {
     if (didFitRef.current || tick < 30) return;
     didFitRef.current = true;
@@ -206,7 +213,7 @@ export default function DependencyGraph({
       if (n.y != null) { minY = Math.min(minY, n.y - r); maxY = Math.max(maxY, n.y + r); }
     }
     if (isFinite(minX)) fitToBounds({ minX, minY, maxX, maxY });
-  }, [tick, edges, fitToBounds, simNodesRef]);
+  }, [tick, fitToBounds, simNodesRef]);
 
   const focusId = pinned ?? hovered;
   const focusNode = focusId
