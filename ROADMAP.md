@@ -164,27 +164,58 @@ Sorted by severity (critical > silent > traffic_drop >
 latency_anomaly > warn), then by magnitude of change within each
 severity tier.
 
-#### 2c. User-created alerts (via Cribl Saved Searches)
+#### 2c. Alerting system
 
-Build on the detected-issues panel to let users **persist** alerts:
+Full design: [`docs/research/alerting-design.md`](docs/research/alerting-design.md).
 
-- "Create alert" button on detected-issue rows, Service Detail,
-  edges, and logs — captures the current filter context and surfaces
-  a plain-language threshold form ("error rate > 5%", "p95 > 2s",
-  "request rate drops by 50%", "op p95 > Nx baseline")
-- Under the hood the app generates a KQL saved search, creates a
-  Cribl alert against it via the same provisioning pipeline, and
-  stores app-level metadata (alert name, owning view, UI context)
-  in the pack-scoped KV store
-- Rendered on an "Alerts" page that lists all user-created alerts,
-  their current state, recent firings, and a link back to the view
-  where they were created
+Two categories of alerts working together:
 
-The distinction: 2b is **automatic detection** (the app tells you
-what's wrong right now, every 5 minutes, no configuration needed);
-2c is **user-defined alerting** (the user says "notify me when X
-happens" and gets Slack / email / PagerDuty via Cribl's notification
-targets).
+- **Auto-alerts** — generated automatically from detected issues.
+  No configuration needed to detect; one global setting in Settings
+  to route notifications (Slack, email, PagerDuty), with per-alert
+  overrides on the Alerts page. The system tracks each detected
+  issue through a state machine (ok → pending → firing → resolving
+  → ok) with debounce at each transition to prevent flapping.
+- **User-created alerts** — persistent thresholds created via the
+  UI. Each becomes a Cribl saved search with a notification target
+  (Slack, email, PagerDuty, webhook). "Create alert" button on
+  detected issue rows, Service Detail, and edges.
+
+Key features:
+- **Debounce**: `fireAfter` consecutive bad evaluations before
+  firing (default 2), `clearAfter` consecutive good before
+  clearing (default 3). Prevents flapping.
+- **Suppression**: don't re-notify every cycle while still firing.
+  Configurable re-notify interval (default 30m).
+- **Clear messages**: when an alert resolves, send a "resolved"
+  notification with total duration.
+- **Alerts page**: lists all alerts (auto + user) with status,
+  duration, last fired, notification target, edit/silence actions.
+- **Status on Detected Issues**: each row shows alert state
+  (new/firing/resolving) so you can see at a glance what's been
+  alerted on vs what's still pending confirmation.
+
+Implementation phases:
+1. Alert state machine + state tracking in KV + Alerts page
+2. Create Alert dialog + notification dispatch via Cribl API
+3. Polish: silence/snooze, alert grouping, history, server-side
+   evaluation (fires without the browser open)
+
+#### 2d. Eval suite: detected issues + alerts validation
+
+Before declaring item 2 complete, enhance the eval harness
+(`npm run eval`) to validate the full detection-to-alerting
+lifecycle:
+
+1. Flip a failure flag → wait for 2+ cadence cycles
+2. Assert detected issue appears in the panel
+3. Assert alert state transitions to `firing`
+4. Revert the flag → wait for 3+ cadence cycles
+5. Assert alert state transitions back to `ok`
+6. Assert a "resolved" event was recorded
+
+This validates: detection → alerting → debounce → resolution
+across the failure scenarios in `FAILURE-SCENARIOS.md`.
 
 ### 3. SLO budgets
 
