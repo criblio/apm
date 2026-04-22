@@ -214,6 +214,17 @@ export function getProvisioningPlan(): ProvisionedSearch[] {
       sampleRate: 1,
       schedule: { ...evalCadence },
     },
+    {
+      id: 'criblapm__alert_history_send',
+      name: 'Cribl APM - alert history send',
+      description:
+        'Cribl APM: sends alert state transitions (firing/resolved) back to the dataset as searchable history via | send group="search".',
+      query: Q.alertHistorySend(),
+      earliest: '-1h',
+      latest: 'now',
+      sampleRate: 1,
+      schedule: { ...evalCadence },
+    },
     // ── System Architecture panel caches ────────────────────
     {
       id: 'criblapm__sysarch_dependencies',

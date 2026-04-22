@@ -301,6 +301,30 @@ export function alertEvaluatorExportState(): string {
 }
 
 /**
+ * Sends alert state transition events (firing, resolved) back to
+ * the otel dataset as searchable history. Only emits rows where
+ * transitioned_to is non-empty — not every evaluation cycle.
+ * Uses | send group="search" to route through the Local Search
+ * HTTP input, with dataset="otel" so the event lands in the
+ * otel lakehouse dataset.
+ */
+export function alertHistorySend(): string {
+  const ds = quoteDataset();
+  const base = alertEvaluator();
+  return `${base}
+    | where transitioned_to != ""
+    | project _time=now(), dataset="${ds}",
+              datatype="criblapm_alert",
+              event_type=transitioned_to,
+              alert_id, alert_status, svc,
+              signal_type, is_persistent,
+              curr_error_rate, prev_error_rate,
+              curr_requests, prev_requests,
+              fire_count, consecutive_bad
+    | send group="search"`;
+}
+
+/**
  * Time-bucketed request count + p95 per service. Powers service-row
  * sparklines on the Home page and the RED charts on the Service detail page.
  *
