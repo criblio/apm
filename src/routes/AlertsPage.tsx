@@ -47,8 +47,19 @@ const SIGNAL_LABELS: Record<string, string> = {
   none: '—',
 };
 
+interface AlertEvent {
+  time: number;
+  eventType: string;
+  service: string;
+  signalType: string;
+  errorRate: number;
+  prevErrorRate: number;
+  fireCount: number;
+}
+
 export default function AlertsPage() {
   const [alerts, setAlerts] = useState<CachedAlertRow[]>([]);
+  const [history, setHistory] = useState<AlertEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -56,9 +67,20 @@ export default function AlertsPage() {
     setLoading(true);
     setError(null);
     try {
-      const query = 'dataset="$vt_results" | where jobName == "criblapm__home_alerts"';
-      const rows = await runQuery(query, '-1h', 'now', 500);
-      setAlerts(parseAlertRows(rows));
+      const [alertRows, historyRows] = await Promise.all([
+        runQuery('dataset="$vt_results" | where jobName == "criblapm__home_alerts"', '-1h', 'now', 500),
+        runQuery('dataset="otel" | where data_datatype == "criblapm_alert" | project _time, event_type, svc, signal_type, curr_error_rate, prev_error_rate, fire_count | sort by _time desc | limit 50', '-7d', 'now', 50),
+      ]);
+      setAlerts(parseAlertRows(alertRows));
+      setHistory(historyRows.map((r) => ({
+        time: Number(r._time) * 1000,
+        eventType: String(r.event_type ?? ''),
+        service: String(r.svc ?? ''),
+        signalType: String(r.signal_type ?? ''),
+        errorRate: Number(r.curr_error_rate ?? 0),
+        prevErrorRate: Number(r.prev_error_rate ?? 0),
+        fireCount: Number(r.fire_count ?? 0),
+      })));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -196,6 +218,49 @@ export default function AlertsPage() {
               </tbody>
             </table>
           </div>
+          {history.length > 0 && (
+            <div className={s.card}>
+              <h2 className={s.sectionTitle}>
+                Recent Alert Events
+              </h2>
+              <table className={s.table}>
+                <thead>
+                  <tr>
+                    <th>Time</th>
+                    <th>Event</th>
+                    <th>Service</th>
+                    <th>Signal</th>
+                    <th>Error Rate</th>
+                    <th>Prev Error Rate</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {history.map((h, i) => (
+                    <tr key={i}>
+                      <td style={{ whiteSpace: 'nowrap' }}>{new Date(h.time).toLocaleString()}</td>
+                      <td>
+                        <span className={`${s.statusBadge} ${h.eventType === 'firing' ? s.statusFiring : s.statusOk}`}>
+                          {h.eventType}
+                        </span>
+                      </td>
+                      <td>
+                        <Link
+                          to={`/service/${encodeURIComponent(h.service)}?range=-1h`}
+                          className={s.svcLink}
+                          style={{ color: serviceColor(h.service) }}
+                        >
+                          {h.service}
+                        </Link>
+                      </td>
+                      <td>{SIGNAL_LABELS[h.signalType] ?? h.signalType}</td>
+                      <td>{(h.errorRate * 100).toFixed(2)}%</td>
+                      <td>{(h.prevErrorRate * 100).toFixed(2)}%</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </>
       )}
     </div>
