@@ -94,11 +94,6 @@ export function buildDetectedIssues(
         });
         break;
       }
-      case 'watch':
-        // Stable baseline error rate — serviceHealth downgraded to
-        // watch because previous window had similar errors. Not a
-        // new issue, don't surface in detected issues panel.
-        break;
       case 'traffic_drop': {
         const ratio = prev ? Math.round((1 - svc.requests / prev.requests) * 100) : 0;
         issues.push({
@@ -212,6 +207,7 @@ export function buildDetectedIssuesFromCache(
       severity: severityMap[signalType],
       detail,
       alertStatus,
+      isPersistent: r.isPersistent,
     });
   }
 

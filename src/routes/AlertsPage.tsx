@@ -23,6 +23,7 @@ function parseAlertRows(rows: Record<string, unknown>[]): CachedAlertRow[] {
     alertId: String(r.alert_id ?? ''),
     signalType: String(r.signal_type ?? 'none'),
     isBad: r.is_bad === true || r.is_bad === 'true',
+    isPersistent: r.is_persistent === true || r.is_persistent === 'true',
     alertStatus: String(r.alert_status ?? 'ok'),
     consecutiveBad: toNum(r.consecutive_bad),
     consecutiveGood: toNum(r.consecutive_good),

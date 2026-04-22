@@ -129,6 +129,11 @@ export default function DetectedIssuesPanel({ issues, loading, lookback }: Props
                       {issue.alertStatus}
                     </span>
                   )}
+                  {issue.isPersistent && (
+                    <span className={s.persistentBadge} title="Elevated in both current and previous window">
+                      persistent
+                    </span>
+                  )}
                   <span
                     className={s.svcName}
                     style={{ color: serviceColor(issue.service) }}

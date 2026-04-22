@@ -237,16 +237,20 @@ export function alertEvaluator(): string {
              prev_error_rate=iff(isnotnull(prev_err_rate), toreal(prev_err_rate), 0.0)
     | extend curr_err_pct=curr_error_rate * 100,
              prev_err_pct=prev_error_rate * 100,
-             is_baseline=(prev_error_rate * 100 >= 1 and (curr_error_rate * 100 - prev_error_rate * 100) < 2),
+             // is_persistent is informational — used by notification
+             // logic to suppress repeat pings, NOT by detection.
+             // A 25% error rate that's been 25% for an hour is still
+             // a real problem that should be visible.
+             is_persistent=(prev_error_rate * 100 >= 1 and (curr_error_rate * 100 - prev_error_rate * 100) < 2),
              traffic_ratio=iff(prev_requests >= 50, curr_requests/prev_requests, 1.0)
     | extend signal_type=case(
                curr_requests == 0 and prev_requests >= 50, "silent",
-               curr_err_pct >= 1 and not(is_baseline), "error_rate",
+               curr_err_pct >= 1, "error_rate",
                traffic_ratio <= 0.5 and prev_requests >= 50, "traffic_drop",
                "none"),
              is_bad=(
                (curr_requests == 0 and prev_requests >= 50)
-               or (curr_err_pct >= 1 and not(is_baseline))
+               or (curr_err_pct >= 1)
                or (traffic_ratio <= 0.5 and prev_requests >= 50))
     | extend alert_id=strcat("auto:", signal_type, ":", svc)
     | lookup criblapm_alert_states on alert_id
@@ -276,7 +280,7 @@ export function alertEvaluator(): string {
                "")
     | project svc, curr_requests, curr_errors, curr_error_rate,
               prev_requests, prev_errors, prev_error_rate,
-              alert_id, signal_type, is_bad,
+              alert_id, signal_type, is_bad, is_persistent,
               alert_status, consecutive_bad, consecutive_good,
               fire_count, transitioned_to`;
 }

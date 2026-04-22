@@ -161,6 +161,20 @@
   color: #059669;
 }
 
+.persistentBadge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 5px;
+  border-radius: var(--cds-radius-sm);
+  font-size: 9px;
+  font-weight: var(--cds-font-weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  background: rgba(107, 114, 128, 0.15);
+  color: #6b7280;
+  white-space: nowrap;
+}
+
 .actions {
   display: flex;
   align-items: center;
