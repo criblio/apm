@@ -191,16 +191,24 @@ export default function HomePage() {
   const [lastRefresh, setLastRefresh] = useState<number>(() => Date.now());
   const streamFilterEnabled = useStreamFilterEnabled();
 
+  const hasDataRef = useRef(false);
+
   const fetchAll = useCallback(async () => {
     setError(null);
     const binSeconds = binSecondsFor(range);
-    setLoadingSummaries(true);
-    setLoadingBuckets(true);
-    setLoadingSlow(true);
-    setLoadingErrors(true);
-    setLoadingAnomalies(true);
-    setLoadingEdges(true);
-    setCachedIssues(null);
+    // Only show loading skeletons on initial load (no data yet).
+    // On subsequent refreshes, keep displaying the previous data
+    // while new data loads in the background — each panel updates
+    // in place as its query resolves. This prevents the jarring
+    // flash-to-skeleton on every auto-refresh or manual "Refresh now".
+    if (!hasDataRef.current) {
+      setLoadingSummaries(true);
+      setLoadingBuckets(true);
+      setLoadingSlow(true);
+      setLoadingErrors(true);
+      setLoadingAnomalies(true);
+      setLoadingEdges(true);
+    }
     setPanelCacheUpdatedMs(null);
 
     const prev = previousWindow(range);
@@ -248,7 +256,8 @@ export default function HomePage() {
             setCachedIssues(buildDetectedIssuesFromCache(cached.alertRows, 60));
           }
 
-          setLastRefresh(Date.now());
+          hasDataRef.current = true;
+    setLastRefresh(Date.now());
           return;
         }
       } catch {
@@ -288,6 +297,7 @@ export default function HomePage() {
       pAnomalies,
       pEdges,
     ]);
+    hasDataRef.current = true;
     setLastRefresh(Date.now());
   }, [range, streamFilterEnabled]);
 
