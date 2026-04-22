@@ -3,7 +3,6 @@ import { Link } from 'react-router-dom';
 import StatusBanner from '../components/StatusBanner';
 import { runQuery } from '../api/cribl';
 import { serviceColor } from '../utils/spans';
-import { alertLabel, type AlertState } from '../utils/alertState';
 import type { CachedAlertRow } from '../api/panelCache';
 import s from './AlertsPage.module.css';
 
@@ -69,7 +68,6 @@ export default function AlertsPage() {
   useEffect(() => { void fetchAlerts(); }, [fetchAlerts]);
 
   const nonOk = alerts.filter((a) => a.alertStatus !== 'ok' || a.isBad);
-  const ok = alerts.filter((a) => a.alertStatus === 'ok' && !a.isBad);
 
   return (
     <div className={s.page}>
