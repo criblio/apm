@@ -15,7 +15,7 @@
  *    components can subscribe to it via their own useState and re-render.
  *  - Expose pinNode / releaseNode helpers for drag behavior.
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   forceSimulation,
   forceManyBody,
@@ -66,6 +66,19 @@ export interface UseForceLayoutResult {
   reheat: (alpha?: number) => void;
 }
 
+function topoKey(nodes: SimNode[], links: SimLink[]): string {
+  const nk = nodes.map((n) => n.id).sort().join(',');
+  const lk = links
+    .map((l) => {
+      const src = typeof l.source === 'object' ? (l.source as SimNode).id : l.source;
+      const tgt = typeof l.target === 'object' ? (l.target as SimNode).id : l.target;
+      return `${src}>${tgt}`;
+    })
+    .sort()
+    .join(',');
+  return `${nk}|${lk}`;
+}
+
 export function useForceLayout({
   nodes,
   links,
@@ -78,10 +91,10 @@ export function useForceLayout({
   const simRef = useRef<Simulation<SimNode, SimLink> | null>(null);
   const [tick, setTick] = useState(0);
 
+  const topology = useMemo(() => topoKey(nodes, links), [nodes, links]);
+
+  // Full simulation (re)creation — only when topology or dimensions change.
   useEffect(() => {
-    // Preserve positions from the previous simulation so data refreshes
-    // don't randomize the layout. Only genuinely new nodes start at the
-    // center; existing nodes keep their settled x/y.
     const prevById = new Map<string, SimNode>();
     for (const n of simNodesRef.current) prevById.set(n.id, n);
 
@@ -94,16 +107,10 @@ export function useForceLayout({
     });
     const simLinks: SimLink[] = links.map((l) => ({ ...l }));
 
-    const hadPrevious = prevById.size > 0;
-    const existingNodeCount = simNodes.filter((n) => prevById.has(n.id)).length;
-    const isStructuralChange = !hadPrevious || existingNodeCount < simNodes.length;
-
     simNodesRef.current = simNodes;
     simLinksRef.current = simLinks;
 
-    if (simRef.current) {
-      simRef.current.stop();
-    }
+    if (simRef.current) simRef.current.stop();
 
     const sim = forceSimulation<SimNode>(simNodes)
       .force(
@@ -124,11 +131,8 @@ export function useForceLayout({
         setTick((t) => t + 1);
       });
 
-    // When only data changed (same nodes, updated metrics), start nearly
-    // cooled so the graph barely moves. Only do a full warm start when
-    // the topology actually changed (new/removed nodes).
-    if (hadPrevious && !isStructuralChange) {
-      sim.alpha(0.05);
+    if (prevById.size > 0) {
+      sim.alpha(0.3);
     }
 
     simRef.current = sim;
@@ -137,15 +141,37 @@ export function useForceLayout({
       simRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nodes, links, width, height]);
+  }, [topology, width, height]);
+
+  // Data-only update — same topology, new metric values on nodes/links.
+  // Mutate existing SimNode/SimLink objects in place so the simulation
+  // keeps running without restart and React sees no structural change.
+  useEffect(() => {
+    const simNodes = simNodesRef.current;
+    const simLinks = simLinksRef.current;
+    if (simNodes.length === 0) return;
+
+    const inputById = new Map<string, SimNode>();
+    for (const n of nodes) inputById.set(n.id, n);
+    for (const sn of simNodes) {
+      const input = inputById.get(sn.id);
+      if (input) sn.size = input.size;
+    }
+
+    for (let i = 0; i < simLinks.length && i < links.length; i++) {
+      simLinks[i].value = links[i].value;
+      simLinks[i].errorCount = links[i].errorCount;
+      simLinks[i].p95DurUs = links[i].p95DurUs;
+    }
+
+    setTick((t) => t + 1);
+  }, [nodes, links]);
 
   const pinNode = useCallback((id: string, x: number, y: number) => {
     const n = simNodesRef.current.find((node) => node.id === id);
     if (!n) return;
     n.fx = x;
     n.fy = y;
-    // Keep the sim warm while dragging so collision with neighbors
-    // pushes them out of the way in real time.
     if (simRef.current && simRef.current.alpha() < 0.2) {
       simRef.current.alpha(0.3).restart();
     }
