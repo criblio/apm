@@ -1,10 +1,22 @@
 export interface SurfaceCheck {
   surface: string;
-  page: 'home' | 'serviceDetail' | 'systemArch';
+  page: 'home' | 'serviceDetail' | 'systemArch' | 'alerts';
   locator: string;
   assertion: 'visible' | 'countGt0' | 'textMatches';
   pattern?: string;
   timeoutMs: number;
+}
+
+export interface KqlCheck {
+  surface: string;
+  query: string;
+  earliest: string;
+  latest: string;
+  assertion: 'rowCountGt0' | 'fieldMatches';
+  field?: string;
+  pattern?: string;
+  timeoutMs: number;
+  pollIntervalMs?: number;
 }
 
 export interface ScenarioDeclaration {
@@ -15,6 +27,7 @@ export interface ScenarioDeclaration {
   telemetryWaitMs: number;
   cooldownMs: number;
   surfaceChecks: SurfaceCheck[];
+  kqlChecks?: KqlCheck[];
   investigator?: {
     prompt: string;
     expectedRootCausePattern: string;
