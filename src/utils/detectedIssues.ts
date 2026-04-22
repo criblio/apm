@@ -94,6 +94,11 @@ export function buildDetectedIssues(
         });
         break;
       }
+      case 'watch':
+        // Stable baseline error rate — serviceHealth downgraded to
+        // watch because previous window had similar errors. Not a
+        // new issue, don't surface in detected issues panel.
+        break;
       case 'traffic_drop': {
         const ratio = prev ? Math.round((1 - svc.requests / prev.requests) * 100) : 0;
         issues.push({
@@ -162,15 +167,18 @@ export function buildDetectedIssuesFromCache(
 
   for (const r of rows) {
     const errPct = r.currErrorRate * 100;
+    const prevPct = r.prevErrorRate * 100;
+    const delta = errPct - prevPct;
+    const isBaseline = prevPct >= 1 && delta < 2;
 
-    if (errPct >= 5) {
+    if (errPct >= 5 && !isBaseline) {
       issues.push({
         service: r.service,
         signalType: 'error_rate_critical',
         severity: 'critical',
         detail: `Error rate ${fmtPct(r.currErrorRate)} (was ${fmtPct(r.prevErrorRate)})`,
       });
-    } else if (errPct >= 1) {
+    } else if (errPct >= 1 && !isBaseline) {
       issues.push({
         service: r.service,
         signalType: 'error_rate_warn',
