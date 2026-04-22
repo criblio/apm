@@ -19,7 +19,7 @@ import {
 import { listCachedHomePanels } from '../api/panelCache';
 import { serviceColor } from '../utils/spans';
 import { serviceHealth, healthRowBg } from '../utils/health';
-import { buildDetectedIssues } from '../utils/detectedIssues';
+import { buildDetectedIssues, buildDetectedIssuesFromCache } from '../utils/detectedIssues';
 import { previousWindow } from '../utils/timeRange';
 import { useRangeParam } from '../hooks/useRangeParam';
 import { useStreamFilterEnabled } from '../hooks/useStreamFilter';
@@ -183,6 +183,7 @@ export default function HomePage() {
   const [loadingErrors, setLoadingErrors] = useState(true);
   const [loadingAnomalies, setLoadingAnomalies] = useState(true);
   const [loadingEdges, setLoadingEdges] = useState(true);
+  const [cachedIssues, setCachedIssues] = useState<import('../api/types').DetectedIssue[] | null>(null);
   const [panelCacheUpdatedMs, setPanelCacheUpdatedMs] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshMs, setRefreshMs] = useState<number>(DEFAULT_REFRESH_MS);
@@ -199,6 +200,7 @@ export default function HomePage() {
     setLoadingErrors(true);
     setLoadingAnomalies(true);
     setLoadingEdges(true);
+    setCachedIssues(null);
     setPanelCacheUpdatedMs(null);
 
     const prev = previousWindow(range);
@@ -240,6 +242,10 @@ export default function HomePage() {
               .then((r) => setErrorClasses(r))
               .catch(() => setErrorClasses([]))
               .finally(() => setLoadingErrors(false));
+          }
+
+          if (cached.alertRows && cached.alertRows.length > 0) {
+            setCachedIssues(buildDetectedIssuesFromCache(cached.alertRows, 60));
           }
 
           setLastRefresh(Date.now());
@@ -414,19 +420,30 @@ export default function HomePage() {
     return m;
   }, [buckets]);
 
-  // Detected issues for the alerts panel
-  const detectedIssues = useMemo(
-    () =>
-      buildDetectedIssues(
-        sortedSummaries,
-        prevByService,
-        edges,
-        anomalies,
-        anomalousServices,
-        rangeMinutes,
-      ),
-    [sortedSummaries, prevByService, edges, anomalies, anomalousServices, rangeMinutes],
-  );
+  // Detected issues for the alerts panel. Prefer the cached alerts
+  // (from criblapm__home_alerts) on the default range; merge in
+  // latency anomalies from the live query when they arrive. Fall
+  // back to full client-side computation on cache miss / non-default range.
+  const detectedIssues = useMemo(() => {
+    const anomalyIssues: import('../api/types').DetectedIssue[] = anomalies.map((a) => ({
+      service: a.service,
+      signalType: 'latency_anomaly' as const,
+      severity: 'warn' as const,
+      detail: `${a.operation} p95 ${a.currP95Us < 1000 ? a.currP95Us.toFixed(0) + 'us' : a.currP95Us < 1_000_000 ? (a.currP95Us / 1000).toFixed(1) + 'ms' : (a.currP95Us / 1_000_000).toFixed(2) + 's'} (baseline ${a.prevP95Us < 1000 ? a.prevP95Us.toFixed(0) + 'us' : a.prevP95Us < 1_000_000 ? (a.prevP95Us / 1000).toFixed(1) + 'ms' : (a.prevP95Us / 1_000_000).toFixed(2) + 's'}, ${a.ratio.toFixed(0)}x)`,
+      operation: a.operation,
+    }));
+    if (cachedIssues) {
+      return [...cachedIssues, ...anomalyIssues];
+    }
+    return buildDetectedIssues(
+      sortedSummaries,
+      prevByService,
+      edges,
+      anomalies,
+      anomalousServices,
+      rangeMinutes,
+    );
+  }, [cachedIssues, sortedSummaries, prevByService, edges, anomalies, anomalousServices, rangeMinutes]);
 
   function toggleSort(key: SortKey) {
     setSort((cur) => {
@@ -441,7 +458,7 @@ export default function HomePage() {
   }
 
   const lastRefreshText = new Date(lastRefresh).toLocaleTimeString();
-  const issuesLoading = loadingSummaries || loadingAnomalies;
+  const issuesLoading = cachedIssues ? false : (loadingSummaries || loadingAnomalies);
 
   return (
     <div className={s.page}>

@@ -4,8 +4,10 @@ import ProvisioningPanel from '../components/ProvisioningPanel';
 import { saveAppSettings } from '../api/appSettings';
 import { setCurrentDataset } from '../api/dataset';
 import { setStreamFilterEnabled } from '../api/streamFilter';
+import { setSearchCadence, CADENCE_OPTIONS, type CadenceOption } from '../api/searchCadence';
 import { useDataset } from '../hooks/useDataset';
 import { useStreamFilterEnabled } from '../hooks/useStreamFilter';
+import { useSearchCadence } from '../hooks/useSearchCadence';
 import s from './SettingsPage.module.css';
 
 /**
@@ -29,11 +31,13 @@ const DATASET_NAME_PATTERN = /^[a-zA-Z0-9_-]+$/;
 export default function SettingsPage() {
   const currentDataset = useDataset();
   const currentStreamFilter = useStreamFilterEnabled();
+  const currentCadence = useSearchCadence();
   const [draft, setDraft] = useState<string>(currentDataset);
   const [saving, setSaving] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [streamFilterSaving, setStreamFilterSaving] = useState(false);
+  const [cadenceSaving, setCadenceSaving] = useState(false);
 
   // Sync draft when the current dataset updates externally (e.g. first
   // KV load finishes after page mount).
@@ -92,6 +96,25 @@ export default function SettingsPage() {
       setStreamFilterSaving(false);
     }
   }
+
+  async function handleCadenceChange(next: CadenceOption) {
+    if (cadenceSaving || next === currentCadence) return;
+    setCadenceSaving(true);
+    setError(null);
+    try {
+      setSearchCadence(next);
+      await saveAppSettings({ searchCadence: next });
+      setFlash(`Detection cadence set to ${next}. Re-provision below to apply.`);
+      setTimeout(() => setFlash(null), 6000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setSearchCadence(currentCadence);
+    } finally {
+      setCadenceSaving(false);
+    }
+  }
+
+  const cadenceInfo = CADENCE_OPTIONS.find((o) => o.value === currentCadence);
 
   return (
     <div className={s.page}>
@@ -207,6 +230,44 @@ export default function SettingsPage() {
             </div>
           </div>
         </label>
+      </div>
+
+      <div className={s.card}>
+        <h2 className={s.sectionTitle}>Detection cadence</h2>
+        <p className={s.sectionHelp}>
+          How often scheduled searches run to refresh the Home page panels
+          and the Detected Issues alerts. Lower values detect problems faster
+          but use more Cribl Search worker time.
+        </p>
+
+        <div className={s.currentRow}>
+          <span className={s.currentLabel}>Current</span>
+          <span className={s.currentValue}>{cadenceInfo?.label ?? currentCadence}</span>
+          <span className={s.cadenceLag}>
+            Detection lag: <strong>{cadenceInfo?.lagLabel ?? '~5 minutes'}</strong>
+          </span>
+        </div>
+
+        <div className={s.field}>
+          <label className={s.label} htmlFor="cadence-select">
+            Refresh interval
+          </label>
+          <select
+            id="cadence-select"
+            className={s.input}
+            value={currentCadence}
+            onChange={(e) => void handleCadenceChange(e.target.value as CadenceOption)}
+            disabled={cadenceSaving}
+          >
+            {CADENCE_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label} — detection lag {opt.lagLabel}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {flash && <span className={s.successFlash}>{flash}</span>}
       </div>
 
       <ProvisioningPanel />

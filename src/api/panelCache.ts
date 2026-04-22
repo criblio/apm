@@ -51,12 +51,25 @@ import type {
  * Q.messagingDependencies) glued together the same way
  * `search.ts::getDependencies` does at runtime. The cache
  * consumer gets the exact same shape as the live path. */
+/** Per-service current-vs-previous window health from the alerts
+ *  scheduled search. Client applies health-bucket thresholds. */
+export interface CachedAlertRow {
+  service: string;
+  currRequests: number;
+  currErrors: number;
+  currErrorRate: number;
+  prevRequests: number;
+  prevErrors: number;
+  prevErrorRate: number;
+}
+
 export interface CachedPanels {
   serviceSummaries: ServiceSummary[] | null;
   serviceBuckets: ServiceBucket[] | null;
   slowClasses: SlowTraceClass[] | null;
   errorClasses: ErrorClass[] | null;
   dependencies: DependencyEdge[] | null;
+  alertRows: CachedAlertRow[] | null;
   /** Latest bucket timestamp observed across the cached panels,
    * in milliseconds since epoch. Used by the UI to render a
    * "Cached N s ago" indicator. Null if nothing cached. */
@@ -186,6 +199,18 @@ export async function listCachedSysarchPanels(): Promise<CachedPanels> {
   return buildCachedPanels(partitions);
 }
 
+function parseAlertRows(rows: Record<string, unknown>[]): CachedAlertRow[] {
+  return rows.map((r) => ({
+    service: String(r.svc ?? 'unknown'),
+    currRequests: toNum(r.curr_requests),
+    currErrors: toNum(r.curr_errors),
+    currErrorRate: toNum(r.curr_error_rate),
+    prevRequests: toNum(r.prev_requests),
+    prevErrors: toNum(r.prev_errors),
+    prevErrorRate: toNum(r.prev_error_rate),
+  }));
+}
+
 /** Shared partition → typed-struct builder. Any panel not present
  * in the partition map stays null. */
 function buildCachedPanels(
@@ -212,6 +237,7 @@ function buildCachedPanels(
   const errorRows = get('criblapm__home_error_spans');
   const depRows = get('criblapm__sysarch_dependencies');
   const msgDepRows = get('criblapm__sysarch_messaging_deps');
+  const alertsRows = get('criblapm__home_alerts');
 
   return {
     serviceSummaries: summaryRows ? parseServiceSummaries(summaryRows) : null,
@@ -219,6 +245,7 @@ function buildCachedPanels(
     slowClasses: slowRows ? groupSlowTraceClasses(slowRows) : null,
     errorClasses: errorRows ? groupErrorClasses(errorRows) : null,
     dependencies: mergeDependencyEdges(depRows, msgDepRows),
+    alertRows: alertsRows ? parseAlertRows(alertsRows) : null,
     lastUpdatedMs,
   };
 }

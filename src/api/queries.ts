@@ -191,6 +191,36 @@ export function serviceSummary(service?: string): string {
 }
 
 /**
+ * Home alerts: per-service current-vs-previous window health for the
+ * Detected Issues panel. Scans a 2h window (set via earliest=-2h on
+ * the scheduled search), splits into current half (last 1h) and
+ * previous half (1-2h ago) using ago(1h), and pivots into one row
+ * per service with both sets of metrics.
+ *
+ * Output columns: svc, curr_requests, curr_errors, curr_error_rate,
+ * prev_requests, prev_errors, prev_error_rate. The client applies
+ * health-bucket thresholds and produces DetectedIssue[].
+ */
+export function homeAlerts(): string {
+  return `${spansBase()}
+    | extend svc=tostring(resource.attributes['service.name']),
+            is_error=(tostring(status.code)=="2"),
+            is_curr=(_time >= ago(1h))
+    ${streamFilterSpanKqlClause()}
+    | summarize requests=count(), errors=countif(is_error)
+      by svc, is_curr
+    | extend window=iff(is_curr, "curr", "prev")
+    | summarize curr_requests=max(iff(window=="curr", requests, 0)),
+                prev_requests=max(iff(window=="prev", requests, 0)),
+                curr_errors=max(iff(window=="curr", errors, 0)),
+                prev_errors=max(iff(window=="prev", errors, 0))
+      by svc
+    | extend curr_error_rate=iff(curr_requests > 0, toreal(curr_errors)/toreal(curr_requests), 0.0),
+             prev_error_rate=iff(prev_requests > 0, toreal(prev_errors)/toreal(prev_requests), 0.0)
+    | sort by svc asc`;
+}
+
+/**
  * Time-bucketed request count + p95 per service. Powers service-row
  * sparklines on the Home page and the RED charts on the Service detail page.
  *

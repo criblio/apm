@@ -29,6 +29,7 @@
  * baked-in values. The ROADMAP caveats section covers this.
  */
 import * as Q from './queries';
+import { getSearchCadenceCron } from './searchCadence';
 
 /** Stable prefix for every app-managed saved search ID. Used by
  * the provisioner to find and reconcile rows without stomping
@@ -99,9 +100,10 @@ function opBaselineQuery(): string {
  * Baselines move slowly; running more often is wasted worker time.
  */
 export function getProvisioningPlan(): ProvisionedSearch[] {
-  const everyFiveMin = {
+  const cronSchedule = getSearchCadenceCron();
+  const panelCadence = {
     enabled: true,
-    cronSchedule: '*/5 * * * *',
+    cronSchedule,
     tz: 'UTC',
     keepLastN: 2,
   } as const;
@@ -123,7 +125,7 @@ export function getProvisioningPlan(): ProvisionedSearch[] {
       earliest: '-1h',
       latest: 'now',
       sampleRate: 1,
-      schedule: { ...everyFiveMin },
+      schedule: { ...panelCadence },
     },
     {
       id: 'criblapm__home_service_time_series',
@@ -134,7 +136,7 @@ export function getProvisioningPlan(): ProvisionedSearch[] {
       earliest: '-1h',
       latest: 'now',
       sampleRate: 1,
-      schedule: { ...everyFiveMin },
+      schedule: { ...panelCadence },
     },
     {
       id: 'criblapm__home_slow_traces',
@@ -145,7 +147,7 @@ export function getProvisioningPlan(): ProvisionedSearch[] {
       earliest: '-1h',
       latest: 'now',
       sampleRate: 1,
-      schedule: { ...everyFiveMin },
+      schedule: { ...panelCadence },
     },
     {
       id: 'criblapm__home_error_spans',
@@ -156,7 +158,19 @@ export function getProvisioningPlan(): ProvisionedSearch[] {
       earliest: '-1h',
       latest: 'now',
       sampleRate: 1,
-      schedule: { ...everyFiveMin },
+      schedule: { ...panelCadence },
+    },
+    // ── Home alerts (detected issues) ───────────────────────
+    {
+      id: 'criblapm__home_alerts',
+      name: 'Cribl APM - home detected issues',
+      description:
+        'Cribl APM: per-service current-vs-previous window health for the Detected Issues panel. Scans 2h, splits into current/prev halves, outputs services with error rate and traffic delta.',
+      query: Q.homeAlerts(),
+      earliest: '-2h',
+      latest: 'now',
+      sampleRate: 1,
+      schedule: { ...panelCadence },
     },
     // ── System Architecture panel caches ────────────────────
     {
@@ -168,7 +182,7 @@ export function getProvisioningPlan(): ProvisionedSearch[] {
       earliest: '-1h',
       latest: 'now',
       sampleRate: 1,
-      schedule: { ...everyFiveMin },
+      schedule: { ...panelCadence },
     },
     {
       id: 'criblapm__sysarch_messaging_deps',
@@ -179,7 +193,7 @@ export function getProvisioningPlan(): ProvisionedSearch[] {
       earliest: '-1h',
       latest: 'now',
       sampleRate: 1,
-      schedule: { ...everyFiveMin },
+      schedule: { ...panelCadence },
     },
     // ── Service Detail panel cache ──────────────────────────
     {
@@ -191,7 +205,7 @@ export function getProvisioningPlan(): ProvisionedSearch[] {
       earliest: '-1h',
       latest: 'now',
       sampleRate: 1,
-      schedule: { ...everyFiveMin },
+      schedule: { ...panelCadence },
     },
     // ── Metric catalog ──────────────────────────────────────
     {
@@ -203,7 +217,7 @@ export function getProvisioningPlan(): ProvisionedSearch[] {
       earliest: '-1h',
       latest: 'now',
       sampleRate: 1,
-      schedule: { ...everyFiveMin },
+      schedule: { ...panelCadence },
     },
     // ── Op baseline lookup ──────────────────────────────────
     {
@@ -229,6 +243,7 @@ export function getHomePanelJobNames(): string[] {
     'criblapm__home_service_time_series',
     'criblapm__home_slow_traces',
     'criblapm__home_error_spans',
+    'criblapm__home_alerts',
   ];
 }
 

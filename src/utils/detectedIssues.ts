@@ -1,10 +1,12 @@
-import { serviceHealth, MIN_BASELINE_REQUESTS } from './health';
+import { MIN_BASELINE_REQUESTS } from './health';
+import type { CachedAlertRow } from '../api/panelCache';
 import type {
   ServiceSummary,
   DependencyEdge,
   OperationAnomaly,
   DetectedIssue,
 } from '../api/types';
+import { serviceHealth } from './health';
 
 const SEVERITY_ORDER: Record<DetectedIssue['signalType'], number> = {
   error_rate_critical: 0,
@@ -136,6 +138,70 @@ export function buildDetectedIssues(
   }
 
   // Sort: severity tier first, then magnitude within tier
+  issues.sort((a, b) => {
+    const sa = SEVERITY_ORDER[a.signalType];
+    const sb = SEVERITY_ORDER[b.signalType];
+    if (sa !== sb) return sa - sb;
+    return 0;
+  });
+
+  return issues;
+}
+
+/**
+ * Build detected issues from the cached alert rows (from the
+ * criblapm__home_alerts scheduled search). This path doesn't
+ * have dependency edges or latency anomalies — those are merged
+ * in by the caller from separate data sources if available.
+ */
+export function buildDetectedIssuesFromCache(
+  rows: CachedAlertRow[],
+  rangeMinutes: number,
+): DetectedIssue[] {
+  const issues: DetectedIssue[] = [];
+
+  for (const r of rows) {
+    const errPct = r.currErrorRate * 100;
+
+    if (errPct >= 5) {
+      issues.push({
+        service: r.service,
+        signalType: 'error_rate_critical',
+        severity: 'critical',
+        detail: `Error rate ${fmtPct(r.currErrorRate)} (was ${fmtPct(r.prevErrorRate)})`,
+      });
+    } else if (errPct >= 1) {
+      issues.push({
+        service: r.service,
+        signalType: 'error_rate_warn',
+        severity: 'warn',
+        detail: `Error rate ${fmtPct(r.currErrorRate)} (was ${fmtPct(r.prevErrorRate)})`,
+      });
+    } else if (
+      r.prevRequests >= MIN_BASELINE_REQUESTS &&
+      r.currRequests > 0 &&
+      r.currRequests / r.prevRequests <= 0.5
+    ) {
+      const dropPct = Math.round((1 - r.currRequests / r.prevRequests) * 100);
+      issues.push({
+        service: r.service,
+        signalType: 'traffic_drop',
+        severity: 'critical',
+        detail: `Request rate dropped ${dropPct}% (was ${fmtRate(r.prevRequests, rangeMinutes)})`,
+      });
+    } else if (
+      r.currRequests === 0 &&
+      r.prevRequests >= MIN_BASELINE_REQUESTS
+    ) {
+      issues.push({
+        service: r.service,
+        signalType: 'silent',
+        severity: 'critical',
+        detail: `No traffic (was ${fmtRate(r.prevRequests, rangeMinutes)})`,
+      });
+    }
+  }
+
   issues.sort((a, b) => {
     const sa = SEVERITY_ORDER[a.signalType];
     const sb = SEVERITY_ORDER[b.signalType];

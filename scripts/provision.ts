@@ -21,6 +21,7 @@ import {
   type HttpClient,
   type PlanAction,
 } from '../src/api/provisioner.js';
+import { setSearchCadence } from '../src/api/searchCadence.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..');
@@ -116,6 +117,20 @@ function actionLabel(a: PlanAction): string {
   return `  · noop`;
 }
 
+async function loadCadenceFromKV(http: HttpClient): Promise<void> {
+  try {
+    const raw = await http.get('/kvstore/settings/app');
+    if (raw && typeof raw === 'object') {
+      const settings = raw as Record<string, unknown>;
+      if (settings.searchCadence && typeof settings.searchCadence === 'string') {
+        setSearchCadence(settings.searchCadence);
+      }
+    }
+  } catch {
+    // KV not available or empty — use default cadence
+  }
+}
+
 async function main(): Promise<void> {
   const env = loadDotEnv();
   for (const [k, v] of Object.entries(env)) {
@@ -134,6 +149,8 @@ async function main(): Promise<void> {
   const dryRun = process.argv.includes('--dry');
   const token = await getToken(baseUrl, clientId, clientSecret);
   const http = makeHttpClient(baseUrl, token);
+
+  await loadCadenceFromKV(http);
 
   if (dryRun) {
     const { actions } = await planOnly(http);
