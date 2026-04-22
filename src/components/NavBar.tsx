@@ -1,16 +1,84 @@
-import { NavLink, useNavigate } from 'react-router-dom';
+import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useState, type KeyboardEvent } from 'react';
 import s from './NavBar.module.css';
 
-const tabs = [
+interface SimpleTab {
+  label: string;
+  to: string;
+  end?: boolean;
+}
+
+interface DropdownTab {
+  label: string;
+  activePrefix: string;
+  children: Array<{ label: string; to: string }>;
+}
+
+type NavItem = SimpleTab | DropdownTab;
+
+function isDropdown(item: NavItem): item is DropdownTab {
+  return 'children' in item;
+}
+
+const tabs: NavItem[] = [
   { label: 'Home', to: '/', end: true },
+  {
+    label: 'Services',
+    activePrefix: '/services',
+    children: [
+      { label: 'List', to: '/services' },
+      { label: 'Architecture', to: '/services/architecture' },
+    ],
+  },
   { label: 'Search', to: '/search' },
   { label: 'Logs', to: '/logs' },
   { label: 'Metrics', to: '/metrics' },
   { label: 'Compare', to: '/compare' },
-  { label: 'System Architecture', to: '/architecture' },
   { label: 'Investigate', to: '/investigate' },
 ];
+
+function DropdownNavItem({ item }: { item: DropdownTab }) {
+  const location = useLocation();
+  const isActive = location.pathname.startsWith(item.activePrefix);
+
+  return (
+    <div className={s.dropdownWrap}>
+      <NavLink
+        to={item.children[0].to}
+        className={`${s.tab} ${isActive ? s.tabActive : ''}`}
+      >
+        {item.label}
+        <svg
+          className={s.chevron}
+          width="10"
+          height="10"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <polyline points="6 9 12 15 18 9" />
+        </svg>
+      </NavLink>
+      <div className={s.dropdown}>
+        {item.children.map((child) => (
+          <NavLink
+            key={child.to}
+            to={child.to}
+            end
+            className={({ isActive: childActive }) =>
+              `${s.dropdownItem} ${childActive ? s.dropdownItemActive : ''}`
+            }
+          >
+            {child.label}
+          </NavLink>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 export default function NavBar() {
   const navigate = useNavigate();
@@ -34,16 +102,20 @@ export default function NavBar() {
       </NavLink>
 
       <div className={s.tabs}>
-        {tabs.map((t) => (
-          <NavLink
-            key={t.to}
-            to={t.to}
-            end={t.end}
-            className={({ isActive }) => `${s.tab} ${isActive ? s.tabActive : ''}`}
-          >
-            {t.label}
-          </NavLink>
-        ))}
+        {tabs.map((t) =>
+          isDropdown(t) ? (
+            <DropdownNavItem key={t.label} item={t} />
+          ) : (
+            <NavLink
+              key={t.to}
+              to={t.to}
+              end={t.end}
+              className={({ isActive }) => `${s.tab} ${isActive ? s.tabActive : ''}`}
+            >
+              {t.label}
+            </NavLink>
+          ),
+        )}
       </div>
 
       <NavLink

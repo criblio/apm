@@ -102,6 +102,27 @@
   50% { opacity: 0.4; }
 }
 
+/* ----------- Refresh indicator ----------- */
+
+.refreshBar {
+  height: 3px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--cds-brand-teal, #06b6d4) 40%,
+    var(--cds-brand-teal, #06b6d4) 60%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  border-radius: 2px;
+  animation: refreshSlide 1.2s ease-in-out infinite;
+}
+
+@keyframes refreshSlide {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
 /* ----------- Service catalog table ----------- */
 
 .catalog {

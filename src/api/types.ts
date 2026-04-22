@@ -296,6 +296,22 @@ export interface MetricSeries {
   groups: MetricSeriesGroup[];
 }
 
+/** A single detected issue surfaced on the Home page alerts panel.
+ *  Derived from health-bucket computation + dependency edges. */
+export interface DetectedIssue {
+  service: string;
+  signalType:
+    | 'error_rate_critical'
+    | 'error_rate_warn'
+    | 'traffic_drop'
+    | 'latency_anomaly'
+    | 'silent';
+  severity: 'critical' | 'warn';
+  detail: string;
+  operation?: string;
+  rootCauseHint?: string;
+}
+
 /** OTel span kind numeric values. */
 export const SpanKind: Record<number, string> = {
   0: 'UNSPECIFIED',

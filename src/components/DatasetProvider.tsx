@@ -13,6 +13,7 @@ import { useEffect, type ReactNode } from 'react';
 import { loadAppSettings } from '../api/appSettings';
 import { setCurrentDataset } from '../api/dataset';
 import { setStreamFilterEnabled } from '../api/streamFilter';
+import { setSearchCadence } from '../api/searchCadence';
 
 interface Props {
   children: ReactNode;
@@ -33,6 +34,9 @@ export default function DatasetProvider({ children }: Props) {
           // value means "keep the default of true".
           if (settings.filterLongPollTraces === false) {
             setStreamFilterEnabled(false);
+          }
+          if (settings.searchCadence && typeof settings.searchCadence === 'string') {
+            setSearchCadence(settings.searchCadence);
           }
         }
       })

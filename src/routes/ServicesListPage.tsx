@@ -6,8 +6,6 @@ import Sparkline from '../components/Sparkline';
 import StatusBanner from '../components/StatusBanner';
 import TraceClassList, { type ClassItem } from '../components/TraceClassList';
 import OperationAnomalyList from '../components/OperationAnomalyList';
-import DetectedIssuesPanel from '../components/DetectedIssuesPanel';
-import SystemArchGraph from '../components/SystemArchGraph';
 import {
   listServiceSummaries,
   getServiceTimeSeries,
@@ -19,7 +17,6 @@ import {
 import { listCachedHomePanels } from '../api/panelCache';
 import { serviceColor } from '../utils/spans';
 import { serviceHealth, healthRowBg } from '../utils/health';
-import { buildDetectedIssues, buildDetectedIssuesFromCache } from '../utils/detectedIssues';
 import { previousWindow } from '../utils/timeRange';
 import { useRangeParam } from '../hooks/useRangeParam';
 import { useStreamFilterEnabled } from '../hooks/useStreamFilter';
@@ -50,7 +47,6 @@ interface SortState {
 }
 
 const DEFAULT_RANGE = '-1h';
-
 const MIN_PREV_SAMPLES = 10;
 
 const REFRESH_OPTIONS: Array<{ label: string; ms: number }> = [
@@ -62,7 +58,6 @@ const REFRESH_OPTIONS: Array<{ label: string; ms: number }> = [
   { label: '5m', ms: 300_000 },
 ];
 const DEFAULT_REFRESH_MS = 60_000;
-
 const PANEL_CACHE_STALE_THRESHOLD_MS = 15 * 60_000;
 
 function fmtRate(requestsPerMin: number): string {
@@ -102,8 +97,7 @@ function staleAge(
   if (!lastSeenMs || !Number.isFinite(lastSeenMs)) return null;
   const ageMs = now - lastSeenMs;
   if (ageMs <= 0) return null;
-  const threshold = rangeMs * 0.25;
-  if (ageMs < threshold) return null;
+  if (ageMs < rangeMs * 0.25) return null;
   return { ageMs };
 }
 
@@ -165,7 +159,7 @@ function relativeTimeMs(rel: string): number {
   return n * { s: 1000, m: 60_000, h: 3600_000, d: 86_400_000 }[unit as 's' | 'm' | 'h' | 'd'];
 }
 
-export default function HomePage() {
+export default function ServicesListPage() {
   const [range, setRange] = useRangeParam(DEFAULT_RANGE);
   const navigate = useNavigate();
   const location = useLocation();
@@ -178,52 +172,37 @@ export default function HomePage() {
   const [errorClasses, setErrorClasses] = useState<ErrorClass[]>([]);
   const [anomalies, setAnomalies] = useState<OperationAnomaly[]>([]);
   const [loadingSummaries, setLoadingSummaries] = useState(true);
-  const [loadingBuckets, setLoadingBuckets] = useState(true);
+  const [, setLoadingBuckets] = useState(true);
   const [loadingSlow, setLoadingSlow] = useState(true);
   const [loadingErrors, setLoadingErrors] = useState(true);
   const [loadingAnomalies, setLoadingAnomalies] = useState(true);
-  const [loadingEdges, setLoadingEdges] = useState(true);
-  const [cachedIssues, setCachedIssues] = useState<import('../api/types').DetectedIssue[] | null>(null);
   const [panelCacheUpdatedMs, setPanelCacheUpdatedMs] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
   const [refreshMs, setRefreshMs] = useState<number>(DEFAULT_REFRESH_MS);
   const [sort, setSort] = useState<SortState>({ key: 'requests', dir: 'desc' });
   const [lastRefresh, setLastRefresh] = useState<number>(() => Date.now());
   const streamFilterEnabled = useStreamFilterEnabled();
 
-  const hasDataRef = useRef(false);
-
   const fetchAll = useCallback(async () => {
-    setRefreshing(true);
     setError(null);
     const binSeconds = binSecondsFor(range);
-    // Only show loading skeletons on initial load (no data yet).
-    // On subsequent refreshes, keep displaying the previous data
-    // while new data loads in the background — each panel updates
-    // in place as its query resolves. This prevents the jarring
-    // flash-to-skeleton on every auto-refresh or manual "Refresh now".
-    if (!hasDataRef.current) {
-      setLoadingSummaries(true);
-      setLoadingBuckets(true);
-      setLoadingSlow(true);
-      setLoadingErrors(true);
-      setLoadingAnomalies(true);
-      setLoadingEdges(true);
-    }
+    setLoadingSummaries(true);
+    setLoadingBuckets(true);
+    setLoadingSlow(true);
+    setLoadingErrors(true);
+    setLoadingAnomalies(true);
     setPanelCacheUpdatedMs(null);
 
     const prev = previousWindow(range);
-    const pPrevSummaries = listServiceSummaries(prev.earliest, prev.latest)
+    listServiceSummaries(prev.earliest, prev.latest)
       .then((r) => setPrevSummaries(r))
       .catch(() => setPrevSummaries([]));
 
-    const pEdges = getDependencies(range, 'now')
+    getDependencies(range, 'now')
       .then((r) => setEdges(r))
-      .catch(() => setEdges([]))
-      .finally(() => setLoadingEdges(false));
+      .catch(() => setEdges([]));
 
-    const pAnomalies = listOperationAnomalies(range, 'now')
+    listOperationAnomalies(range, 'now')
       .then((r) => setAnomalies(r))
       .catch(() => setAnomalies([]))
       .finally(() => setLoadingAnomalies(false));
@@ -231,11 +210,7 @@ export default function HomePage() {
     if (range === '-1h' && streamFilterEnabled) {
       try {
         const cached = await listCachedHomePanels();
-        if (
-          cached.serviceSummaries &&
-          cached.serviceBuckets &&
-          cached.slowClasses
-        ) {
+        if (cached.serviceSummaries && cached.serviceBuckets && cached.slowClasses) {
           setSummaries(cached.serviceSummaries);
           setBuckets(cached.serviceBuckets);
           setSlowClasses(cached.slowClasses);
@@ -253,19 +228,10 @@ export default function HomePage() {
               .catch(() => setErrorClasses([]))
               .finally(() => setLoadingErrors(false));
           }
-
-          if (cached.alertRows && cached.alertRows.length > 0) {
-            setCachedIssues(buildDetectedIssuesFromCache(cached.alertRows, 60));
-          }
-
-          hasDataRef.current = true;
-    setRefreshing(false);
-    setLastRefresh(Date.now());
+          setLastRefresh(Date.now());
           return;
         }
-      } catch {
-        // Cache miss — fall through to live fetch.
-      }
+      } catch { /* fall through */ }
     }
 
     const pSummaries = listServiceSummaries(range, 'now')
@@ -291,34 +257,17 @@ export default function HomePage() {
       .catch(() => setErrorClasses([]))
       .finally(() => setLoadingErrors(false));
 
-    await Promise.allSettled([
-      pSummaries,
-      pPrevSummaries,
-      pBuckets,
-      pSlow,
-      pErrors,
-      pAnomalies,
-      pEdges,
-    ]);
-    hasDataRef.current = true;
-    setRefreshing(false);
+    await Promise.allSettled([pSummaries, pBuckets, pSlow, pErrors]);
     setLastRefresh(Date.now());
   }, [range, streamFilterEnabled]);
 
-  useEffect(() => {
-    void fetchAll();
-  }, [fetchAll]);
+  useEffect(() => { void fetchAll(); }, [fetchAll]);
 
   const timerRef = useRef<number | null>(null);
   useEffect(() => {
     if (refreshMs <= 0) return;
-    timerRef.current = window.setInterval(() => {
-      void fetchAll();
-    }, refreshMs);
-    return () => {
-      if (timerRef.current != null) window.clearInterval(timerRef.current);
-      timerRef.current = null;
-    };
+    timerRef.current = window.setInterval(() => { void fetchAll(); }, refreshMs);
+    return () => { if (timerRef.current != null) window.clearInterval(timerRef.current); };
   }, [refreshMs, fetchAll]);
 
   const prevByService = useMemo(() => {
@@ -335,29 +284,20 @@ export default function HomePage() {
 
   const rootCauseHints = useMemo(() => {
     const out = new Map<string, { child: string; errorRate: number }>();
-    type EdgeAgg = { child: string; calls: number; errors: number };
-    const byParent = new Map<string, EdgeAgg[]>();
+    const byParent = new Map<string, Array<{ child: string; calls: number; errors: number }>>();
     for (const e of edges) {
-      if ((e.kind ?? 'rpc') !== 'rpc') continue;
-      if (e.parent === e.child) continue;
-      if (e.callCount < 5) continue;
+      if ((e.kind ?? 'rpc') !== 'rpc' || e.parent === e.child || e.callCount < 5) continue;
       const list = byParent.get(e.parent) ?? [];
-      list.push({
-        child: e.child,
-        calls: e.callCount,
-        errors: e.errorCount,
-      });
+      list.push({ child: e.child, calls: e.callCount, errors: e.errorCount });
       byParent.set(e.parent, list);
     }
-    for (const [parent, edgeList] of byParent.entries()) {
+    for (const [parent, edgeList] of byParent) {
       let best: { child: string; errorRate: number } | null = null;
       for (const ed of edgeList) {
         if (ed.errors === 0) continue;
         const rate = ed.errors / ed.calls;
         if (rate < 0.005) continue;
-        if (!best || rate > best.errorRate) {
-          best = { child: ed.child, errorRate: rate };
-        }
+        if (!best || rate > best.errorRate) best = { child: ed.child, errorRate: rate };
       }
       if (best) out.set(parent, best);
     }
@@ -382,15 +322,9 @@ export default function HomePage() {
     const arr = [...summaries];
     const { key, dir } = sort;
     arr.sort((a, b) => {
-      let av: number | string = 0;
-      let bv: number | string = 0;
-      if (key === 'service') {
-        av = a.service;
-        bv = b.service;
-      } else {
-        av = a[key] ?? 0;
-        bv = b[key] ?? 0;
-      }
+      let av: number | string = 0, bv: number | string = 0;
+      if (key === 'service') { av = a.service; bv = b.service; }
+      else { av = a[key] ?? 0; bv = b[key] ?? 0; }
       if (av < bv) return dir === 'asc' ? -1 : 1;
       if (av > bv) return dir === 'asc' ? 1 : -1;
       return 0;
@@ -411,54 +345,6 @@ export default function HomePage() {
     return age;
   }, [panelCacheUpdatedMs, lastRefresh]);
 
-  // Data for the SystemArchGraph embed
-  const servicesMap = useMemo(() => {
-    const m = new Map<string, ServiceSummary>();
-    for (const sv of summaries) m.set(sv.service, sv);
-    return m;
-  }, [summaries]);
-
-  const prevServicesMap = useMemo(() => {
-    const m = new Map<string, ServiceSummary>();
-    for (const sv of prevSummaries) m.set(sv.service, sv);
-    return m;
-  }, [prevSummaries]);
-
-  const bucketsByService = useMemo(() => {
-    const m = new Map<string, ServiceBucket[]>();
-    for (const b of buckets) {
-      if (!m.has(b.service)) m.set(b.service, []);
-      m.get(b.service)!.push(b);
-    }
-    for (const arr of m.values()) arr.sort((a, b) => a.bucketMs - b.bucketMs);
-    return m;
-  }, [buckets]);
-
-  // Detected issues for the alerts panel. Prefer the cached alerts
-  // (from criblapm__home_alerts) on the default range; merge in
-  // latency anomalies from the live query when they arrive. Fall
-  // back to full client-side computation on cache miss / non-default range.
-  const detectedIssues = useMemo(() => {
-    const anomalyIssues: import('../api/types').DetectedIssue[] = anomalies.map((a) => ({
-      service: a.service,
-      signalType: 'latency_anomaly' as const,
-      severity: 'warn' as const,
-      detail: `${a.operation} p95 ${a.currP95Us < 1000 ? a.currP95Us.toFixed(0) + 'us' : a.currP95Us < 1_000_000 ? (a.currP95Us / 1000).toFixed(1) + 'ms' : (a.currP95Us / 1_000_000).toFixed(2) + 's'} (baseline ${a.prevP95Us < 1000 ? a.prevP95Us.toFixed(0) + 'us' : a.prevP95Us < 1_000_000 ? (a.prevP95Us / 1000).toFixed(1) + 'ms' : (a.prevP95Us / 1_000_000).toFixed(2) + 's'}, ${a.ratio.toFixed(0)}x)`,
-      operation: a.operation,
-    }));
-    if (cachedIssues) {
-      return [...cachedIssues, ...anomalyIssues];
-    }
-    return buildDetectedIssues(
-      sortedSummaries,
-      prevByService,
-      edges,
-      anomalies,
-      anomalousServices,
-      rangeMinutes,
-    );
-  }, [cachedIssues, sortedSummaries, prevByService, edges, anomalies, anomalousServices, rangeMinutes]);
-
   function toggleSort(key: SortKey) {
     setSort((cur) => {
       if (cur.key === key) return { key, dir: cur.dir === 'asc' ? 'desc' : 'asc' };
@@ -472,17 +358,14 @@ export default function HomePage() {
   }
 
   const lastRefreshText = new Date(lastRefresh).toLocaleTimeString();
-  const issuesLoading = cachedIssues ? false : (loadingSummaries || loadingAnomalies);
 
   return (
     <div className={s.page}>
-      {/* Hero bar */}
       <div className={s.hero}>
         <div>
-          <h1 className={s.heroTitle}>Cribl APM</h1>
+          <h1 className={s.heroTitle}>Services</h1>
           <div className={s.heroSubtitle}>
-            Service catalog, recent activity, and live trace data from the{' '}
-            <code>otel</code> dataset.
+            Service catalog with rate, errors, and latency metrics.
           </div>
         </div>
         <div className={s.heroControls}>
@@ -490,66 +373,28 @@ export default function HomePage() {
           <div className={s.refreshPicker}>
             <span
               className={`${s.refreshStatusDot} ${refreshMs > 0 ? s.refreshStatusDotLive : ''}`}
-              title={
-                refreshMs > 0
-                  ? `Auto-refresh every ${refreshMs / 1000}s — last: ${lastRefreshText}`
-                  : `Auto-refresh off — last: ${lastRefreshText}`
-              }
+              title={refreshMs > 0 ? `Auto-refresh every ${refreshMs / 1000}s — last: ${lastRefreshText}` : `Auto-refresh off — last: ${lastRefreshText}`}
             />
             <span className={s.refreshLabel}>Refresh</span>
-            <select
-              className={s.refreshSelect}
-              value={refreshMs}
-              onChange={(e) => setRefreshMs(Number(e.target.value))}
-              aria-label="Auto-refresh interval"
-            >
+            <select className={s.refreshSelect} value={refreshMs} onChange={(e) => setRefreshMs(Number(e.target.value))} aria-label="Auto-refresh interval">
               {REFRESH_OPTIONS.map((opt) => (
-                <option key={opt.ms} value={opt.ms}>
-                  {opt.label}
-                </option>
+                <option key={opt.ms} value={opt.ms}>{opt.label}</option>
               ))}
             </select>
           </div>
-          <button type="button" className={s.refreshBtn} onClick={() => void fetchAll()} disabled={refreshing}>
-            {refreshing ? 'Refreshing...' : 'Refresh now'}
-          </button>
+          <button type="button" className={s.refreshBtn} onClick={() => void fetchAll()}>Refresh now</button>
         </div>
       </div>
 
-      {refreshing && <div className={s.refreshBar} />}
-
       {error && <StatusBanner kind="error">{error}</StatusBanner>}
 
-      {/* Section 1: Detected issues panel */}
-      <DetectedIssuesPanel
-        issues={detectedIssues}
-        loading={issuesLoading}
-        lookback={range}
-      />
-
-      {/* Section 2: System Architecture graph */}
-      <SystemArchGraph
-        edges={edges}
-        services={servicesMap}
-        prevServices={prevServicesMap}
-        bucketsByService={bucketsByService}
-        loading={loadingEdges && loadingSummaries}
-        lookback={range}
-        height={480}
-      />
-
-      {/* Section 3: Service catalog table */}
       <div className={s.catalog}>
         <div className={s.catalogHeader}>
           <span className={s.catalogTitle}>
             Services{' '}
-            <span className={s.catalogCount}>
-              {!loadingSummaries && `(${sortedSummaries.length})`}
-            </span>
+            <span className={s.catalogCount}>{!loadingSummaries && `(${sortedSummaries.length})`}</span>
           </span>
-          <span className={s.catalogCount}>
-            Click a row for the service detail view
-          </span>
+          <span className={s.catalogCount}>Click a row for the service detail view</span>
         </div>
         {loadingSummaries ? (
           <div className={s.tableSkeleton}>
@@ -563,24 +408,12 @@ export default function HomePage() {
           <table className={s.table}>
             <thead>
               <tr>
-                <th onClick={() => toggleSort('service')}>
-                  Service <span className={s.sortChip}>{sortIndicator('service')}</span>
-                </th>
-                <th className={s.num} onClick={() => toggleSort('requests')}>
-                  Rate <span className={s.sortChip}>{sortIndicator('requests')}</span>
-                </th>
-                <th className={s.num} onClick={() => toggleSort('errorRate')}>
-                  Errors <span className={s.sortChip}>{sortIndicator('errorRate')}</span>
-                </th>
-                <th className={s.num} onClick={() => toggleSort('p50Us')}>
-                  p50 <span className={s.sortChip}>{sortIndicator('p50Us')}</span>
-                </th>
-                <th className={s.num} onClick={() => toggleSort('p95Us')}>
-                  p95 <span className={s.sortChip}>{sortIndicator('p95Us')}</span>
-                </th>
-                <th className={s.num} onClick={() => toggleSort('p99Us')}>
-                  p99 <span className={s.sortChip}>{sortIndicator('p99Us')}</span>
-                </th>
+                <th onClick={() => toggleSort('service')}>Service <span className={s.sortChip}>{sortIndicator('service')}</span></th>
+                <th className={s.num} onClick={() => toggleSort('requests')}>Rate <span className={s.sortChip}>{sortIndicator('requests')}</span></th>
+                <th className={s.num} onClick={() => toggleSort('errorRate')}>Errors <span className={s.sortChip}>{sortIndicator('errorRate')}</span></th>
+                <th className={s.num} onClick={() => toggleSort('p50Us')}>p50 <span className={s.sortChip}>{sortIndicator('p50Us')}</span></th>
+                <th className={s.num} onClick={() => toggleSort('p95Us')}>p95 <span className={s.sortChip}>{sortIndicator('p95Us')}</span></th>
+                <th className={s.num} onClick={() => toggleSort('p99Us')}>p99 <span className={s.sortChip}>{sortIndicator('p99Us')}</span></th>
                 <th>Requests</th>
                 <th>Latency p95</th>
                 <th />
@@ -598,132 +431,38 @@ export default function HomePage() {
                 const rowBg = healthRowBg(health.bucket);
                 const prevReqPerMin = prev ? reqPerMin(prev.requests) : undefined;
                 return (
-                  <tr
-                    key={svc.service}
-                    style={rowBg !== 'transparent' ? { background: rowBg } : undefined}
-                    onClick={() =>
-                      navigate(`/service/${encodeURIComponent(svc.service)}${drillSuffix}`)
-                    }
-                  >
+                  <tr key={svc.service} style={rowBg !== 'transparent' ? { background: rowBg } : undefined} onClick={() => navigate(`/service/${encodeURIComponent(svc.service)}${drillSuffix}`)}>
                     <td>
-                      <Link
-                        to={`/service/${encodeURIComponent(svc.service)}${drillSuffix}`}
-                        className={s.svcCell}
-                        onClick={(e) => e.stopPropagation()}
-                        style={{ textDecoration: 'none', color: 'inherit' }}
-                      >
+                      <Link to={`/service/${encodeURIComponent(svc.service)}${drillSuffix}`} className={s.svcCell} onClick={(e) => e.stopPropagation()} style={{ textDecoration: 'none', color: 'inherit' }}>
                         <span className={s.svcDot} style={{ background: color }} />
                         <span className={s.svcName}>{svc.service}</span>
                         {(() => {
                           const stale = staleAge(svc.lastSeenMs, rangeMs, lastRefresh);
                           if (!stale) return null;
-                          return (
-                            <span
-                              className={s.stalePill}
-                              title={
-                                'This service has not emitted a span recently — the row is residue from earlier in the window. ' +
-                                'Click in for the per-minute timeline.'
-                              }
-                            >
-                              last seen {fmtAgo(stale.ageMs)}
-                            </span>
-                          );
+                          return <span className={s.stalePill} title="This service has not emitted a span recently.">last seen {fmtAgo(stale.ageMs)}</span>;
                         })()}
                         {(() => {
-                          const noisy =
-                            health.bucket === 'warn' ||
-                            health.bucket === 'critical' ||
-                            health.bucket === 'traffic_drop' ||
-                            health.bucket === 'silent';
+                          const noisy = health.bucket === 'warn' || health.bucket === 'critical' || health.bucket === 'traffic_drop' || health.bucket === 'silent';
                           if (!noisy) return null;
                           const hint = rootCauseHints.get(svc.service);
-                          if (!hint) return null;
-                          if (hint.child === svc.service) return null;
+                          if (!hint || hint.child === svc.service) return null;
                           const pct = (hint.errorRate * 100).toFixed(1);
                           return (
-                            <span
-                              className={s.rootCauseHint}
-                              title={
-                                `Outgoing calls from ${svc.service} to ${hint.child} are erroring at ${pct}% — ` +
-                                `this row is likely red because of a downstream cascade. Click ${hint.child} to drill in.`
-                              }
-                              onClick={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                navigate(
-                                  `/service/${encodeURIComponent(hint.child)}${drillSuffix}`,
-                                );
-                              }}
-                            >
+                            <span className={s.rootCauseHint} title={`Outgoing calls to ${hint.child} are erroring at ${pct}%`} onClick={(e) => { e.preventDefault(); e.stopPropagation(); navigate(`/service/${encodeURIComponent(hint.child)}${drillSuffix}`); }}>
                               → likely {hint.child}
                             </span>
                           );
                         })()}
                       </Link>
                     </td>
-                    <td className={s.num}>
-                      <strong>{fmtRate(reqPerMin(svc.requests))}</strong>
-                      <DeltaChip
-                        curr={reqPerMin(svc.requests)}
-                        prev={prevReqPerMin}
-                        mode="rateDrop"
-                        threshold={25}
-                      />
-                    </td>
-                    <td className={`${s.num} ${err.className}`}>
-                      {err.text}
-                      <DeltaChip
-                        curr={svc.errorRate}
-                        prev={prev?.errorRate}
-                        mode="points"
-                        threshold={0.5}
-                      />
-                    </td>
+                    <td className={s.num}><strong>{fmtRate(reqPerMin(svc.requests))}</strong><DeltaChip curr={reqPerMin(svc.requests)} prev={prevReqPerMin} mode="rateDrop" threshold={25} /></td>
+                    <td className={`${s.num} ${err.className}`}>{err.text}<DeltaChip curr={svc.errorRate} prev={prev?.errorRate} mode="points" threshold={0.5} /></td>
                     <td className={s.num}>{fmtUs(svc.p50Us)}</td>
-                    <td className={s.num}>
-                      <strong>{fmtUs(svc.p95Us)}</strong>
-                      <DeltaChip
-                        curr={svc.p95Us}
-                        prev={prev?.p95Us}
-                        mode="rel"
-                        threshold={30}
-                      />
-                    </td>
-                    <td className={s.num}>
-                      {fmtUs(svc.p99Us)}
-                      <DeltaChip
-                        curr={svc.p99Us}
-                        prev={prev?.p99Us}
-                        mode="rel"
-                        threshold={30}
-                      />
-                    </td>
-                    <td className={s.sparkCell}>
-                      <Sparkline
-                        data={reqSpark}
-                        width={110}
-                        height={24}
-                        color={color}
-                        fill
-                        ariaLabel={`Request rate sparkline for ${svc.service}`}
-                      />
-                    </td>
-                    <td className={s.sparkCell}>
-                      <Sparkline
-                        data={p95Spark}
-                        width={110}
-                        height={24}
-                        color={color}
-                        strokeWidth={1.5}
-                        ariaLabel={`p95 latency sparkline for ${svc.service}`}
-                      />
-                    </td>
-                    <td className={s.actionCell}>
-                      <InvestigateButton
-                        seed={buildHomeRowSeed(svc, health.bucket, prev, range)}
-                        title={`Investigate ${svc.service}`}
-                      />
-                    </td>
+                    <td className={s.num}><strong>{fmtUs(svc.p95Us)}</strong><DeltaChip curr={svc.p95Us} prev={prev?.p95Us} mode="rel" threshold={30} /></td>
+                    <td className={s.num}>{fmtUs(svc.p99Us)}<DeltaChip curr={svc.p99Us} prev={prev?.p99Us} mode="rel" threshold={30} /></td>
+                    <td className={s.sparkCell}><Sparkline data={reqSpark} width={110} height={24} color={color} fill ariaLabel={`Request rate sparkline for ${svc.service}`} /></td>
+                    <td className={s.sparkCell}><Sparkline data={p95Spark} width={110} height={24} color={color} strokeWidth={1.5} ariaLabel={`p95 latency sparkline for ${svc.service}`} /></td>
+                    <td className={s.actionCell}><InvestigateButton seed={buildHomeRowSeed(svc, health.bucket, prev, range)} title={`Investigate ${svc.service}`} /></td>
                   </tr>
                 );
               })}
@@ -732,29 +471,15 @@ export default function HomePage() {
         )}
       </div>
 
-      {/* Bottom panels: anomalies, slow trace classes, error classes */}
       <div className={s.panelsFull}>
-        <OperationAnomalyList
-          items={anomalies}
-          loading={loadingAnomalies}
-          lookback={range}
-        />
+        <OperationAnomalyList items={anomalies} loading={loadingAnomalies} lookback={range} />
       </div>
 
       <div className={s.panels}>
         <TraceClassList
           title="Slowest trace classes"
           subtitle="Grouped by root (service, operation) — click to view the worst example"
-          items={slowClasses.map<ClassItem>((c) => ({
-            key: `${c.rootService}\u0000${c.rootOperation}`,
-            service: c.rootService,
-            operation: c.rootOperation,
-            count: c.count,
-            sampleTraceID: c.sampleTraceIDs[0] ?? '',
-            maxDurationUs: c.maxDurationUs,
-            p95DurationUs: c.p95DurationUs,
-            p50DurationUs: c.p50DurationUs,
-          }))}
+          items={slowClasses.map<ClassItem>((c) => ({ key: `${c.rootService}\u0000${c.rootOperation}`, service: c.rootService, operation: c.rootOperation, count: c.count, sampleTraceID: c.sampleTraceIDs[0] ?? '', maxDurationUs: c.maxDurationUs, p95DurationUs: c.p95DurationUs, p50DurationUs: c.p50DurationUs }))}
           loading={loadingSlow}
           mode="duration"
           emptyMessage="No traces in this range."
@@ -763,23 +488,13 @@ export default function HomePage() {
         <TraceClassList
           title="Error classes"
           subtitle="Grouped by (service, operation, message) — click to view a sample"
-          items={errorClasses.map<ClassItem>((c) => ({
-            key: `${c.service}\u0000${c.operation}\u0000${c.message}`,
-            service: c.service,
-            operation: c.operation,
-            count: c.count,
-            message: c.message,
-            sampleTraceID: c.sampleTraceIDs[0] ?? '',
-            lastSeenMs: c.lastSeenMs,
-          }))}
+          items={errorClasses.map<ClassItem>((c) => ({ key: `${c.service}\u0000${c.operation}\u0000${c.message}`, service: c.service, operation: c.operation, count: c.count, message: c.message, sampleTraceID: c.sampleTraceIDs[0] ?? '', lastSeenMs: c.lastSeenMs }))}
           loading={loadingErrors}
           mode="errors"
           emptyMessage="No errors in this range — all clear."
           staleCacheAgeMs={panelCacheStaleAgeMs}
         />
       </div>
-
-      {loadingBuckets && null /* sparklines fill in when buckets arrive */}
     </div>
   );
 }

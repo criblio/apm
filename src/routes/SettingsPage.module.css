@@ -100,6 +100,15 @@
   color: var(--cds-color-fg);
 }
 
+.cadenceLag {
+  margin-left: auto;
+  font-size: var(--cds-font-size-xs);
+  color: var(--cds-color-fg-muted);
+}
+.cadenceLag strong {
+  color: var(--cds-color-fg);
+}
+
 .actions {
   display: flex;
   gap: var(--cds-space-sm);

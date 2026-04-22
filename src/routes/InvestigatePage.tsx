@@ -38,6 +38,7 @@ import type {
 } from '../api/agentTools';
 import SpanTree from '../components/SpanTree';
 import { summarizeTrace } from '../api/transform';
+import { exportAsPng } from '../utils/exportInvestigation';
 import s from './InvestigatePage.module.css';
 
 // ─────────────────────────────────────────────────────────────────
@@ -184,7 +185,10 @@ export default function InvestigatePage() {
   const [running, setRunning] = useState(false);
   const [sessionId] = useState(newSessionId);
 
-  // Transcript auto-scroll: stick to bottom as new entries arrive.
+  const transcriptInnerRef = useRef<HTMLDivElement>(null);
+  const [exporting, setExporting] = useState(false);
+  const [exportedPng, setExportedPng] = useState<string | null>(null);
+
   const transcriptRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const el = transcriptRef.current;
@@ -367,6 +371,19 @@ export default function InvestigatePage() {
     setRunning(false);
   };
 
+  const handleExportPng = useCallback(async () => {
+    if (!transcriptInnerRef.current) return;
+    setExporting(true);
+    try {
+      const dataUrl = await exportAsPng({ element: transcriptInnerRef.current });
+      setExportedPng(dataUrl);
+    } catch {
+      // silent — export failed
+    } finally {
+      setExporting(false);
+    }
+  }, []);
+
   const isEmpty = transcript.length === 0;
 
   return (
@@ -379,6 +396,18 @@ export default function InvestigatePage() {
           </div>
         </div>
         <div className={s.headerActions}>
+          {!isEmpty && !running && (
+            <>
+              <button
+                className={s.btn}
+                onClick={() => void handleExportPng()}
+                disabled={exporting}
+                title="Save as PNG image"
+              >
+                {exporting ? 'Exporting...' : 'Export PNG'}
+              </button>
+            </>
+          )}
           {running ? (
             <button className={s.btn} onClick={handleStop}>
               Stop
@@ -394,7 +423,7 @@ export default function InvestigatePage() {
       </div>
 
       <div className={s.transcript} ref={transcriptRef}>
-        <div className={s.transcriptInner}>
+        <div className={s.transcriptInner} ref={transcriptInnerRef}>
           {isEmpty && !running ? (
             <EmptyState onPick={submitFreeForm} />
           ) : (
@@ -431,6 +460,21 @@ export default function InvestigatePage() {
           </button>
         </div>
       </div>
+
+      {exportedPng && (
+        <div className={s.exportOverlay} onClick={() => setExportedPng(null)}>
+          <div className={s.exportModal} onClick={(e) => e.stopPropagation()}>
+            <div className={s.exportHeader}>
+              <span className={s.exportTitle}>Investigation snapshot</span>
+              <span className={s.exportHint}>Right-click the image → Save image as...</span>
+              <button className={s.btn} onClick={() => setExportedPng(null)}>Close</button>
+            </div>
+            <div className={s.exportBody}>
+              <img src={exportedPng} alt="Investigation export" className={s.exportImg} />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

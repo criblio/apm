@@ -15,6 +15,9 @@ export interface AppSettings {
    * true; stored here so the user's choice persists across sessions.
    */
   filterLongPollTraces?: boolean;
+  /** How often panel-cache scheduled searches run. Controls detection
+   *  lag for the alerts panel. Default '5m'. */
+  searchCadence?: string;
   [k: string]: unknown;
 }
 

@@ -425,6 +425,63 @@
   cursor: not-allowed;
 }
 
+/* Export overlay ------------------------------------------------ */
+
+.exportOverlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--cds-space-lg);
+}
+
+.exportModal {
+  background: var(--cds-color-bg);
+  border-radius: var(--cds-radius-lg);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.3);
+  max-width: 95vw;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.exportHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--cds-space-md);
+  padding: var(--cds-space-md) var(--cds-space-lg);
+  border-bottom: 1px solid var(--cds-color-border-subtle);
+  background: var(--cds-color-bg-subtle);
+}
+
+.exportTitle {
+  font-size: var(--cds-font-size-md);
+  font-weight: var(--cds-font-weight-semibold);
+  color: var(--cds-color-fg);
+}
+
+.exportHint {
+  flex: 1;
+  font-size: var(--cds-font-size-xs);
+  color: var(--cds-color-fg-muted);
+}
+
+.exportBody {
+  overflow: auto;
+  padding: var(--cds-space-md);
+}
+
+.exportImg {
+  max-width: 100%;
+  height: auto;
+  border: 1px solid var(--cds-color-border-subtle);
+  border-radius: var(--cds-radius-sm);
+}
+
 .errorBanner {
   padding: var(--cds-space-sm) var(--cds-space-md);
   background: var(--cds-color-bg-subtle);
