@@ -272,7 +272,11 @@ async function seedLookups(http: HttpClient): Promise<void> {
   const LOOKUPS_TO_SEED = [
     {
       name: 'criblapm_alert_states',
-      seedQuery: 'dataset="otel" | limit 1 | project alert_id="__init__", alert_status="ok", consecutive_bad=0, consecutive_good=0, first_fired_at="", fire_count=0 | export mode=overwrite description="Cribl APM - alert state init" to lookup criblapm_alert_states',
+      seedQuery: 'dataset="otel" | limit 1 | project alert_id="__init__", alert_status="ok", consecutive_bad=0, consecutive_good=0, fire_count=0 | export mode=overwrite description="Cribl APM - alert state init" to lookup criblapm_alert_states',
+    },
+    {
+      name: 'criblapm_alert_prev',
+      seedQuery: 'dataset="otel" | limit 1 | project svc="__init__", prev_req=0, prev_err=0, prev_err_rate=0.0, prev_p95_us=0 | export mode=overwrite description="Cribl APM - prev window init" to lookup criblapm_alert_prev',
     },
   ];
 

@@ -191,53 +191,56 @@ export function serviceSummary(service?: string): string {
 }
 
 /**
- * Home alerts with server-side alert state machine.
- *
- * Scans a 2h window, splits into current/previous halves, computes
- * per-service health, determines if each service is in a "bad" state,
- * joins against the criblapm_alert_states lookup for previous state,
- * applies state machine transitions, and exports updated state back
- * to the lookup.
- *
- * Output (goes to $vt_results for UI to read):
- *   svc, curr_requests, curr_errors, curr_error_rate,
- *   prev_requests, prev_errors, prev_error_rate,
- *   alert_id, signal_type, is_bad,
- *   alert_status, consecutive_bad, consecutive_good,
- *   first_fired_at, fire_count, transitioned_to
- *
- * The "export to lookup" persists alert_id, alert_status,
- * consecutive_bad, consecutive_good, first_fired_at, fire_count
- * for the next evaluation cycle.
+ * Previous-window service summary — identical to serviceSummary()
+ * but scheduled with earliest=-2h, latest=-1h so it captures the
+ * window immediately before the current one. Exports to a lookup
+ * so the alert evaluator can join against it without a pivot.
  */
-export function homeAlerts(): string {
-  // Debounce defaults: fire after 2 consecutive bad, clear after 3 good
+export function prevWindowSummary(): string {
+  return `${spansBase()}
+    | extend svc=tostring(resource.attributes['service.name']),
+            dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
+            is_error=(tostring(status.code)=="2")
+    ${streamFilterSpanKqlClause()}
+    | summarize prev_req=count(),
+                prev_err=countif(is_error),
+                prev_p95_us=percentile(dur_us, 95)
+      by svc
+    | extend prev_err_rate=iff(prev_req > 0, toreal(prev_err)/toreal(prev_req), 0.0)
+    | export mode=overwrite
+             description="Cribl APM - previous window service summary"
+             to lookup criblapm_alert_prev`;
+}
+
+/**
+ * Alert evaluator — reads current-window summaries from the cached
+ * home_service_summary $vt_results, joins previous-window from the
+ * criblapm_alert_prev lookup, computes health, joins alert state
+ * from criblapm_alert_states lookup, applies state machine, and
+ * exports updated state back. Output goes to $vt_results for the
+ * UI.
+ *
+ * Runs 1 minute after the summary searches so their results are
+ * available.
+ */
+export function alertEvaluator(): string {
   const FIRE_AFTER = 2;
   const CLEAR_AFTER = 3;
 
-  return `${spansBase()}
-    | extend svc=tostring(resource.attributes['service.name']),
-            is_error=(tostring(status.code)=="2"),
-            is_curr=(_time >= ago(1h))
-    ${streamFilterSpanKqlClause()}
-    | summarize requests=count(), errors=countif(is_error)
-      by svc, is_curr
-    | extend window=iff(is_curr, "curr", "prev")
-    | summarize curr_requests=max(iff(window=="curr", requests, 0)),
-                prev_requests=max(iff(window=="prev", requests, 0)),
-                curr_errors=max(iff(window=="curr", errors, 0)),
-                prev_errors=max(iff(window=="prev", errors, 0))
-      by svc
-    | extend curr_error_rate=iff(curr_requests > 0, toreal(curr_errors)/toreal(curr_requests), 0.0),
-             prev_error_rate=iff(prev_requests > 0, toreal(prev_errors)/toreal(prev_requests), 0.0)
+  return `dataset="$vt_results"
+    | where jobName == "criblapm__home_service_summary"
+    | project svc, curr_requests=toreal(requests), curr_errors=toreal(errors),
+              curr_error_rate=toreal(error_rate)
+    | lookup criblapm_alert_prev on svc
+    | extend prev_requests=iff(isnotnull(prev_req), toreal(prev_req), 0.0),
+             prev_errors=iff(isnotnull(prev_err), toreal(prev_err), 0.0),
+             prev_error_rate=iff(isnotnull(prev_err_rate), toreal(prev_err_rate), 0.0)
     | extend curr_err_pct=curr_error_rate * 100,
              prev_err_pct=prev_error_rate * 100,
-             err_delta=curr_error_rate * 100 - prev_error_rate * 100,
-             traffic_ratio=iff(prev_requests >= 50, toreal(curr_requests)/toreal(prev_requests), 1.0),
-             is_baseline=(prev_error_rate * 100 >= 1 and (curr_error_rate * 100 - prev_error_rate * 100) < 2)
+             is_baseline=(prev_error_rate * 100 >= 1 and (curr_error_rate * 100 - prev_error_rate * 100) < 2),
+             traffic_ratio=iff(prev_requests >= 50, curr_requests/prev_requests, 1.0)
     | extend signal_type=case(
                curr_requests == 0 and prev_requests >= 50, "silent",
-               curr_err_pct >= 5 and not(is_baseline), "error_rate",
                curr_err_pct >= 1 and not(is_baseline), "error_rate",
                traffic_ratio <= 0.5 and prev_requests >= 50, "traffic_drop",
                "none"),
@@ -250,8 +253,7 @@ export function homeAlerts(): string {
     | extend prev_status=iff(isnotnull(alert_status), tostring(alert_status), "ok"),
              prev_bad=iff(isnotnull(consecutive_bad), tolong(consecutive_bad), 0),
              prev_good=iff(isnotnull(consecutive_good), tolong(consecutive_good), 0),
-             prev_fire_count=iff(isnotnull(fire_count), tolong(fire_count), 0),
-             prev_first_fired=iff(isnotnull(first_fired_at), tostring(first_fired_at), "")
+             prev_fire_count=iff(isnotnull(fire_count), tolong(fire_count), 0)
     | extend new_bad=iff(is_bad, prev_bad + 1, 0),
              new_good=iff(is_bad, 0, prev_good + 1)
     | extend alert_status=case(
@@ -260,7 +262,6 @@ export function homeAlerts(): string {
                is_bad and prev_status == "pending", "pending",
                is_bad and prev_status == "firing", "firing",
                is_bad and prev_status == "resolving", "firing",
-               not(is_bad) and prev_status == "ok", "ok",
                not(is_bad) and prev_status == "pending", "ok",
                not(is_bad) and prev_status == "firing", "resolving",
                not(is_bad) and prev_status == "resolving" and new_good >= ${CLEAR_AFTER}, "ok",
@@ -269,32 +270,27 @@ export function homeAlerts(): string {
              consecutive_bad=new_bad,
              consecutive_good=new_good,
              fire_count=iff(is_bad and prev_status == "pending" and new_bad >= ${FIRE_AFTER}, prev_fire_count + 1, prev_fire_count),
-             first_fired_at=case(
-               is_bad and prev_status == "pending" and new_bad >= ${FIRE_AFTER} and prev_first_fired == "", now(),
-               prev_first_fired != "", todatetime(prev_first_fired),
-               not(is_bad) and prev_status == "resolving" and new_good >= ${CLEAR_AFTER}, todatetime(""),
-               todatetime("")),
              transitioned_to=case(
                is_bad and prev_status == "pending" and new_bad >= ${FIRE_AFTER}, "firing",
                not(is_bad) and prev_status == "resolving" and new_good >= ${CLEAR_AFTER}, "resolved",
                "")
-    | project svc, curr_requests, curr_errors, curr_error_rate, prev_requests, prev_errors, prev_error_rate,
+    | project svc, curr_requests, curr_errors, curr_error_rate,
+              prev_requests, prev_errors, prev_error_rate,
               alert_id, signal_type, is_bad,
               alert_status, consecutive_bad, consecutive_good,
-              first_fired_at, fire_count, transitioned_to`;
+              fire_count, transitioned_to`;
 }
 
 /**
- * Companion to homeAlerts() — same computation but ends with
- * | export to lookup so the state machine state persists for
- * the next evaluation cycle. Separate search because | export
- * consumes the rows (they don't go to $vt_results).
+ * Companion to alertEvaluator — exports the state machine columns
+ * to the criblapm_alert_states lookup for persistence across cycles.
+ * Separate search because | export consumes the rows.
  */
-export function homeAlertsExportState(): string {
-  const base = homeAlerts();
+export function alertEvaluatorExportState(): string {
+  const base = alertEvaluator();
   return `${base}
-    | project alert_id, alert_status, consecutive_bad, consecutive_good,
-              first_fired_at, fire_count
+    | where alert_status != "ok" or consecutive_good > 0
+    | project alert_id, alert_status, consecutive_bad, consecutive_good, fire_count
     | export mode=overwrite
              description="Cribl APM - alert state persistence"
              to lookup criblapm_alert_states`;
