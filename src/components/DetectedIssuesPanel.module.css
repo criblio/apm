@@ -52,7 +52,7 @@
 
 .row {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   gap: var(--cds-space-md);
   align-items: center;
   padding: var(--cds-space-sm) var(--cds-space-lg);

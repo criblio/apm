@@ -123,12 +123,12 @@ export default function DetectedIssuesPanel({ issues, loading, lookback }: Props
                   style={{ background: SEVERITY_COLOR[issue.severity] }}
                   title={issue.alertStatus ?? issue.severity}
                 />
-                {issue.alertStatus && issue.alertStatus !== 'ok' && (
-                  <span className={`${s.alertStatusBadge} ${s[`alertStatus_${issue.alertStatus}`] ?? ''}`}>
-                    {issue.alertStatus}
-                  </span>
-                )}
                 <div className={s.mainCol}>
+                  {issue.alertStatus && issue.alertStatus !== 'ok' && (
+                    <span className={`${s.alertStatusBadge} ${s[`alertStatus_${issue.alertStatus}`] ?? ''}`}>
+                      {issue.alertStatus}
+                    </span>
+                  )}
                   <span
                     className={s.svcName}
                     style={{ color: serviceColor(issue.service) }}
