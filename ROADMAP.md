@@ -171,9 +171,11 @@ Full design: [`docs/research/alerting-design.md`](docs/research/alerting-design.
 Two categories of alerts working together:
 
 - **Auto-alerts** — generated automatically from detected issues.
-  No configuration needed. The system tracks each detected issue
-  through a state machine (ok → pending → firing → resolving → ok)
-  with debounce at each transition to prevent flapping.
+  No configuration needed to detect; one global setting in Settings
+  to route notifications (Slack, email, PagerDuty), with per-alert
+  overrides on the Alerts page. The system tracks each detected
+  issue through a state machine (ok → pending → firing → resolving
+  → ok) with debounce at each transition to prevent flapping.
 - **User-created alerts** — persistent thresholds created via the
   UI. Each becomes a Cribl saved search with a notification target
   (Slack, email, PagerDuty, webhook). "Create alert" button on

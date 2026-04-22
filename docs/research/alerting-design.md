@@ -42,6 +42,15 @@ detected and removed when it resolves. They don't persist in the
 alert definitions store; they're derived from the health data on
 each evaluation cycle.
 
+**Notification targets for auto-alerts:** A global setting in
+Settings ("Auto-alert notification target") configures where all
+auto-alert notifications go by default — Slack, email, PagerDuty,
+webhook, or none. Individual auto-alerts can be overridden on the
+Alerts page (e.g., silence a specific noisy service, or route a
+critical service's alerts to a different PagerDuty escalation).
+This gives day-one value with one setting, and per-alert control
+for power users.
+
 ### User-created alerts (persistent)
 
 Created via the UI. Persisted in KV. Types:
