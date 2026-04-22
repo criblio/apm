@@ -310,6 +310,9 @@ export interface DetectedIssue {
   detail: string;
   operation?: string;
   rootCauseHint?: string;
+  /** Alert state from the server-side state machine. Present when
+   *  reading from the cached alert rows. */
+  alertStatus?: 'ok' | 'pending' | 'firing' | 'resolving';
 }
 
 /** OTel span kind numeric values. */

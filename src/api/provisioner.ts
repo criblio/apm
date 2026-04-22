@@ -263,12 +263,50 @@ function planToBody(want: ProvisionedSearch): Record<string, unknown> {
 /** Top-level orchestrator: load the plan, list current rows,
  * diff, apply. Returns a structured summary the caller can
  * render however it likes. */
+/**
+ * Seed lookup tables that must exist before scheduled searches
+ * referencing them can be created. Cribl validates lookup names
+ * at search creation time, so we need the lookup to exist first.
+ */
+async function seedLookups(http: HttpClient): Promise<void> {
+  const LOOKUPS_TO_SEED = [
+    {
+      name: 'criblapm_alert_states',
+      seedQuery: 'dataset="otel" | limit 1 | project alert_id="__init__", alert_status="ok", consecutive_bad=0, consecutive_good=0, first_fired_at="", fire_count=0 | export mode=overwrite description="Cribl APM - alert state init" to lookup criblapm_alert_states',
+    },
+  ];
+
+  for (const lookup of LOOKUPS_TO_SEED) {
+    try {
+      // Check if the lookup exists by trying to use it
+      await http.post('/m/default_search/search/jobs', {
+        query: `dataset="otel" | limit 1 | project x=1 | lookup ${lookup.name} on x | limit 0`,
+        earliest: '-5m',
+        latest: 'now',
+      });
+    } catch {
+      // Lookup doesn't exist — seed it
+      try {
+        await http.post('/m/default_search/search/jobs', {
+          query: lookup.seedQuery,
+          earliest: '-5m',
+          latest: 'now',
+        });
+      } catch {
+        // Best effort — if it fails, the search creation will also fail
+        // and surface the error there.
+      }
+    }
+  }
+}
+
 export async function reconcile(http: HttpClient): Promise<{
   plan: ProvisionedSearch[];
   current: SavedSearchRow[];
   actions: PlanAction[];
   results: ActionResult[];
 }> {
+  await seedLookups(http);
   const plan = getProvisioningPlan();
   const current = await listProvisioned(http);
   const actions = diffProvisioned(plan, current);

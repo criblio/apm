@@ -155,9 +155,10 @@ export function buildDetectedIssues(
 
 /**
  * Build detected issues from the cached alert rows (from the
- * criblapm__home_alerts scheduled search). This path doesn't
- * have dependency edges or latency anomalies — those are merged
- * in by the caller from separate data sources if available.
+ * criblapm__home_alerts scheduled search). The server-side query
+ * already computed is_bad and signal_type, so we use those directly
+ * instead of re-deriving client-side. Also includes alertStatus
+ * from the server-side state machine.
  */
 export function buildDetectedIssuesFromCache(
   rows: CachedAlertRow[],
@@ -166,48 +167,52 @@ export function buildDetectedIssuesFromCache(
   const issues: DetectedIssue[] = [];
 
   for (const r of rows) {
-    const errPct = r.currErrorRate * 100;
-    const prevPct = r.prevErrorRate * 100;
-    const delta = errPct - prevPct;
-    const isBaseline = prevPct >= 1 && delta < 2;
+    if (!r.isBad) continue;
 
-    if (errPct >= 5 && !isBaseline) {
-      issues.push({
-        service: r.service,
-        signalType: 'error_rate_critical',
-        severity: 'critical',
-        detail: `Error rate ${fmtPct(r.currErrorRate)} (was ${fmtPct(r.prevErrorRate)})`,
-      });
-    } else if (errPct >= 1 && !isBaseline) {
-      issues.push({
-        service: r.service,
-        signalType: 'error_rate_warn',
-        severity: 'warn',
-        detail: `Error rate ${fmtPct(r.currErrorRate)} (was ${fmtPct(r.prevErrorRate)})`,
-      });
-    } else if (
-      r.prevRequests >= MIN_BASELINE_REQUESTS &&
-      r.currRequests > 0 &&
-      r.currRequests / r.prevRequests <= 0.5
-    ) {
-      const dropPct = Math.round((1 - r.currRequests / r.prevRequests) * 100);
-      issues.push({
-        service: r.service,
-        signalType: 'traffic_drop',
-        severity: 'critical',
-        detail: `Request rate dropped ${dropPct}% (was ${fmtRate(r.prevRequests, rangeMinutes)})`,
-      });
-    } else if (
-      r.currRequests === 0 &&
-      r.prevRequests >= MIN_BASELINE_REQUESTS
-    ) {
-      issues.push({
-        service: r.service,
-        signalType: 'silent',
-        severity: 'critical',
-        detail: `No traffic (was ${fmtRate(r.prevRequests, rangeMinutes)})`,
-      });
+    const signalMap: Record<string, DetectedIssue['signalType']> = {
+      error_rate: r.currErrorRate * 100 >= 5 ? 'error_rate_critical' : 'error_rate_warn',
+      traffic_drop: 'traffic_drop',
+      silent: 'silent',
+    };
+    const signalType = signalMap[r.signalType];
+    if (!signalType) continue;
+
+    const severityMap: Record<DetectedIssue['signalType'], DetectedIssue['severity']> = {
+      error_rate_critical: 'critical',
+      error_rate_warn: 'warn',
+      traffic_drop: 'critical',
+      latency_anomaly: 'warn',
+      silent: 'critical',
+    };
+
+    let detail: string;
+    switch (r.signalType) {
+      case 'error_rate':
+        detail = `Error rate ${fmtPct(r.currErrorRate)} (was ${fmtPct(r.prevErrorRate)})`;
+        break;
+      case 'traffic_drop': {
+        const dropPct = Math.round((1 - r.currRequests / r.prevRequests) * 100);
+        detail = `Request rate dropped ${dropPct}% (was ${fmtRate(r.prevRequests, rangeMinutes)})`;
+        break;
+      }
+      case 'silent':
+        detail = `No traffic (was ${fmtRate(r.prevRequests, rangeMinutes)})`;
+        break;
+      default:
+        continue;
     }
+
+    const alertStatus = (['ok', 'pending', 'firing', 'resolving'].includes(r.alertStatus)
+      ? r.alertStatus
+      : 'ok') as DetectedIssue['alertStatus'];
+
+    issues.push({
+      service: r.service,
+      signalType,
+      severity: severityMap[signalType],
+      detail,
+      alertStatus,
+    });
   }
 
   issues.sort((a, b) => {

@@ -42,6 +42,7 @@ export const CRIBLAPM_PREFIX = 'criblapm__';
  * intentionally — lookup names can't start with the double-
  * underscore pattern without looking weird in the UI. */
 export const OP_BASELINES_LOOKUP = 'criblapm_op_baselines';
+export const ALERT_STATES_LOOKUP = 'criblapm_alert_states';
 
 /** The subset of the Cribl saved-search object that the provisioner
  * cares about. The server fills in the rest (`user`, etc.). */
@@ -163,10 +164,22 @@ export function getProvisioningPlan(): ProvisionedSearch[] {
     // ── Home alerts (detected issues) ───────────────────────
     {
       id: 'criblapm__home_alerts',
-      name: 'Cribl APM - home detected issues',
+      name: 'Cribl APM - alert evaluator',
       description:
-        'Cribl APM: per-service current-vs-previous window health for the Detected Issues panel. Scans 2h, splits into current/prev halves, outputs services with error rate and traffic delta.',
+        'Cribl APM: per-service health + alert state machine. Scans 2h, computes current/prev metrics, applies debounce state machine via criblapm_alert_states lookup, exports updated state back. Output includes alert_status (ok/pending/firing/resolving) and transitioned_to for notifications.',
       query: Q.homeAlerts(),
+      earliest: '-2h',
+      latest: 'now',
+      sampleRate: 1,
+      schedule: { ...panelCadence },
+    },
+    // ── Alert state persistence (lookup export) ─────────────
+    {
+      id: 'criblapm__alert_state_export',
+      name: 'Cribl APM - alert state export',
+      description:
+        'Cribl APM: companion to home_alerts — exports the alert state machine columns to the criblapm_alert_states lookup for persistence across evaluation cycles.',
+      query: Q.homeAlertsExportState(),
       earliest: '-2h',
       latest: 'now',
       sampleRate: 1,

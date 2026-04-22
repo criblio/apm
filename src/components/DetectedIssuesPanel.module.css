@@ -127,6 +127,40 @@
   white-space: nowrap;
 }
 
+/* Alert status badge + pulsing dot */
+.severityDotFiring {
+  animation: pulse-dot 1.5s ease-in-out infinite;
+}
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.4); }
+  50% { opacity: 0.8; box-shadow: 0 0 0 4px rgba(220, 38, 38, 0); }
+}
+
+.alertStatusBadge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 5px;
+  border-radius: var(--cds-radius-sm);
+  font-size: 9px;
+  font-weight: var(--cds-font-weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+}
+
+.alertStatus_pending {
+  background: rgba(234, 179, 8, 0.12);
+  color: #ca8a04;
+}
+.alertStatus_firing {
+  background: rgba(220, 38, 38, 0.12);
+  color: #dc2626;
+}
+.alertStatus_resolving {
+  background: rgba(16, 185, 129, 0.12);
+  color: #059669;
+}
+
 .actions {
   display: flex;
   align-items: center;
