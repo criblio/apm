@@ -27,7 +27,7 @@
  * every tick. The eslint rule flags it but the pattern is intentional.
  */
 /* eslint-disable react-hooks/refs */
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import NodeTooltip from './NodeTooltip';
 import EdgeTooltip from './EdgeTooltip';
 import ZoomControls from './ZoomControls';
@@ -79,6 +79,7 @@ export default function DependencyGraph({
     worldToScreen,
     zoomBy,
     reset: resetPanZoom,
+    fitToBounds,
     consumeLastPan,
   } = usePanZoom(width, height);
   const [hovered, setHovered] = useState<string | null>(null);
@@ -181,13 +182,38 @@ export default function DependencyGraph({
     return Math.max(10, Math.min(34, 10 + Math.log10(volume + 1) * 6));
   }
 
-  const { simNodesRef, simLinksRef, pinNode, releaseNode } = useForceLayout({
+  const { simNodesRef, simLinksRef, tick, pinNode, releaseNode } = useForceLayout({
     nodes,
     links,
     width,
     height,
     nodeRadius,
   });
+
+  // Fit-to-viewport once on initial layout. Only re-fit when the
+  // number of nodes changes (topology change), not on every data
+  // refresh (which just updates metrics on the same nodes).
+  const didFitRef = useRef(false);
+  const prevNodeCountRef = useRef(0);
+  useEffect(() => {
+    if (nodes.length !== prevNodeCountRef.current) {
+      didFitRef.current = false;
+      prevNodeCountRef.current = nodes.length;
+    }
+  }, [nodes.length]);
+  useEffect(() => {
+    if (didFitRef.current || tick < 30) return;
+    didFitRef.current = true;
+    const sn = simNodesRef.current;
+    if (sn.length === 0) return;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const n of sn) {
+      const r = nodeRadius(n);
+      if (n.x != null) { minX = Math.min(minX, n.x - r); maxX = Math.max(maxX, n.x + r); }
+      if (n.y != null) { minY = Math.min(minY, n.y - r); maxY = Math.max(maxY, n.y + r); }
+    }
+    if (isFinite(minX)) fitToBounds({ minX, minY, maxX, maxY });
+  }, [tick, fitToBounds, simNodesRef]);
 
   const focusId = pinned ?? hovered;
   const focusNode = focusId

@@ -15,7 +15,7 @@
  *    components can subscribe to it via their own useState and re-render.
  *  - Expose pinNode / releaseNode helpers for drag behavior.
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   forceSimulation,
   forceManyBody,
@@ -66,6 +66,19 @@ export interface UseForceLayoutResult {
   reheat: (alpha?: number) => void;
 }
 
+function topoKey(nodes: SimNode[], links: SimLink[]): string {
+  const nk = nodes.map((n) => n.id).sort().join(',');
+  const lk = links
+    .map((l) => {
+      const src = typeof l.source === 'object' ? (l.source as SimNode).id : l.source;
+      const tgt = typeof l.target === 'object' ? (l.target as SimNode).id : l.target;
+      return `${src}>${tgt}`;
+    })
+    .sort()
+    .join(',');
+  return `${nk}|${lk}`;
+}
+
 export function useForceLayout({
   nodes,
   links,
@@ -78,36 +91,49 @@ export function useForceLayout({
   const simRef = useRef<Simulation<SimNode, SimLink> | null>(null);
   const [tick, setTick] = useState(0);
 
+  const topology = useMemo(() => topoKey(nodes, links), [nodes, links]);
+
+  // Full simulation (re)creation — only when topology or dimensions change.
   useEffect(() => {
-    // Clone the inputs so d3 can mutate without affecting parent state.
-    const simNodes: SimNode[] = nodes.map((n) => ({ ...n }));
+    const prevById = new Map<string, SimNode>();
+    for (const n of simNodesRef.current) prevById.set(n.id, n);
+
+    const simNodes: SimNode[] = nodes.map((n) => {
+      const prev = prevById.get(n.id);
+      if (prev) {
+        return { ...n, x: prev.x, y: prev.y, vx: 0, vy: 0 };
+      }
+      return { ...n };
+    });
     const simLinks: SimLink[] = links.map((l) => ({ ...l }));
+
     simNodesRef.current = simNodes;
     simLinksRef.current = simLinks;
+
+    if (simRef.current) simRef.current.stop();
 
     const sim = forceSimulation<SimNode>(simNodes)
       .force(
         'link',
         forceLink<SimNode, SimLink>(simLinks)
           .id((d) => d.id)
-          // Looser spacing so the graph is more readable when there are
-          // many hub-spoke relationships.
           .distance(200)
           .strength(0.4),
       )
-      // Stronger repulsion — pushes unrelated nodes apart.
       .force('charge', forceManyBody().strength(-1000).distanceMax(600))
       .force('center', forceCenter(width / 2, height / 2).strength(0.05))
-      // Extra padding so labels don't overlap adjacent nodes.
       .force(
         'collision',
         forceCollide<SimNode>().radius((d) => nodeRadius(d) + 14).strength(1),
       )
-      // Slower cooldown keeps the layout settling smoothly after drags.
       .alphaDecay(0.03)
       .on('tick', () => {
         setTick((t) => t + 1);
       });
+
+    if (prevById.size > 0) {
+      sim.alpha(0.3);
+    }
 
     simRef.current = sim;
     return () => {
@@ -115,15 +141,37 @@ export function useForceLayout({
       simRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nodes, links, width, height]);
+  }, [topology, width, height]);
+
+  // Data-only update — same topology, new metric values on nodes/links.
+  // Mutate existing SimNode/SimLink objects in place so the simulation
+  // keeps running without restart and React sees no structural change.
+  useEffect(() => {
+    const simNodes = simNodesRef.current;
+    const simLinks = simLinksRef.current;
+    if (simNodes.length === 0) return;
+
+    const inputById = new Map<string, SimNode>();
+    for (const n of nodes) inputById.set(n.id, n);
+    for (const sn of simNodes) {
+      const input = inputById.get(sn.id);
+      if (input) sn.size = input.size;
+    }
+
+    for (let i = 0; i < simLinks.length && i < links.length; i++) {
+      simLinks[i].value = links[i].value;
+      simLinks[i].errorCount = links[i].errorCount;
+      simLinks[i].p95DurUs = links[i].p95DurUs;
+    }
+
+    setTick((t) => t + 1);
+  }, [nodes, links]);
 
   const pinNode = useCallback((id: string, x: number, y: number) => {
     const n = simNodesRef.current.find((node) => node.id === id);
     if (!n) return;
     n.fx = x;
     n.fy = y;
-    // Keep the sim warm while dragging so collision with neighbors
-    // pushes them out of the way in real time.
     if (simRef.current && simRef.current.alpha() < 0.2) {
       simRef.current.alpha(0.3).restart();
     }

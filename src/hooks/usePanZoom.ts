@@ -46,6 +46,8 @@ export interface UsePanZoomResult {
   worldToScreen: (wx: number, wy: number) => { x: number; y: number };
   zoomBy: (factor: number, centerX?: number, centerY?: number) => void;
   reset: () => void;
+  /** Fit the viewport to a bounding box in world coordinates, with padding. */
+  fitToBounds: (bounds: { minX: number; minY: number; maxX: number; maxY: number }, padding?: number) => void;
   /** Returns true if the most recent pointer interaction was a pan (not a click). */
   consumeLastPan: () => boolean;
 }
@@ -201,6 +203,23 @@ export function usePanZoom(width: number, height: number): UsePanZoomResult {
     setTransform({ tx: 0, ty: 0, scale: 1 });
   }, []);
 
+  const fitToBounds = useCallback(
+    (bounds: { minX: number; minY: number; maxX: number; maxY: number }, padding = 60) => {
+      const bw = bounds.maxX - bounds.minX + padding * 2;
+      const bh = bounds.maxY - bounds.minY + padding * 2;
+      if (bw <= 0 || bh <= 0) return;
+      const scale = Math.min(width / bw, height / bh, 0.85);
+      const cx = (bounds.minX + bounds.maxX) / 2;
+      const cy = (bounds.minY + bounds.maxY) / 2;
+      setTransform({
+        tx: width / 2 - cx * scale,
+        ty: height / 2 - cy * scale,
+        scale,
+      });
+    },
+    [width, height],
+  );
+
   const consumeLastPan = useCallback(() => {
     const v = lastWasPanRef.current;
     lastWasPanRef.current = false;
@@ -217,6 +236,7 @@ export function usePanZoom(width: number, height: number): UsePanZoomResult {
     worldToScreen,
     zoomBy,
     reset,
+    fitToBounds,
     consumeLastPan,
   };
 }

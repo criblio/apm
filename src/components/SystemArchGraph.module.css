@@ -1,0 +1,97 @@
+.wrap {
+  display: flex;
+  flex-direction: column;
+  background: var(--cds-color-bg);
+  border: 1px solid var(--cds-color-border-subtle);
+  border-radius: var(--cds-radius-lg);
+  box-shadow: var(--cds-shadow-sm);
+  overflow: hidden;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--cds-space-md);
+  padding: var(--cds-space-sm) var(--cds-space-lg);
+  border-bottom: 1px solid var(--cds-color-border-subtle);
+  background: var(--cds-color-bg-subtle);
+}
+
+.toolbarTitle {
+  font-size: var(--cds-font-size-md);
+  font-weight: var(--cds-font-weight-semibold);
+  color: var(--cds-color-fg);
+  margin-right: var(--cds-space-md);
+}
+
+.viewSwitch {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 2px;
+  background: var(--cds-color-bg-muted);
+  border: 1px solid var(--cds-color-border);
+  border-radius: var(--cds-radius-md);
+}
+
+.viewBtn {
+  height: 22px;
+  padding: 0 var(--cds-space-sm);
+  font-size: var(--cds-font-size-xs);
+  font-weight: var(--cds-font-weight-medium);
+  color: var(--cds-color-fg-muted);
+  background: transparent;
+  border: none;
+  border-radius: calc(var(--cds-radius-md) - 2px);
+  cursor: pointer;
+  transition: all var(--cds-transition-fast);
+}
+.viewBtn:hover {
+  color: var(--cds-color-fg);
+}
+.viewBtnActive {
+  color: var(--cds-color-fg);
+  background: var(--cds-color-bg);
+  box-shadow: var(--cds-shadow-sm);
+  font-weight: var(--cds-font-weight-semibold);
+}
+
+.spacer {
+  flex: 1;
+}
+
+.stats {
+  display: flex;
+  gap: var(--cds-space-lg);
+  font-size: var(--cds-font-size-xs);
+  color: var(--cds-color-fg-muted);
+  align-items: center;
+}
+
+.statValue {
+  font-weight: var(--cds-font-weight-semibold);
+  color: var(--cds-color-fg);
+  font-variant-numeric: tabular-nums;
+}
+
+.unhealthy {
+  padding: 2px 8px;
+  background: var(--cds-color-danger-subtle);
+  color: var(--cds-color-danger);
+  border-radius: var(--cds-radius-sm);
+  font-weight: var(--cds-font-weight-semibold);
+  font-size: var(--cds-font-size-xs);
+}
+
+.canvas {
+  position: relative;
+  overflow: hidden;
+}
+
+.empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--cds-color-fg-subtle);
+  height: 100%;
+}
