@@ -186,6 +186,7 @@ export default function HomePage() {
   const [cachedIssues, setCachedIssues] = useState<import('../api/types').DetectedIssue[] | null>(null);
   const [panelCacheUpdatedMs, setPanelCacheUpdatedMs] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
   const [refreshMs, setRefreshMs] = useState<number>(DEFAULT_REFRESH_MS);
   const [sort, setSort] = useState<SortState>({ key: 'requests', dir: 'desc' });
   const [lastRefresh, setLastRefresh] = useState<number>(() => Date.now());
@@ -194,6 +195,7 @@ export default function HomePage() {
   const hasDataRef = useRef(false);
 
   const fetchAll = useCallback(async () => {
+    setRefreshing(true);
     setError(null);
     const binSeconds = binSecondsFor(range);
     // Only show loading skeletons on initial load (no data yet).
@@ -257,6 +259,7 @@ export default function HomePage() {
           }
 
           hasDataRef.current = true;
+    setRefreshing(false);
     setLastRefresh(Date.now());
           return;
         }
@@ -298,6 +301,7 @@ export default function HomePage() {
       pEdges,
     ]);
     hasDataRef.current = true;
+    setRefreshing(false);
     setLastRefresh(Date.now());
   }, [range, streamFilterEnabled]);
 
@@ -506,11 +510,13 @@ export default function HomePage() {
               ))}
             </select>
           </div>
-          <button type="button" className={s.refreshBtn} onClick={() => void fetchAll()}>
-            Refresh now
+          <button type="button" className={s.refreshBtn} onClick={() => void fetchAll()} disabled={refreshing}>
+            {refreshing ? 'Refreshing...' : 'Refresh now'}
           </button>
         </div>
       </div>
+
+      {refreshing && <div className={s.refreshBar} />}
 
       {error && <StatusBanner kind="error">{error}</StatusBanner>}
 
