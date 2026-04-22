@@ -12,6 +12,7 @@ import MetricsPage from './routes/MetricsPage';
 import InvestigatePage from './routes/InvestigatePage';
 import SettingsPage from './routes/SettingsPage';
 import ServicesListPage from './routes/ServicesListPage';
+import AlertsPage from './routes/AlertsPage';
 
 export default function App() {
   return (
@@ -30,6 +31,7 @@ export default function App() {
             <Route path="/service/:serviceName" element={<ServiceDetailPage />} />
             <Route path="/logs" element={<LogsPage />} />
             <Route path="/metrics" element={<MetricsPage />} />
+            <Route path="/alerts" element={<AlertsPage />} />
             <Route path="/investigate" element={<InvestigatePage />} />
             <Route path="/settings" element={<SettingsPage />} />
           </Route>
