@@ -5,8 +5,8 @@ const scenario: ScenarioDeclaration = {
   flag: 'paymentFailure',
   variant: '50%',
   expectedService: 'payment',
-  telemetryWaitMs: 3 * 60_000,
-  cooldownMs: 5 * 60_000,
+  telemetryWaitMs: 7 * 60_000,
+  cooldownMs: 10 * 60_000,
   surfaceChecks: [
     {
       surface: 'homePaymentErrorChip',

@@ -6,7 +6,7 @@ const scenario: ScenarioDeclaration = {
   variant: 'on',
   expectedService: 'frontend',
   telemetryWaitMs: 3 * 60_000,
-  cooldownMs: 5 * 60_000,
+  cooldownMs: 10 * 60_000,
   surfaceChecks: [
     {
       surface: 'homeRateChip',

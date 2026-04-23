@@ -8,7 +8,7 @@ const scenario: ScenarioDeclaration = {
   // 10% Bernoulli rate on ~10 GetAds/min = ~1 error/min.
   // Need 4+ minutes for reliable detection.
   telemetryWaitMs: 4 * 60_000,
-  cooldownMs: 5 * 60_000,
+  cooldownMs: 10 * 60_000,
   surfaceChecks: [
     {
       surface: 'homeAdErrorChip',

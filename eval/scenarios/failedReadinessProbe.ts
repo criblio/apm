@@ -12,7 +12,7 @@ const scenario: ScenarioDeclaration = {
   // Readiness probe failure → k8s removes cart from endpoints →
   // upstream callers get connection errors. Propagation is slow.
   telemetryWaitMs: 4 * 60_000,
-  cooldownMs: 5 * 60_000,
+  cooldownMs: 10 * 60_000,
   surfaceChecks: [
     {
       surface: 'homeCheckoutErrorChip',

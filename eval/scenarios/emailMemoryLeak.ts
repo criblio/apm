@@ -8,7 +8,7 @@ const scenario: ScenarioDeclaration = {
   // 100x leak → OOM in minutes. Need enough time for latency
   // drift to become visible on the Duration chart.
   telemetryWaitMs: 5 * 60_000,
-  cooldownMs: 5 * 60_000,
+  cooldownMs: 10 * 60_000,
   surfaceChecks: [
     {
       surface: 'homeP95Chip',
