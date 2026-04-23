@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import StatusBanner from '../components/StatusBanner';
 import ProvisioningPanel from '../components/ProvisioningPanel';
-import { saveAppSettings } from '../api/appSettings';
+import { loadAppSettings, saveAppSettings } from '../api/appSettings';
+import { listNotificationTargets, type NotificationTarget } from '../api/notificationTargets';
 import { setCurrentDataset } from '../api/dataset';
 import { setStreamFilterEnabled } from '../api/streamFilter';
 import { setSearchCadence, CADENCE_OPTIONS, type CadenceOption } from '../api/searchCadence';
@@ -38,6 +39,36 @@ export default function SettingsPage() {
   const [error, setError] = useState<string | null>(null);
   const [streamFilterSaving, setStreamFilterSaving] = useState(false);
   const [cadenceSaving, setCadenceSaving] = useState(false);
+  const [notifTargets, setNotifTargets] = useState<NotificationTarget[]>([]);
+  const [selectedTargets, setSelectedTargets] = useState<string[]>([]);
+  const [notifSaving, setNotifSaving] = useState(false);
+
+  // Load notification targets + saved selection on mount
+  useEffect(() => {
+    listNotificationTargets().then(setNotifTargets).catch(() => {});
+    loadAppSettings().then((s) => {
+      if (s?.alertNotificationTargets) {
+        setSelectedTargets(s.alertNotificationTargets);
+      }
+    }).catch(() => {});
+  }, []);
+
+  const handleTargetToggle = useCallback(async (targetId: string) => {
+    const next = selectedTargets.includes(targetId)
+      ? selectedTargets.filter((t) => t !== targetId)
+      : [...selectedTargets, targetId];
+    setSelectedTargets(next);
+    setNotifSaving(true);
+    try {
+      await saveAppSettings({ alertNotificationTargets: next });
+      setFlash(`Alert targets updated.`);
+      setTimeout(() => setFlash(null), 4000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setNotifSaving(false);
+    }
+  }, [selectedTargets]);
 
   // Sync draft when the current dataset updates externally (e.g. first
   // KV load finishes after page mount).
@@ -267,6 +298,40 @@ export default function SettingsPage() {
           </select>
         </div>
 
+        {flash && <span className={s.successFlash}>{flash}</span>}
+      </div>
+
+      <div className={s.card}>
+        <h2 className={s.sectionTitle}>Alert notification targets</h2>
+        <p className={s.sectionHelp}>
+          Auto-detected issues will send notifications to the selected targets
+          when they fire and when they resolve. Select one or more targets below.
+          Targets are configured in Cribl under Notification Targets.
+        </p>
+
+        {notifTargets.length === 0 ? (
+          <div className={s.fieldHelp}>
+            No notification targets configured in this workspace.
+            Configure them in Cribl under Settings → Notification Targets.
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            {notifTargets.map((t) => (
+              <label key={t.id} className={s.toggleRow}>
+                <input
+                  type="checkbox"
+                  checked={selectedTargets.includes(t.id)}
+                  disabled={notifSaving}
+                  onChange={() => void handleTargetToggle(t.id)}
+                />
+                <div>
+                  <div className={s.toggleTitle}>{t.name ?? t.id}</div>
+                  <div className={s.toggleSub}>{t.type} — {t.id}</div>
+                </div>
+              </label>
+            ))}
+          </div>
+        )}
         {flash && <span className={s.successFlash}>{flash}</span>}
       </div>
 
