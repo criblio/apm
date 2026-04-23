@@ -1,10 +1,12 @@
 import type { Page } from 'playwright-core';
 import { setFlag, allOff } from '../tests/helpers/flagd.js';
+import { runQuery } from '../tests/helpers/criblSearch.js';
 import type {
   ScenarioDeclaration,
   ScenarioResult,
   SurfaceResult,
   SurfaceCheck,
+  KqlCheck,
   InvestigatorResult,
 } from './types.js';
 
@@ -38,6 +40,18 @@ async function navigateToPage(
       state: 'visible',
       timeout: 60_000,
     }).catch(() => {});
+    return true;
+  } else if (pageName === 'alerts') {
+    await gotoApm(page, '/');
+    await page.waitForTimeout(2000);
+    const alertsLink = page.getByRole('link', { name: 'Alerts' });
+    const visible = await alertsLink
+      .waitFor({ state: 'visible', timeout: 10_000 })
+      .then(() => true)
+      .catch(() => false);
+    if (!visible) return false;
+    await alertsLink.click();
+    await page.waitForTimeout(5000);
     return true;
   }
   return false;
@@ -85,6 +99,42 @@ async function evaluateCheck(
     }
 
     return { surface: check.surface, detected, latencyMs: Date.now() - start };
+  } catch (err) {
+    return {
+      surface: check.surface,
+      detected: false,
+      latencyMs: Date.now() - start,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+async function evaluateKqlCheck(check: KqlCheck): Promise<SurfaceResult> {
+  const start = Date.now();
+  const pollInterval = check.pollIntervalMs ?? 15_000;
+  const deadline = Date.now() + check.timeoutMs;
+
+  try {
+    while (Date.now() < deadline) {
+      const rows = await runQuery(check.query, check.earliest, check.latest, 100);
+
+      if (check.assertion === 'rowCountGt0') {
+        if (rows.length > 0) {
+          return { surface: check.surface, detected: true, latencyMs: Date.now() - start };
+        }
+      } else if (check.assertion === 'fieldMatches' && check.field && check.pattern) {
+        const re = new RegExp(check.pattern, 'i');
+        const match = rows.some((r) => re.test(String(r[check.field!] ?? '')));
+        if (match) {
+          return { surface: check.surface, detected: true, latencyMs: Date.now() - start };
+        }
+      }
+
+      if (Date.now() + pollInterval > deadline) break;
+      await new Promise((r) => setTimeout(r, pollInterval));
+    }
+
+    return { surface: check.surface, detected: false, latencyMs: Date.now() - start };
   } catch (err) {
     return {
       surface: check.surface,
@@ -210,6 +260,19 @@ export async function runScenario(
       for (const check of checks) {
         console.log(`  [${scenario.name}] checking ${check.surface}...`);
         const result = await evaluateCheck(page, check);
+        surfaces.push(result);
+        const mark = result.detected ? '✓' : '✗';
+        console.log(
+          `  [${scenario.name}]   ${mark} ${check.surface} (${result.latencyMs}ms)`,
+        );
+      }
+    }
+
+    // KQL checks — validate server-side state (alert status, history)
+    if (scenario.kqlChecks) {
+      for (const check of scenario.kqlChecks) {
+        console.log(`  [${scenario.name}] KQL check: ${check.surface}...`);
+        const result = await evaluateKqlCheck(check);
         surfaces.push(result);
         const mark = result.detected ? '✓' : '✗';
         console.log(

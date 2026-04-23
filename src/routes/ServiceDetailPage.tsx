@@ -16,6 +16,7 @@ import {
   listServiceMetricNames,
   getServiceMetricsBatch,
 } from '../api/search';
+import { runQuery } from '../api/cribl';
 import { listCachedSvcDetailPanels } from '../api/panelCache';
 import { serviceColor } from '../utils/spans';
 import { previousWindow } from '../utils/timeRange';
@@ -203,6 +204,8 @@ export default function ServiceDetailPage() {
   const [loadingDeps, setLoadingDeps] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notFound, setNotFound] = useState(false);
+  const [alertStatus, setAlertStatus] = useState<string>('ok');
+  const [alertHistory, setAlertHistory] = useState<Array<{ time: number; eventType: string; signalType: string; detail: string }>>([]);
   // Trigger a re-fetch when the Settings stream-filter toggle changes,
   // so the Recent errors panel doesn't keep stale server-filtered data.
   const streamFilterEnabled = useStreamFilterEnabled();
@@ -328,6 +331,34 @@ export default function ServiceDetailPage() {
       .then((inst) => setInstances(inst))
       .catch(() => setInstances([]))
       .finally(() => setLoadingInstances(false));
+
+    // Alert status from the evaluator's $vt_results
+    const svcEsc = serviceName.replace(/"/g, '\\"');
+    runQuery(
+      `dataset="$vt_results" | where jobName == "criblapm__home_alerts" and svc == "${svcEsc}" | project alert_status, signal_type`,
+      '-1h', 'now', 1,
+    )
+      .then((rows) => {
+        if (rows.length > 0) setAlertStatus(String(rows[0].alert_status ?? 'ok'));
+      })
+      .catch(() => {});
+
+    // Alert history from the otel dataset
+    runQuery(
+      `dataset="otel" | where data_datatype == "criblapm_alert" and svc == "${svcEsc}" | project _time, event_type, signal_type, curr_error_rate, prev_error_rate | sort by _time desc | limit 20`,
+      '-7d', 'now', 20,
+    )
+      .then((rows) => {
+        setAlertHistory(rows.map((r) => ({
+          time: Number(r._time) * 1000,
+          eventType: String(r.event_type ?? ''),
+          signalType: String(r.signal_type ?? ''),
+          detail: r.curr_error_rate != null
+            ? `Error rate ${(Number(r.curr_error_rate) * 100).toFixed(1)}% (was ${(Number(r.prev_error_rate ?? 0) * 100).toFixed(1)}%)`
+            : '',
+        })));
+      })
+      .catch(() => {});
   }, [range, serviceName, streamFilterEnabled]);
 
   useEffect(() => {
@@ -745,10 +776,25 @@ export default function ServiceDetailPage() {
 
       {error && <StatusBanner kind="error">{error}</StatusBanner>}
 
-      <div className={s.hero}>
+      <div className={s.hero} style={
+        alertStatus === 'firing' ? { borderLeft: '4px solid #dc2626' } :
+        alertStatus === 'pending' ? { borderLeft: '4px solid #f59e0b' } :
+        alertStatus === 'resolving' ? { borderLeft: '4px solid #06b6d4' } :
+        undefined
+      }>
         <div className={s.heroSwatch} style={{ background: color }} />
         <div className={s.heroMain}>
-          <h1 className={s.heroName}>{serviceName}</h1>
+          <h1 className={s.heroName}>
+            {serviceName}
+            {alertStatus !== 'ok' && (
+              <span className={s.alertBadge} style={{
+                background: alertStatus === 'firing' ? 'rgba(220,38,38,0.12)' : alertStatus === 'pending' ? 'rgba(245,158,11,0.12)' : 'rgba(6,182,212,0.12)',
+                color: alertStatus === 'firing' ? '#dc2626' : alertStatus === 'pending' ? '#f59e0b' : '#06b6d4',
+              }}>
+                {alertStatus}
+              </span>
+            )}
+          </h1>
           <div className={s.heroSubtitle}>
             {loadingSummary
               ? 'Loading…'
@@ -1140,6 +1186,45 @@ export default function ServiceDetailPage() {
           </table>
         )}
       </div>
+
+      {/* Alert history */}
+      {alertHistory.length > 0 && (
+        <div className={s.section}>
+          <h2 className={s.sectionHeader}>Alert History</h2>
+          <table className={s.table}>
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Event</th>
+                <th>Signal</th>
+                <th>Detail</th>
+              </tr>
+            </thead>
+            <tbody>
+              {alertHistory.map((h, i) => (
+                <tr key={i}>
+                  <td>{new Date(h.time).toLocaleString()}</td>
+                  <td>
+                    <span style={{
+                      padding: '2px 6px',
+                      borderRadius: '4px',
+                      fontSize: '11px',
+                      fontWeight: 600,
+                      textTransform: 'uppercase',
+                      background: h.eventType === 'firing' ? 'rgba(220,38,38,0.12)' : 'rgba(16,185,129,0.12)',
+                      color: h.eventType === 'firing' ? '#dc2626' : '#059669',
+                    }}>
+                      {h.eventType}
+                    </span>
+                  </td>
+                  <td>{h.signalType}</td>
+                  <td>{h.detail}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

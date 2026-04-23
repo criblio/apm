@@ -110,6 +110,23 @@ Pattern: write a short Node ESM script that imports
 via the Bash tool. Keep these scripts out of version control unless
 they become reusable — the repo already has enough one-offs.
 
+### Validating UI changes via Playwright
+
+**Every new UI feature must be validated via Playwright against
+staging before reporting it as done.** Use the e2e test helpers
+(`tests/helpers/apmSession.ts`) for auth + host-global injection.
+Write a short ad-hoc script that:
+
+1. Navigates to the relevant page
+2. Asserts key elements are visible (text, buttons, tables)
+3. Captures a screenshot as evidence
+4. Tests basic interactions (click, verify result)
+
+Use `playwright-core` with `chromium.launch({ headless: true })`
+(not the CDP helper — Chromium may not be running). Auth via
+`installCriblHostGlobals(page)` + `gotoApm(page, '/path')`.
+See `tests/helpers/apmSession.ts` for the pattern.
+
 ### Deploying to staging
 
 `npm run deploy` builds, packages, uploads the pack, and

@@ -51,8 +51,8 @@ import type {
  * Q.messagingDependencies) glued together the same way
  * `search.ts::getDependencies` does at runtime. The cache
  * consumer gets the exact same shape as the live path. */
-/** Per-service current-vs-previous window health from the alerts
- *  scheduled search. Client applies health-bucket thresholds. */
+/** Per-service health + alert state from the alerts scheduled search.
+ *  Includes both the health metrics and the state machine output. */
 export interface CachedAlertRow {
   service: string;
   currRequests: number;
@@ -61,6 +61,15 @@ export interface CachedAlertRow {
   prevRequests: number;
   prevErrors: number;
   prevErrorRate: number;
+  alertId: string;
+  signalType: string;
+  isBad: boolean;
+  isPersistent: boolean;
+  alertStatus: string;
+  consecutiveBad: number;
+  consecutiveGood: number;
+  fireCount: number;
+  transitionedTo: string;
 }
 
 export interface CachedPanels {
@@ -208,6 +217,15 @@ function parseAlertRows(rows: Record<string, unknown>[]): CachedAlertRow[] {
     prevRequests: toNum(r.prev_requests),
     prevErrors: toNum(r.prev_errors),
     prevErrorRate: toNum(r.prev_error_rate),
+    alertId: String(r.alert_id ?? ''),
+    signalType: String(r.signal_type ?? 'none'),
+    isBad: r.is_bad === true || r.is_bad === 'true',
+    isPersistent: r.is_persistent === true || r.is_persistent === 'true',
+    alertStatus: String(r.alert_status ?? 'ok'),
+    consecutiveBad: toNum(r.consecutive_bad),
+    consecutiveGood: toNum(r.consecutive_good),
+    fireCount: toNum(r.fire_count),
+    transitionedTo: String(r.transitioned_to ?? ''),
   }));
 }
 

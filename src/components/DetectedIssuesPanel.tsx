@@ -119,11 +119,21 @@ export default function DetectedIssuesPanel({ issues, loading, lookback }: Props
             <li key={`${issue.service}-${issue.signalType}-${issue.operation ?? ''}-${i}`}>
               <Link to={drillTo} className={s.row}>
                 <span
-                  className={s.severityDot}
+                  className={`${s.severityDot} ${issue.alertStatus === 'firing' ? s.severityDotFiring : ''}`}
                   style={{ background: SEVERITY_COLOR[issue.severity] }}
-                  title={issue.severity}
+                  title={issue.alertStatus ?? issue.severity}
                 />
                 <div className={s.mainCol}>
+                  {issue.alertStatus && issue.alertStatus !== 'ok' && (
+                    <span className={`${s.alertStatusBadge} ${s[`alertStatus_${issue.alertStatus}`] ?? ''}`}>
+                      {issue.alertStatus}
+                    </span>
+                  )}
+                  {issue.isPersistent && (
+                    <span className={s.persistentBadge} title="Elevated in both current and previous window">
+                      persistent
+                    </span>
+                  )}
                   <span
                     className={s.svcName}
                     style={{ color: serviceColor(issue.service) }}
