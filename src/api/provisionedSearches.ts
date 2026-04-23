@@ -42,6 +42,7 @@ export const CRIBLAPM_PREFIX = 'criblapm__';
  * intentionally — lookup names can't start with the double-
  * underscore pattern without looking weird in the UI. */
 export const OP_BASELINES_LOOKUP = 'criblapm_op_baselines';
+export const ALERT_STATES_LOOKUP = 'criblapm_alert_states';
 
 /** The subset of the Cribl saved-search object that the provisioner
  * cares about. The server fills in the rest (`user`, etc.). */
@@ -107,6 +108,15 @@ export function getProvisioningPlan(): ProvisionedSearch[] {
     tz: 'UTC',
     keepLastN: 2,
   } as const;
+  // Alert evaluator runs 1 minute after the panel searches so their
+  // $vt_results and lookup exports are available.
+  const evalCronSchedule = cronSchedule.replace(/^\*\/(\d+)/, (_m: string, n: string) => `1-59/${n}`).replace(/^\* /, '1 ');
+  const evalCadence = {
+    enabled: true,
+    cronSchedule: evalCronSchedule,
+    tz: 'UTC',
+    keepLastN: 2,
+  } as const;
   const hourly = {
     enabled: true,
     cronSchedule: '0 * * * *',
@@ -160,17 +170,60 @@ export function getProvisioningPlan(): ProvisionedSearch[] {
       sampleRate: 1,
       schedule: { ...panelCadence },
     },
-    // ── Home alerts (detected issues) ───────────────────────
+    // ── Alert pipeline: prev summary → evaluator → state export
+    //
+    // Three searches run in sequence each cadence cycle:
+    //  1. prev_summary: exports previous-window metrics to a lookup
+    //  2. alert_eval: reads current from $vt_results + prev from
+    //     lookup, applies state machine, outputs to $vt_results
+    //  3. alert_state_export: same as eval but exports state to
+    //     lookup for the next cycle
+    //
+    // The evaluator runs 1 minute after the summaries so their
+    // results are available.
     {
-      id: 'criblapm__home_alerts',
-      name: 'Cribl APM - home detected issues',
+      id: 'criblapm__home_alerts_prev',
+      name: 'Cribl APM - previous window summary',
       description:
-        'Cribl APM: per-service current-vs-previous window health for the Detected Issues panel. Scans 2h, splits into current/prev halves, outputs services with error rate and traffic delta.',
-      query: Q.homeAlerts(),
+        'Cribl APM: service summary for the previous hour. Exports to the criblapm_alert_prev lookup so the alert evaluator can compare current vs previous without a pivot.',
+      query: Q.prevWindowSummary(),
       earliest: '-2h',
-      latest: 'now',
+      latest: '-1h',
       sampleRate: 1,
       schedule: { ...panelCadence },
+    },
+    {
+      id: 'criblapm__home_alerts',
+      name: 'Cribl APM - alert evaluator',
+      description:
+        'Cribl APM: reads current service summary from $vt_results, joins previous from lookup, computes health + debounce state machine. Output includes alert_status (ok/pending/firing/resolving) and transitioned_to.',
+      query: Q.alertEvaluator(),
+      earliest: '-1h',
+      latest: 'now',
+      sampleRate: 1,
+      schedule: { ...evalCadence },
+    },
+    {
+      id: 'criblapm__alert_state_export',
+      name: 'Cribl APM - alert state export',
+      description:
+        'Cribl APM: exports alert state machine columns to the criblapm_alert_states lookup for persistence across evaluation cycles.',
+      query: Q.alertEvaluatorExportState(),
+      earliest: '-1h',
+      latest: 'now',
+      sampleRate: 1,
+      schedule: { ...evalCadence },
+    },
+    {
+      id: 'criblapm__alert_history_send',
+      name: 'Cribl APM - alert history send',
+      description:
+        'Cribl APM: sends alert state transitions (firing/resolved) back to the dataset as searchable history via | send group="search".',
+      query: Q.alertHistorySend(),
+      earliest: '-1h',
+      latest: 'now',
+      sampleRate: 1,
+      schedule: { ...evalCadence },
     },
     // ── System Architecture panel caches ────────────────────
     {
@@ -243,7 +296,7 @@ export function getHomePanelJobNames(): string[] {
     'criblapm__home_service_time_series',
     'criblapm__home_slow_traces',
     'criblapm__home_error_spans',
-    'criblapm__home_alerts',
+    'criblapm__home_alerts',  // alert evaluator output (health + state)
   ];
 }
 

@@ -310,6 +310,14 @@ export interface DetectedIssue {
   detail: string;
   operation?: string;
   rootCauseHint?: string;
+  /** Alert state from the server-side state machine. Present when
+   *  reading from the cached alert rows. */
+  alertStatus?: 'ok' | 'pending' | 'firing' | 'resolving';
+  /** True when this is a persistent issue (similar error rate in
+   *  prev window) vs a new/worsening one. Used to render a
+   *  "Persistent" badge so users can distinguish ongoing problems
+   *  from fresh incidents. Does NOT hide the issue. */
+  isPersistent?: boolean;
 }
 
 /** OTel span kind numeric values. */

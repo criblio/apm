@@ -33,6 +33,7 @@ const tabs: NavItem[] = [
   { label: 'Search', to: '/search' },
   { label: 'Logs', to: '/logs' },
   { label: 'Metrics', to: '/metrics' },
+  { label: 'Alerts', to: '/alerts' },
   { label: 'Compare', to: '/compare' },
   { label: 'Investigate', to: '/investigate' },
 ];

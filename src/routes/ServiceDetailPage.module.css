@@ -50,9 +50,20 @@
   font-weight: var(--cds-font-weight-semibold);
   color: var(--cds-color-fg);
   margin: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: var(--cds-space-sm);
+}
+
+.alertBadge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: var(--cds-radius-sm);
+  font-size: var(--cds-font-size-xs);
+  font-weight: var(--cds-font-weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
 }
 
 .heroSubtitle {

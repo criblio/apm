@@ -125,23 +125,10 @@ export function serviceHealth(
   }
   const errInfo = healthFromRate(summary.errorRate);
   // Errors dominate when they're already significant — an erroring
-  // service is still erroring even if the volume also dropped or a
-  // specific op is anomalously slow. BUT: if the previous window had
-  // a similar error rate, this is a baseline — the service "always"
-  // errors at this level and flagging it every refresh is noise.
-  // Only promote to warn/critical when the error rate is NEW or
-  // significantly worse than the prior window.
+  // service is still erroring. A persistent 25% error rate is still
+  // a real problem that should be visible. Notification suppression
+  // for persistent issues happens at the alert layer, not here.
   if (errInfo.bucket === 'critical' || errInfo.bucket === 'warn') {
-    if (prev && prev.requests >= MIN_BASELINE_REQUESTS) {
-      const prevPct = prev.errorRate * 100;
-      const currPct = summary.errorRate * 100;
-      const delta = currPct - prevPct;
-      // If the previous window already had errors at a similar level
-      // (within 2pp), this is a stable baseline — downgrade to watch.
-      if (prevPct >= 1 && delta < 2) {
-        return { bucket: 'watch', ...HEALTH.watch };
-      }
-    }
     return errInfo;
   }
   // Latency anomaly beats traffic-drop in precedence — a specific

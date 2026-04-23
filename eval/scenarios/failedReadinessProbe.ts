@@ -11,8 +11,8 @@ const scenario: ScenarioDeclaration = {
   expectedService: 'checkout',
   // Readiness probe failure → k8s removes cart from endpoints →
   // upstream callers get connection errors. Propagation is slow.
-  telemetryWaitMs: 4 * 60_000,
-  cooldownMs: 5 * 60_000,
+  telemetryWaitMs: 7 * 60_000,
+  cooldownMs: 10 * 60_000,
   surfaceChecks: [
     {
       surface: 'homeCheckoutErrorChip',
@@ -28,6 +28,51 @@ const scenario: ScenarioDeclaration = {
       locator: '[class*="wrap"]:has(span:text-matches("^Error classes")) li:has-text("cart")',
       assertion: 'countGt0',
       timeoutMs: 60_000,
+    },
+  
+    {
+      surface: 'homeDetectedIssuescheckout',
+      page: 'home',
+      locator: '[class*="wrap"]:has(span:text-matches("^Detected Issues")) a:has-text("checkout")',
+      assertion: 'countGt0',
+      timeoutMs: 60_000,
+    },
+    {
+      surface: 'alertsPagecheckoutFiring',
+      page: 'alerts',
+      locator: 'table tr:has-text("checkout"):has-text("Firing")',
+      assertion: 'countGt0',
+      timeoutMs: 120_000,
+    },
+    {
+      surface: 'svcDetailAlertBadge',
+      page: 'serviceDetail',
+      locator: 'h1:has-text("checkout") span:text-matches("firing|pending", "i")',
+      assertion: 'visible',
+      timeoutMs: 30_000,
+    },
+  ],
+
+  kqlChecks: [
+    {
+      surface: 'alertStatecheckoutFiring',
+      query: 'dataset="$vt_results" | where jobName == "criblapm__home_alerts" and svc == "checkout" | project alert_status',
+      earliest: '-1h',
+      latest: 'now',
+      assertion: 'fieldMatches',
+      field: 'alert_status',
+      pattern: 'firing|pending',
+      timeoutMs: 8 * 60_000,
+      pollIntervalMs: 30_000,
+    },
+    {
+      surface: 'alertHistorycheckoutFired',
+      query: 'dataset="otel" | where data_datatype == "criblapm_alert" and svc == "checkout" and event_type == "firing"',
+      earliest: '-30m',
+      latest: 'now',
+      assertion: 'rowCountGt0',
+      timeoutMs: 10 * 60_000,
+      pollIntervalMs: 30_000,
     },
   ],
   investigator: {
