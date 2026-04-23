@@ -996,7 +996,7 @@ export default function ServiceDetailPage() {
                     key={op.operation}
                     onClick={() =>
                       navigate(
-                        `/search?service=${encodeURIComponent(serviceName)}&operation=${encodeURIComponent(op.operation)}&lookback=${range}`,
+                        `/signals/traces?service=${encodeURIComponent(serviceName)}&operation=${encodeURIComponent(op.operation)}&lookback=${range}`,
                       )
                     }
                   >

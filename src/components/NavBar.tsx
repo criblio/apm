@@ -30,9 +30,15 @@ const tabs: NavItem[] = [
       { label: 'Architecture', to: '/services/architecture' },
     ],
   },
-  { label: 'Search', to: '/search' },
-  { label: 'Logs', to: '/logs' },
-  { label: 'Metrics', to: '/metrics' },
+  {
+    label: 'Signals',
+    activePrefix: '/signals',
+    children: [
+      { label: 'Logs', to: '/signals/logs' },
+      { label: 'Traces', to: '/signals/traces' },
+      { label: 'Metrics', to: '/signals/metrics' },
+    ],
+  },
   { label: 'Alerts', to: '/alerts' },
   { label: 'Compare', to: '/compare' },
   { label: 'Investigate', to: '/investigate' },
