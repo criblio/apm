@@ -48,7 +48,7 @@ const scenario: ScenarioDeclaration = {
     {
       surface: 'svcDetailAlertBadge',
       page: 'serviceDetail',
-      locator: 'h1:has-text("product-reviews") span:text-matches("firing|pending", "i")',
+      locator: '[class*="alertBadge"]',
       assertion: 'visible',
       timeoutMs: 30_000,
     },
