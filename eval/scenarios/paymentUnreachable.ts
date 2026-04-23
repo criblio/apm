@@ -5,7 +5,7 @@ const scenario: ScenarioDeclaration = {
   flag: 'paymentUnreachable',
   variant: 'on',
   expectedService: 'payment',
-  telemetryWaitMs: 3 * 60_000,
+  telemetryWaitMs: 7 * 60_000,
   cooldownMs: 10 * 60_000,
   surfaceChecks: [
     {
@@ -36,6 +36,51 @@ const scenario: ScenarioDeclaration = {
       locator: 'text=Errors',
       assertion: 'visible',
       timeoutMs: 30_000,
+    },
+  
+    {
+      surface: 'homeDetectedIssuespayment',
+      page: 'home',
+      locator: '[class*="wrap"]:has(span:text-matches("^Detected Issues")) a:has-text("payment")',
+      assertion: 'countGt0',
+      timeoutMs: 60_000,
+    },
+    {
+      surface: 'alertsPagepaymentFiring',
+      page: 'alerts',
+      locator: 'table tr:has-text("payment"):has-text("Firing")',
+      assertion: 'countGt0',
+      timeoutMs: 120_000,
+    },
+    {
+      surface: 'svcDetailAlertBadge',
+      page: 'serviceDetail',
+      locator: 'h1:has-text("payment") span:text-matches("firing|pending", "i")',
+      assertion: 'visible',
+      timeoutMs: 30_000,
+    },
+  ],
+
+  kqlChecks: [
+    {
+      surface: 'alertStatepaymentFiring',
+      query: 'dataset="$vt_results" | where jobName == "criblapm__home_alerts" and svc == "payment" | project alert_status',
+      earliest: '-1h',
+      latest: 'now',
+      assertion: 'fieldMatches',
+      field: 'alert_status',
+      pattern: 'firing|pending',
+      timeoutMs: 8 * 60_000,
+      pollIntervalMs: 30_000,
+    },
+    {
+      surface: 'alertHistorypaymentFired',
+      query: 'dataset="otel" | where data_datatype == "criblapm_alert" and svc == "payment" and event_type == "firing"',
+      earliest: '-30m',
+      latest: 'now',
+      assertion: 'rowCountGt0',
+      timeoutMs: 10 * 60_000,
+      pollIntervalMs: 30_000,
     },
   ],
   investigator: {
