@@ -21,7 +21,9 @@ export default function App() {
         <Routes>
           <Route element={<AppShell />}>
             <Route index element={<HomePage />} />
-            <Route path="/search" element={<SearchPage />} />
+            <Route path="/signals/traces" element={<SearchPage />} />
+            <Route path="/signals/logs" element={<LogsPage />} />
+            <Route path="/signals/metrics" element={<MetricsPage />} />
             <Route path="/trace/:traceId" element={<TraceView />} />
             <Route path="/compare" element={<ComparePage />} />
             <Route path="/compare/:idA/:idB" element={<ComparePage />} />
@@ -29,11 +31,13 @@ export default function App() {
             <Route path="/services/architecture" element={<SystemArchPage />} />
             <Route path="/architecture" element={<Navigate to="/services/architecture" replace />} />
             <Route path="/service/:serviceName" element={<ServiceDetailPage />} />
-            <Route path="/logs" element={<LogsPage />} />
-            <Route path="/metrics" element={<MetricsPage />} />
             <Route path="/alerts" element={<AlertsPage />} />
             <Route path="/investigate" element={<InvestigatePage />} />
             <Route path="/settings" element={<SettingsPage />} />
+            {/* Backwards compat redirects */}
+            <Route path="/search" element={<Navigate to="/signals/traces" replace />} />
+            <Route path="/logs" element={<Navigate to="/signals/logs" replace />} />
+            <Route path="/metrics" element={<Navigate to="/signals/metrics" replace />} />
           </Route>
         </Routes>
       </BrowserRouter>
