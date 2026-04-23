@@ -18,6 +18,9 @@ export interface AppSettings {
   /** How often panel-cache scheduled searches run. Controls detection
    *  lag for the alerts panel. Default '5m'. */
   searchCadence?: string;
+  /** Cribl notification target IDs for auto-alert notifications.
+   *  Multi-select — alerts fire to all listed targets. Empty = silent. */
+  alertNotificationTargets?: string[];
   [k: string]: unknown;
 }
 
