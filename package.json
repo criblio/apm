@@ -12,6 +12,8 @@
     "deploy": "node scripts/deploy.mjs",
     "provision": "tsx scripts/provision.ts",
     "browser:smoke": "node scripts/browser-smoke.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:headed": "playwright test --headed",
@@ -51,7 +53,8 @@
     "tsx": "^4.21.0",
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.58.0",
-    "vite": "^8.0.4"
+    "vite": "^8.0.4",
+    "vitest": "^4.1.5"
   },
   "displayName": "Cribl APM",
   "description": "Application performance monitoring on top of Cribl Search — traces, logs, and metrics from the OpenTelemetry demo.",

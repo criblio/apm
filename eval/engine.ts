@@ -218,6 +218,13 @@ export async function runScenario(
   let investigator: InvestigatorResult | undefined;
 
   try {
+    // Reset alert state before each scenario to prevent carryover
+    console.log(`  [${scenario.name}] resetting alert state...`);
+    await runQuery(
+      'dataset="otel" | limit 1 | project alert_id="__init__", alert_status="ok", consecutive_bad=0, consecutive_good=0, fire_count=0 | export mode=overwrite description="eval reset" to lookup criblapm_alert_states',
+      '-5m', 'now', 1,
+    ).catch(() => {});
+
     console.log(`  [${scenario.name}] flipping ${scenario.flag}=${scenario.variant}`);
     await setFlag(scenario.flag, scenario.variant);
 
