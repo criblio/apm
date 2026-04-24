@@ -787,7 +787,7 @@ export default function ServiceDetailPage() {
           <h1 className={s.heroName}>
             {serviceName}
             {alertStatus !== 'ok' && (
-              <span className={s.alertBadge} style={{
+              <span data-testid="alert-badge" className={s.alertBadge} style={{
                 background: alertStatus === 'firing' ? 'rgba(220,38,38,0.12)' : alertStatus === 'pending' ? 'rgba(245,158,11,0.12)' : 'rgba(6,182,212,0.12)',
                 color: alertStatus === 'firing' ? '#dc2626' : alertStatus === 'pending' ? '#f59e0b' : '#06b6d4',
               }}>

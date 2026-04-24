@@ -41,7 +41,7 @@ const scenario: ScenarioDeclaration = {
     {
       surface: 'svcDetailAlertBadge',
       page: 'serviceDetail',
-      locator: '[class*="alertBadge"]',
+      locator: '[data-testid="alert-badge"]',
       assertion: 'visible',
       timeoutMs: 30_000,
     },

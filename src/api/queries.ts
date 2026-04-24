@@ -282,7 +282,47 @@ export function alertEvaluator(): string {
               prev_requests, prev_errors, prev_error_rate,
               alert_id, signal_type, is_bad, is_persistent,
               alert_status, consecutive_bad, consecutive_good,
-              fire_count, transitioned_to`;
+              fire_count, transitioned_to
+    | union (
+        dataset="$vt_results"
+        | where jobName == "criblapm__svc_operations"
+        | project svc, op=name, curr_p95_us=toreal(p95_us), curr_requests=toreal(requests)
+        | lookup criblapm_op_baselines on svc, op
+        | extend prev_p95_us=iff(isnotnull(p95_us), toreal(p95_us), 0.0),
+                 prev_op_requests=iff(isnotnull(requests), toreal(requests), 0.0)
+        | where isnotnull(prev_p95_us) and prev_p95_us > 0
+                and curr_p95_us >= prev_p95_us * 5
+                and curr_p95_us >= 1000000
+                and prev_op_requests >= 20
+        | extend alert_id=strcat("auto:latency:", svc, ":", op),
+                 signal_type="latency",
+                 is_bad=true,
+                 is_persistent=false,
+                 curr_errors=0.0, curr_error_rate=0.0,
+                 prev_requests=prev_op_requests, prev_errors=0.0, prev_error_rate=0.0
+        | lookup criblapm_alert_states on alert_id
+        | extend prev_status=iff(isnotnull(alert_status), tostring(alert_status), "ok"),
+                 prev_bad=iff(isnotnull(consecutive_bad), tolong(consecutive_bad), 0),
+                 prev_good=iff(isnotnull(consecutive_good), tolong(consecutive_good), 0),
+                 prev_fire_count=iff(isnotnull(fire_count), tolong(fire_count), 0)
+        | extend new_bad=prev_bad + 1, new_good=0
+        | extend alert_status=case(
+                   prev_status == "ok", "pending",
+                   prev_status == "pending" and new_bad >= ${FIRE_AFTER}, "firing",
+                   prev_status == "pending", "pending",
+                   prev_status == "firing", "firing",
+                   prev_status == "resolving", "firing",
+                   "ok"),
+                 consecutive_bad=new_bad,
+                 consecutive_good=0,
+                 fire_count=iff(prev_status == "pending" and new_bad >= ${FIRE_AFTER}, prev_fire_count + 1, prev_fire_count),
+                 transitioned_to=iff(prev_status == "pending" and new_bad >= ${FIRE_AFTER}, "firing", "")
+        | project svc, curr_requests, curr_errors, curr_error_rate,
+                  prev_requests, prev_errors, prev_error_rate,
+                  alert_id, signal_type, is_bad, is_persistent,
+                  alert_status, consecutive_bad, consecutive_good,
+                  fire_count, transitioned_to
+    )`;
 }
 
 /**
