@@ -4,7 +4,6 @@ import {
   newAlertState,
   alertIdFromIssue,
   alertLabel,
-  DEFAULT_DEBOUNCE,
   type AlertState,
 } from '../alertState';
 import type { DetectedIssue } from '../../api/types';
