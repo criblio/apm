@@ -145,7 +145,15 @@ users query on arbitrary attributes with autocomplete and facets.
 - Cardinality-aware autocomplete
 - "Edit as KQL" escape hatch for power users
 
-### 6. User-created alerts + notification dispatch
+### 6. Alert timeline with time range selection
+
+Alerts page gains a visual timechart showing alert events over
+time. Users can highlight/drag-select a time range on the chart
+to filter the events table below to that window — "what was
+firing between 2am and 4am?" Backed by the alert history events
+in the otel dataset (`data_datatype == "criblapm_alert"`).
+
+### 7. User-created alerts + notification dispatch
 
 Phase 2 of alerting: "Create alert" button that persists a threshold
 as a Cribl saved search with notification targets. Full design in
@@ -182,6 +190,22 @@ via `db.statement` / `db.system`.
 
 Streaming logs and spans as they arrive. "Tail" button on the
 Logs page.
+
+### Blocked on Cribl
+
+- **Metrics: `_metric_name` in wide-column format** — Cribl's
+  wide-column metric storage flattens the metric value and its
+  numeric attributes into top-level fields with no way to
+  distinguish them. Fields like `http.status_code` (a dimension)
+  are indistinguishable from `http.server.duration` (the metric).
+  We use a blocklist of known numeric attributes as a workaround.
+  Feature request submitted to Cribl to preserve `_metric_name`
+  (or equivalent) in the wide-column ingest pipeline.
+
+- **`summarize → summarize max(iff(...))`** — Cribl KQL crashes
+  on real data when a second `summarize` uses `max(iff(...))` on
+  output from a prior `summarize`. Workaround: split into separate
+  scheduled searches joined via lookups. Bug report pending.
 
 ### Future categories (whole new signal types)
 
