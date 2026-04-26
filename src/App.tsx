@@ -1,7 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import AppShell from './components/AppShell';
 import DatasetProvider from './components/DatasetProvider';
-import HomePage from './routes/HomePage';
+import OverviewPage from './routes/OverviewPage';
 import SearchPage from './routes/SearchPage';
 import TraceView from './routes/TraceView';
 import ComparePage from './routes/ComparePage';
@@ -20,7 +20,7 @@ export default function App() {
       <BrowserRouter basename={window.CRIBL_BASE_PATH ?? '/'}>
         <Routes>
           <Route element={<AppShell />}>
-            <Route index element={<HomePage />} />
+            <Route index element={<OverviewPage />} />
             <Route path="/services" element={<ServicesListPage />} />
             <Route path="/map" element={<SystemArchPage />} />
             <Route path="/traces" element={<SearchPage />} />
