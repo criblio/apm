@@ -18,7 +18,6 @@ interface Props {
 
 const M = { top: 4, right: 12, bottom: 22, left: 12 };
 const fmtTick = timeFormat('%H:%M');
-const fmtDay = timeFormat('%b %d');
 
 export default function AlertTimeline({ events, onRangeSelect, onRangeClear, height = 80 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
