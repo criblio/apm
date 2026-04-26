@@ -38,16 +38,16 @@ async function navigateToPage(
     return true;
   } else if (pageName === 'serviceDetail') {
     await gotoApm(page, '/services?range=-15m');
-    await page.waitForTimeout(2000);
-    const row = page.getByRole('row', {
-      name: new RegExp(`^${serviceName}\\s`),
-    });
-    const visible = await row
+    await page.waitForTimeout(5000);
+    // Click the service name link directly — more reliable than
+    // finding the row by accessible name
+    const svcLink = page.locator(`table tbody a:has-text("${serviceName}")`).first();
+    const visible = await svcLink
       .waitFor({ state: 'visible', timeout: 30_000 })
       .then(() => true)
       .catch(() => false);
     if (!visible) return false;
-    await row.getByRole('link').first().click();
+    await svcLink.click();
     await page.waitForURL(/\/service\//, { timeout: 15_000 });
     await page.getByText(/^Top operations/).waitFor({
       state: 'visible',
