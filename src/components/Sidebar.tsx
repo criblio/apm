@@ -1,5 +1,5 @@
-import { NavLink, useNavigate } from 'react-router-dom';
-import { useState, type KeyboardEvent } from 'react';
+import { NavLink } from 'react-router-dom';
+import { useState } from 'react';
 import s from './Sidebar.module.css';
 
 interface NavItem {
@@ -79,16 +79,6 @@ function SidebarItem({ item, collapsed }: { item: NavItem; collapsed: boolean })
 
 export default function Sidebar() {
   const [collapsed, setCollapsed] = useState(false);
-  const navigate = useNavigate();
-  const [traceId, setTraceId] = useState('');
-
-  function handleTraceKey(e: KeyboardEvent<HTMLInputElement>) {
-    if (e.key === 'Enter' && traceId.trim()) {
-      navigate(`/trace/${traceId.trim()}`);
-      setTraceId('');
-    }
-  }
-
   return (
     <nav className={`${s.sidebar} ${collapsed ? s.sidebarCollapsed : ''}`}>
       <NavLink to="/" end className={s.brand}>
