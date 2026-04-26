@@ -69,7 +69,7 @@ export default function AlertsPage() {
     try {
       const [alertRows, historyRows] = await Promise.all([
         runQuery('dataset="$vt_results" | where jobName == "criblapm__home_alerts"', '-1h', 'now', 500),
-        runQuery('dataset="otel" | where data_datatype == "criblapm_alert" | project _time, event_type, svc, signal_type, curr_error_rate, prev_error_rate, fire_count | sort by _time desc | limit 50', '-7d', 'now', 50),
+        runQuery('dataset="otel" | where data_datatype == "criblapm_alert" | project _time, event_type, svc, signal_type, curr_error_rate, prev_error_rate, fire_count | sort by _time desc | limit 50', '-24h', 'now', 50),
       ]);
       setAlerts(parseAlertRows(alertRows));
       setHistory(historyRows.map((r) => ({

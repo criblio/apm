@@ -9,7 +9,6 @@
     "./kvstore": "./src/kvstore.ts",
     "./query": "./src/query.ts",
     "./settings": "./src/settings.ts",
-    "./provisioner": "./src/provisioner.ts",
     "./alert-state": "./src/alert-state.ts"
   },
   "files": ["src"],

@@ -37,6 +37,19 @@ import s from './ServiceDetailPage.module.css';
 
 const DEFAULT_RANGE = '-1h';
 
+interface AlertHistoryEntry {
+  time: number;
+  eventType: string;
+  signalType: string;
+  detail: string;
+}
+
+const ALERT_STATUS_COLORS: Record<string, { bg: string; fg: string }> = {
+  firing: { bg: 'rgba(220,38,38,0.12)', fg: '#dc2626' },
+  pending: { bg: 'rgba(245,158,11,0.12)', fg: '#f59e0b' },
+  resolving: { bg: 'rgba(6,182,212,0.12)', fg: '#06b6d4' },
+};
+
 /** See HomePage — same rationale. */
 const MIN_PREV_SAMPLES = 10;
 
@@ -204,8 +217,8 @@ export default function ServiceDetailPage() {
   const [loadingDeps, setLoadingDeps] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notFound, setNotFound] = useState(false);
-  const [alertStatus, setAlertStatus] = useState<string>('ok');
-  const [alertHistory, setAlertHistory] = useState<Array<{ time: number; eventType: string; signalType: string; detail: string }>>([]);
+  const [alertStatus, setAlertStatus] = useState<'ok' | 'pending' | 'firing' | 'resolving'>('ok');
+  const [alertHistory, setAlertHistory] = useState<AlertHistoryEntry[]>([]);
   // Trigger a re-fetch when the Settings stream-filter toggle changes,
   // so the Recent errors panel doesn't keep stale server-filtered data.
   const streamFilterEnabled = useStreamFilterEnabled();
@@ -332,21 +345,32 @@ export default function ServiceDetailPage() {
       .catch(() => setInstances([]))
       .finally(() => setLoadingInstances(false));
 
-    // Alert status from the evaluator's $vt_results
+  }, [range, serviceName, streamFilterEnabled]);
+
+  useEffect(() => {
+    void fetchAll();
+  }, [fetchAll]);
+
+  // Alert queries — independent of the time range picker since they
+  // use fixed windows. Only re-run when the service changes.
+  useEffect(() => {
+    if (!serviceName) return;
     const svcEsc = serviceName.replace(/"/g, '\\"');
     runQuery(
-      `dataset="$vt_results" | where jobName == "criblapm__home_alerts" and svc == "${svcEsc}" | project alert_status, signal_type`,
+      `dataset="$vt_results" | where jobName == "criblapm__home_alerts" and svc == "${svcEsc}" | project alert_status`,
       '-1h', 'now', 1,
     )
       .then((rows) => {
-        if (rows.length > 0) setAlertStatus(String(rows[0].alert_status ?? 'ok'));
+        const status = String(rows[0]?.alert_status ?? 'ok');
+        if (['ok', 'pending', 'firing', 'resolving'].includes(status)) {
+          setAlertStatus(status as typeof alertStatus);
+        }
       })
       .catch(() => {});
 
-    // Alert history from the otel dataset
     runQuery(
       `dataset="otel" | where data_datatype == "criblapm_alert" and svc == "${svcEsc}" | project _time, event_type, signal_type, curr_error_rate, prev_error_rate | sort by _time desc | limit 20`,
-      '-7d', 'now', 20,
+      '-24h', 'now', 20,
     )
       .then((rows) => {
         setAlertHistory(rows.map((r) => ({
@@ -359,11 +383,7 @@ export default function ServiceDetailPage() {
         })));
       })
       .catch(() => {});
-  }, [range, serviceName, streamFilterEnabled]);
-
-  useEffect(() => {
-    void fetchAll();
-  }, [fetchAll]);
+  }, [serviceName]);
 
   // Metric cards fire TWO queries in parallel: the catalog (which
   // tells us which rows to render) and a single batched series
@@ -777,20 +797,16 @@ export default function ServiceDetailPage() {
       {error && <StatusBanner kind="error">{error}</StatusBanner>}
 
       <div className={s.hero} style={
-        alertStatus === 'firing' ? { borderLeft: '4px solid #dc2626' } :
-        alertStatus === 'pending' ? { borderLeft: '4px solid #f59e0b' } :
-        alertStatus === 'resolving' ? { borderLeft: '4px solid #06b6d4' } :
-        undefined
+        ALERT_STATUS_COLORS[alertStatus]
+          ? { borderLeft: `4px solid ${ALERT_STATUS_COLORS[alertStatus].fg}` }
+          : undefined
       }>
         <div className={s.heroSwatch} style={{ background: color }} />
         <div className={s.heroMain}>
           <h1 className={s.heroName}>
             {serviceName}
-            {alertStatus !== 'ok' && (
-              <span data-testid="alert-badge" className={s.alertBadge} style={{
-                background: alertStatus === 'firing' ? 'rgba(220,38,38,0.12)' : alertStatus === 'pending' ? 'rgba(245,158,11,0.12)' : 'rgba(6,182,212,0.12)',
-                color: alertStatus === 'firing' ? '#dc2626' : alertStatus === 'pending' ? '#f59e0b' : '#06b6d4',
-              }}>
+            {alertStatus !== 'ok' && ALERT_STATUS_COLORS[alertStatus] && (
+              <span data-testid="alert-badge" className={s.alertBadge} style={ALERT_STATUS_COLORS[alertStatus]}>
                 {alertStatus}
               </span>
             )}
@@ -1187,11 +1203,12 @@ export default function ServiceDetailPage() {
         )}
       </div>
 
-      {/* Alert history */}
       {alertHistory.length > 0 && (
-        <div className={s.section}>
-          <h2 className={s.sectionHeader}>Alert History</h2>
-          <table className={s.table}>
+        <div className={s.opsCard}>
+          <div className={s.cardHeader}>
+            <span className={s.cardTitle}>Alert History</span>
+          </div>
+          <table className={s.opsTable}>
             <thead>
               <tr>
                 <th>Time</th>
@@ -1201,26 +1218,21 @@ export default function ServiceDetailPage() {
               </tr>
             </thead>
             <tbody>
-              {alertHistory.map((h, i) => (
-                <tr key={i}>
-                  <td>{new Date(h.time).toLocaleString()}</td>
-                  <td>
-                    <span style={{
-                      padding: '2px 6px',
-                      borderRadius: '4px',
-                      fontSize: '11px',
-                      fontWeight: 600,
-                      textTransform: 'uppercase',
-                      background: h.eventType === 'firing' ? 'rgba(220,38,38,0.12)' : 'rgba(16,185,129,0.12)',
-                      color: h.eventType === 'firing' ? '#dc2626' : '#059669',
-                    }}>
-                      {h.eventType}
-                    </span>
-                  </td>
-                  <td>{h.signalType}</td>
-                  <td>{h.detail}</td>
-                </tr>
-              ))}
+              {alertHistory.map((h, i) => {
+                const colors = ALERT_STATUS_COLORS[h.eventType] ?? { bg: 'rgba(16,185,129,0.12)', fg: '#059669' };
+                return (
+                  <tr key={i}>
+                    <td>{new Date(h.time).toLocaleString()}</td>
+                    <td>
+                      <span style={{ padding: '2px 6px', borderRadius: '4px', fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', background: colors.bg, color: colors.fg }}>
+                        {h.eventType}
+                      </span>
+                    </td>
+                    <td>{h.signalType}</td>
+                    <td>{h.detail}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
