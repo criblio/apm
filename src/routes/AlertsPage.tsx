@@ -1,12 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import TimeRangePicker from '../components/TimeRangePicker';
 import StatusBanner from '../components/StatusBanner';
 import AlertTimeline from '../components/AlertTimeline';
 import InvestigateButton from '../components/InvestigateButton';
 import { runQuery } from '../api/cribl';
 import { serviceColor } from '../utils/spans';
-import { useRangeParam } from '../hooks/useRangeParam';
 import type { CachedAlertRow } from '../api/panelCache';
 import s from './AlertsPage.module.css';
 
