@@ -178,9 +178,13 @@ export default function AlertsPage() {
     });
   }, [incidents, timelineSelection]);
 
-  const timelineEvents = useMemo(() =>
-    history.map((h) => ({ time: h.time, eventType: h.eventType, service: h.service })),
-  [history]);
+  const timelineIntervals = useMemo(() =>
+    incidents.map((inc) => ({
+      service: inc.service,
+      startTime: inc.startTime,
+      endTime: inc.endTime,
+    })),
+  [incidents]);
 
   return (
     <div className={s.page}>
@@ -213,7 +217,7 @@ export default function AlertsPage() {
 
       {/* Timeline + Incidents (primary content) */}
       <AlertTimeline
-        events={timelineEvents}
+        intervals={timelineIntervals}
         onRangeSelect={(start, end) => setTimelineSelection([start, end])}
         onRangeClear={() => setTimelineSelection(null)}
       />
