@@ -13,6 +13,7 @@ import { runQuery } from '../api/cribl';
 import { serviceColor } from '../utils/spans';
 import { serviceHealth, healthRowBg } from '../utils/health';
 import { buildDetectedIssues, buildDetectedIssuesFromCache } from '../utils/detectedIssues';
+import InvestigateButton from '../components/InvestigateButton';
 import { previousWindow } from '../utils/timeRange';
 import { useRangeParam } from '../hooks/useRangeParam';
 import { useStreamFilterEnabled } from '../hooks/useStreamFilter';
@@ -242,6 +243,7 @@ export default function OverviewPage() {
                 <th>Status</th>
                 <th className={s.num}>Error Rate</th>
                 <th className={s.num}>Requests</th>
+                <th />
               </tr>
             </thead>
             <tbody>
@@ -259,6 +261,18 @@ export default function OverviewPage() {
                   </td>
                   <td className={s.num}>{(svc.errorRate * 100).toFixed(2)}%</td>
                   <td className={s.num}>{svc.requests.toLocaleString()}</td>
+                  <td>
+                    <InvestigateButton
+                      seed={{
+                        question: `The ${svc.service} service is ${health.bucket.replace('_', ' ')}. Investigate the root cause.`,
+                        service: svc.service,
+                        knownSignals: [`Health: ${health.bucket}`, `Error rate: ${(svc.errorRate * 100).toFixed(2)}%`],
+                        earliest: range,
+                        latest: 'now',
+                      }}
+                      title={`Investigate ${svc.service}`}
+                    />
+                  </td>
                 </tr>
               ))}
             </tbody>
