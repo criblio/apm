@@ -806,7 +806,7 @@ export default function ServiceDetailPage() {
           <h1 className={s.heroName}>
             {serviceName}
             {alertStatus !== 'ok' && ALERT_STATUS_COLORS[alertStatus] && (
-              <span data-testid="alert-badge" className={s.alertBadge} style={ALERT_STATUS_COLORS[alertStatus]}>
+              <span data-testid="alert-badge" className={s.alertBadge} style={{ background: ALERT_STATUS_COLORS[alertStatus].bg, color: ALERT_STATUS_COLORS[alertStatus].fg }}>
                 {alertStatus}
               </span>
             )}
