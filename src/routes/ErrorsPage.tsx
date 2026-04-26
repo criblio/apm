@@ -4,6 +4,8 @@ import TimeRangePicker from '../components/TimeRangePicker';
 import StatusBanner from '../components/StatusBanner';
 import InvestigateButton from '../components/InvestigateButton';
 import { listErrorClasses } from '../api/search';
+import { listCachedHomePanels } from '../api/panelCache';
+import { useStreamFilterEnabled } from '../hooks/useStreamFilter';
 import { serviceColor } from '../utils/spans';
 import { useRangeParam } from '../hooks/useRangeParam';
 import type { ErrorClass } from '../api/types';
@@ -26,11 +28,21 @@ export default function ErrorsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState('');
+  const streamFilterEnabled = useStreamFilterEnabled();
 
   const fetchErrors = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
+      // Cache-fast path on the default range
+      if (range === '-1h' && streamFilterEnabled) {
+        const cached = await listCachedHomePanels();
+        if (cached.errorClasses && cached.errorClasses.length > 0) {
+          setErrors(cached.errorClasses);
+          setLoading(false);
+          return;
+        }
+      }
       const result = await listErrorClasses(range, 'now', 500, 100);
       setErrors(result);
     } catch (e) {
@@ -38,7 +50,7 @@ export default function ErrorsPage() {
     } finally {
       setLoading(false);
     }
-  }, [range]);
+  }, [range, streamFilterEnabled]);
 
   useEffect(() => { void fetchErrors(); }, [fetchErrors]);
 
