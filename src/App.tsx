@@ -13,6 +13,7 @@ import InvestigatePage from './routes/InvestigatePage';
 import SettingsPage from './routes/SettingsPage';
 import ServicesListPage from './routes/ServicesListPage';
 import AlertsPage from './routes/AlertsPage';
+import ErrorsPage from './routes/ErrorsPage';
 
 export default function App() {
   return (
@@ -27,7 +28,7 @@ export default function App() {
             <Route path="/logs" element={<LogsPage />} />
             <Route path="/metrics" element={<MetricsPage />} />
             <Route path="/alerts" element={<AlertsPage />} />
-            <Route path="/errors" element={<AlertsPage />} />
+            <Route path="/errors" element={<ErrorsPage />} />
             <Route path="/investigate" element={<InvestigatePage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/trace/:traceId" element={<TraceView />} />
