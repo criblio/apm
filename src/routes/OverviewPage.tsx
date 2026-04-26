@@ -24,7 +24,6 @@ import type {
 import s from './OverviewPage.module.css';
 
 const DEFAULT_RANGE = '-1h';
-const MIN_PREV_SAMPLES = 10;
 
 function fmtRate(rpm: number): string {
   if (rpm >= 1000) return `${(rpm / 1000).toFixed(1)}k/min`;
