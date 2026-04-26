@@ -19,7 +19,7 @@ Calls to undeclared domains return a JSON error, not a network error.
 
 ### Globals
 - `window.CRIBL_API_URL` — full URL to `/api/v1` (injected by host)
-- `window.CRIBL_BASE_PATH` — React Router basename (e.g., `/app-ui/apm/`)
+- `window.CRIBL_BASE_PATH` — React Router basename (e.g., `/app-ui/mypack/`)
 
 ### React Router
 Always use `basename={window.CRIBL_BASE_PATH}` on `<BrowserRouter>`.
@@ -34,14 +34,20 @@ Pack-scoped key-value store at `CRIBL_API_URL + '/kvstore/...'`.
   the value to be served back as `[object Object]`)
 - 404 on missing keys — normalize to `null`
 
+### Notification targets
+Product-level notification targets (Slack, PagerDuty, email, webhooks)
+are available at `GET /api/v1/notification-targets`. They're configured
+by the Cribl admin and shared across Stream and Search. Reference them
+by ID — never ask users to paste webhook URLs into your app.
+
 ## KQL caveats
 
 ### Known crashes
 - `(?i)` inline regex flag crashes in complex pipelines (summarize +
   extend + negation). Use character-class alternation `[Cc]onsume`
 - `summarize → summarize max(iff(...))` crashes on real data (works
-  on 4 synthetic rows, fails on 36+). Split into separate searches
-  joined via lookups.
+  on synthetic rows, fails on 36+ real rows from a prior summarize).
+  Split into separate searches joined via lookups.
 
 ### Unsupported functions
 - `any()` — not supported in all Cribl Search versions. Use `max()`
@@ -50,11 +56,12 @@ Pack-scoped key-value store at `CRIBL_API_URL + '/kvstore/...'`.
 
 ### Operators
 - `| lookup <name> on <columns>` — LEFT JOIN against a lookup table
-- `| export mode=overwrite to lookup <name>` — write to lookup (consumes
-  rows — they don't go to `$vt_results`)
-- `| send group="search"` — send events to the Local Search HTTP input.
-  Include `dataset="<name>"` in the event to route to the right lakehouse.
-  Do NOT use `group="default_search"` (crashes).
+- `| export mode=overwrite to lookup <name>` — write to lookup
+  (consumes rows — they don't go to `$vt_results`)
+- `| send group="search"` — send events to the Local Search HTTP
+  input. Include `dataset="<name>"` in the event to route to the
+  right lakehouse dataset. Do NOT use `group="default_search"`
+  (crashes).
 - `$vt_results` — read scheduled search output. Filter by `jobName`.
 - `ago(1h)` — works for time splitting within queries
 
@@ -66,7 +73,8 @@ Pack-scoped key-value store at `CRIBL_API_URL + '/kvstore/...'`.
 
 ## Sandboxed iframe constraints
 
-- **No `allow-downloads`** — can't trigger file downloads via `<a download>`
+- **No `allow-downloads`** — can't trigger file downloads via
+  `<a download>`
 - **No `allow-popups`** — `window.open()` blocked
 - **CSP blocks `blob:` URLs for images** — use `data:` URLs instead
 - **Cross-origin frame access blocked** — don't use `html2canvas` or
@@ -78,62 +86,92 @@ Pack-scoped key-value store at `CRIBL_API_URL + '/kvstore/...'`.
 
 ### Provisioning
 Declare searches in a plan file. The provisioner diffs against the
-server and creates/updates/deletes as needed. Use `criblapm__` prefix
-(or your own pack prefix) to avoid touching user-created searches.
+server and creates/updates/deletes as needed. Choose a pack-specific
+prefix (e.g., `mypack__`) for managed search IDs to avoid touching
+user-created searches.
 
 ### Panel caching
 Scheduled searches write to `$vt_results`. The UI reads all panels
 in a single batched query using `jobName in (...)`. Cache miss falls
-back to live queries.
+back to live queries gracefully.
 
 ### Lookup seeding
 `| export to lookup` requires the lookup to exist at search creation
-time. Seed lookups with an init query before provisioning searches
-that reference them.
+time. Seed lookups with an init query in the provisioner before
+creating searches that reference them.
 
 ### Alert state machine
-Three-search pattern:
+Three-search pattern for server-side alerting without a browser:
 1. Previous-window summary → export to lookup
-2. Evaluator → reads current from $vt_results, joins prev from lookup,
-   applies state machine, outputs to $vt_results
-3. State export → exports state to lookup for next cycle
+2. Evaluator → reads current from $vt_results, joins prev from
+   lookup, applies state machine, outputs to $vt_results for the UI
+3. State export → exports state to lookup for the next cycle
 
-Optional: `| send group="search"` for writing history events to the
-dataset.
+Optional: `| send group="search"` for writing history events back
+to the dataset as queryable records.
+
+State machine lifecycle: ok → pending → firing → resolving → ok.
+Use `fireAfter` (consecutive bad evaluations before firing) and
+`clearAfter` (consecutive good before clearing) for debounce.
 
 ### Cadence
 Make scheduled search cadence configurable via a Settings page
 dropdown. Store in KV, read by both browser and CLI provisioners.
-Derive eval cadence (1 minute offset) from panel cadence.
+Derive eval cadence (1 minute offset) from panel cadence so the
+evaluator runs after the data it depends on is available.
 
-## Non-destructive refresh
+## UI patterns
 
+### Non-destructive refresh
 Never set all loading states to `true` at the start of a refresh.
 Keep existing data visible while new queries run. Only show skeletons
 on the initial load (no data yet). Each panel updates in place when
-its query resolves.
+its query resolves. Show a thin progress bar to indicate a refresh
+is in progress.
+
+### Graph stability
+When using d3-force or similar layout engines, compute a topology
+key from node IDs + link endpoints. Only recreate the simulation
+when topology changes. Data-only updates (same nodes, new metric
+values) should mutate existing objects in place — no simulation
+restart, no visual movement.
 
 ## Testing patterns
 
+### CI
+Run unit tests (Vitest), type checking (tsc --noEmit), and build
+on every push/PR via GitHub Actions.
+
 ### Playwright (e2e)
 - Auth via `installCriblHostGlobals(page)` which injects
-  `CRIBL_BASE_PATH`, `CRIBL_API_URL`, and a Bearer token fetch wrapper
-- Navigate with `gotoApm(page, '/path')` (handles base path)
-- Can't navigate directly to pack URLs (server returns 404) — must
-  load the base path first, then use React Router navigation
+  `CRIBL_BASE_PATH`, `CRIBL_API_URL`, and a Bearer token fetch
+  wrapper via `addInitScript`
+- Navigate with a helper function that prepends the pack base path
+- Can't navigate directly to sub-routes (server returns 404) —
+  must load the base path first, then use React Router navigation
+  or click nav links
 
 ### KQL assertions
-Use `runQuery()` from test helpers for server-side validation:
+Use a `runQuery()` helper for server-side validation in tests:
 ```typescript
 const rows = await runQuery('dataset="$vt_results" | where ...');
 assert(rows.length > 0);
 ```
 
 ### Eval harness
-Scenario-driven evaluation: flip a flagd flag, wait for telemetry,
-run surface checks (Playwright locators) + KQL checks (query polling),
-optionally run the Copilot Investigator. Score = surface checks × 0.7
-+ investigator × 0.3.
+Scenario-driven evaluation for detection quality:
+1. Flip a feature flag (via flagd or similar)
+2. Wait for telemetry to flow through the pipeline
+3. Run surface checks (Playwright locators on the UI)
+4. Run KQL checks (query polling for server-side state)
+5. Optionally run an AI investigator for root-cause validation
+6. Score = surface checks × 0.7 + investigator × 0.3
 
-Run scenarios sequentially (staging worker pool can't handle parallel).
-Allow 10+ minutes between scenarios for signal decay.
+Run scenarios sequentially — staging worker pools can't handle
+parallel query load. Allow 10+ minutes between scenarios for
+signal decay from the previous scenario.
+
+### Validate every UI change
+Every new UI feature must be validated via Playwright against
+staging before reporting it as done. Write a short script that
+navigates, asserts key elements, and captures a screenshot.
