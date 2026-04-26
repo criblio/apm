@@ -558,6 +558,8 @@ const METRIC_EXCLUDE_KEYS = new Set([
   'net.host.port', 'net.peer.port', 'net.sock.peer.port', 'net.sock.host.port',
   'process.pid',
   'rpc.grpc.status_code',
+  'http.response.status_code',
+  'cpu', 'partition',
 ]);
 
 /**

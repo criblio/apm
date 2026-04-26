@@ -783,6 +783,9 @@ export function listMetricNames(): string {
         and metric_name != "rpc.grpc.status_code"
         and metric_name != "net.sock.peer.port"
         and metric_name != "net.sock.host.port"
+        and metric_name != "http.response.status_code"
+        and metric_name != "cpu"
+        and metric_name != "partition"
     | extend svc=tostring(['service.name'])
     | summarize samples=count(), services=dcount(svc),
                 metric_type=max(_metric_type)
