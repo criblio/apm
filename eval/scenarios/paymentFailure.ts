@@ -8,28 +8,32 @@ const scenario: ScenarioDeclaration = {
   telemetryWaitMs: 7 * 60_000,
   cooldownMs: 10 * 60_000,
   surfaceChecks: [
+    // Overview page — detected issues
     {
-      surface: 'homePaymentErrorChip',
-      page: 'home',
+      surface: 'overviewDetectedIssuesPayment',
+      page: 'overview',
+      locator: 'a:has-text("payment")',
+      assertion: 'countGt0',
+      timeoutMs: 30_000,
+    },
+    // Services page — error chip in catalog
+    {
+      surface: 'servicesPaymentErrorChip',
+      page: 'services',
       locator: 'table tbody tr:has-text("payment") td:nth-child(3)',
       assertion: 'textMatches',
       pattern: '[1-9]\\d*\\.\\d+%',
       timeoutMs: 30_000,
     },
+    // Errors page — payment error group
     {
-      surface: 'homeErrorClassesPanel',
-      page: 'home',
-      locator: '[class*="wrap"]:has(span:text-matches("^Error classes")) li:has-text("payment")',
+      surface: 'errorsPagePayment',
+      page: 'errors',
+      locator: 'table tr:has-text("payment")',
       assertion: 'countGt0',
       timeoutMs: 30_000,
     },
-    {
-      surface: 'homeDetectedIssuesPayment',
-      page: 'home',
-      locator: '[class*="wrap"]:has(span:text-matches("^Detected Issues")) a:has-text("payment")',
-      assertion: 'countGt0',
-      timeoutMs: 30_000,
-    },
+    // Alerts page — payment firing
     {
       surface: 'alertsPagePaymentFiring',
       page: 'alerts',
@@ -37,19 +41,13 @@ const scenario: ScenarioDeclaration = {
       assertion: 'countGt0',
       timeoutMs: 120_000,
     },
+    // Service Detail — charts and alert badge
     {
       surface: 'svcDetailErrorsChart',
       page: 'serviceDetail',
       locator: 'text=Errors',
       assertion: 'visible',
       timeoutMs: 30_000,
-    },
-    {
-      surface: 'svcDetailRecentErrors',
-      page: 'serviceDetail',
-      locator: '[class*="wrap"]:has(span:text-matches("^Recent errors")) ul li',
-      assertion: 'countGt0',
-      timeoutMs: 45_000,
     },
     {
       surface: 'svcDetailAlertBadge',

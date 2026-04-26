@@ -1,6 +1,6 @@
 export interface SurfaceCheck {
   surface: string;
-  page: 'home' | 'serviceDetail' | 'systemArch' | 'alerts';
+  page: 'home' | 'overview' | 'services' | 'serviceDetail' | 'systemArch' | 'alerts' | 'errors';
   locator: string;
   assertion: 'visible' | 'countGt0' | 'textMatches';
   pattern?: string;

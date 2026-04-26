@@ -10,7 +10,7 @@ const scenario: ScenarioDeclaration = {
   surfaceChecks: [
     {
       surface: 'homeAdP95Value',
-      page: 'home',
+      page: 'services',
       locator: 'table tbody tr:has-text("ad") td:nth-child(6)',
       assertion: 'textMatches',
       // Baseline ad p95 is ~1ms. Under CPU saturation it shifts
@@ -21,7 +21,7 @@ const scenario: ScenarioDeclaration = {
     },
     {
       surface: 'homeAdP99Value',
-      page: 'home',
+      page: 'services',
       locator: 'table tbody tr:has-text("ad") td:nth-child(7)',
       assertion: 'textMatches',
       pattern: '[5-9](\\.\\d+)?\\s*ms|\\d{2,}(\\.\\d+)?\\s*ms|\\d+(\\.\\d+)?\\s*s',

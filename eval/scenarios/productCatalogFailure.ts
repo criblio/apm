@@ -10,14 +10,14 @@ const scenario: ScenarioDeclaration = {
   surfaceChecks: [
     {
       surface: 'homeErrorClasses',
-      page: 'home',
+      page: 'services',
       locator: '[class*="wrap"]:has(span:text-matches("^Error classes")) li:has-text("product-catalog")',
       assertion: 'countGt0',
       timeoutMs: 30_000,
     },
     {
       surface: 'homeProductCatalogErrorChip',
-      page: 'home',
+      page: 'services',
       locator: 'table tbody tr:has-text("product-catalog") td:nth-child(3)',
       assertion: 'textMatches',
       pattern: '[0-9]+\\.\\d+%',
@@ -25,8 +25,8 @@ const scenario: ScenarioDeclaration = {
     },
   
     {
-      surface: 'homeDetectedIssuesproductcatalog',
-      page: 'home',
+      surface: 'overviewDetectedIssuesproductcatalog',
+      page: 'overview',
       locator: '[class*="wrap"]:has(span:text-matches("^Detected Issues")) a:has-text("product-catalog")',
       assertion: 'countGt0',
       timeoutMs: 60_000,

@@ -10,14 +10,14 @@ const scenario: ScenarioDeclaration = {
   surfaceChecks: [
     {
       surface: 'homeRateDropChip',
-      page: 'home',
+      page: 'services',
       locator: 'table tbody tr:has-text("payment") [title*="vs previous window"]',
       assertion: 'visible',
       timeoutMs: 30_000,
     },
     {
       surface: 'homeCheckoutErrorChip',
-      page: 'home',
+      page: 'services',
       locator: 'table tbody tr:has-text("checkout") td:nth-child(3)',
       assertion: 'textMatches',
       pattern: '[1-9]\\d*\\.\\d+%',
@@ -25,7 +25,7 @@ const scenario: ScenarioDeclaration = {
     },
     {
       surface: 'homeErrorClasses',
-      page: 'home',
+      page: 'services',
       locator: '[class*="wrap"]:has(span:text-matches("^Error classes")) li:has-text("payment")',
       assertion: 'countGt0',
       timeoutMs: 30_000,
@@ -39,8 +39,8 @@ const scenario: ScenarioDeclaration = {
     },
   
     {
-      surface: 'homeDetectedIssuespayment',
-      page: 'home',
+      surface: 'overviewDetectedIssuespayment',
+      page: 'overview',
       locator: '[class*="wrap"]:has(span:text-matches("^Detected Issues")) a:has-text("payment")',
       assertion: 'countGt0',
       timeoutMs: 60_000,

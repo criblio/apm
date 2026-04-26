@@ -7,6 +7,7 @@
   flex-shrink: 0;
   transition: width 200ms ease;
   overflow: hidden;
+  padding-top: var(--cds-space-md);
 }
 .sidebarCollapsed {
   width: 56px;

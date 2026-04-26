@@ -10,7 +10,7 @@ const scenario: ScenarioDeclaration = {
   surfaceChecks: [
     {
       surface: 'homeCartErrorChip',
-      page: 'home',
+      page: 'services',
       locator: 'table tbody tr:has-text("cart") td:nth-child(3)',
       assertion: 'textMatches',
       // Match any non-zero error rate including sub-1% like "0.50%"
@@ -19,7 +19,7 @@ const scenario: ScenarioDeclaration = {
     },
     {
       surface: 'homeErrorClasses',
-      page: 'home',
+      page: 'services',
       locator: '[class*="wrap"]:has(span:text-matches("^Error classes")) li:has-text("cart")',
       assertion: 'countGt0',
       timeoutMs: 60_000,
@@ -33,8 +33,8 @@ const scenario: ScenarioDeclaration = {
     },
   
     {
-      surface: 'homeDetectedIssuescart',
-      page: 'home',
+      surface: 'overviewDetectedIssuescart',
+      page: 'overview',
       locator: '[class*="wrap"]:has(span:text-matches("^Detected Issues")) a:has-text("cart")',
       assertion: 'countGt0',
       timeoutMs: 60_000,

@@ -10,7 +10,7 @@ const scenario: ScenarioDeclaration = {
   surfaceChecks: [
     {
       surface: 'homeRecommendationErrorChip',
-      page: 'home',
+      page: 'services',
       locator: 'table tbody tr:has-text("recommendation") td:nth-child(3)',
       assertion: 'textMatches',
       pattern: '[1-9]\\d*\\.\\d+%',
@@ -25,8 +25,8 @@ const scenario: ScenarioDeclaration = {
     },
   
     {
-      surface: 'homeDetectedIssuesrecommendation',
-      page: 'home',
+      surface: 'overviewDetectedIssuesrecommendation',
+      page: 'overview',
       locator: '[class*="wrap"]:has(span:text-matches("^Detected Issues")) a:has-text("recommendation")',
       assertion: 'countGt0',
       timeoutMs: 60_000,

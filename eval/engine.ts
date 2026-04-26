@@ -16,15 +16,28 @@ async function navigateToPage(
   serviceName: string,
   gotoApm: (page: Page, path: string) => Promise<void>,
 ): Promise<boolean> {
-  if (pageName === 'home') {
+  if (pageName === 'overview') {
     await gotoApm(page, '/?range=-15m');
+    await page.getByRole('heading', { name: 'Overview' }).waitFor({
+      state: 'visible',
+      timeout: 60_000,
+    }).catch(() => {});
+    return true;
+  } else if (pageName === 'home' || pageName === 'services') {
+    await gotoApm(page, '/services?range=-15m');
     await page.getByText(/^Services \(\d+\)/).waitFor({
       state: 'visible',
       timeout: 60_000,
     }).catch(() => {});
     return true;
+  } else if (pageName === 'errors') {
+    await gotoApm(page, '/');
+    await page.waitForTimeout(1000);
+    await page.getByRole('link', { name: 'Errors', exact: true }).click();
+    await page.waitForTimeout(5000);
+    return true;
   } else if (pageName === 'serviceDetail') {
-    await gotoApm(page, '/?range=-15m');
+    await gotoApm(page, '/services?range=-15m');
     await page.waitForTimeout(2000);
     const row = page.getByRole('row', {
       name: new RegExp(`^${serviceName}\\s`),

@@ -10,7 +10,7 @@ const scenario: ScenarioDeclaration = {
   surfaceChecks: [
     {
       surface: 'homeRateChip',
-      page: 'home',
+      page: 'services',
       locator: 'table tbody tr:has-text("frontend") [title*="vs previous window"]',
       assertion: 'visible',
       timeoutMs: 30_000,

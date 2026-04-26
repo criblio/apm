@@ -10,7 +10,7 @@ const scenario: ScenarioDeclaration = {
   surfaceChecks: [
     {
       surface: 'homeProductReviewsErrorChip',
-      page: 'home',
+      page: 'services',
       locator: 'table tbody tr:has-text("product-reviews") td:nth-child(3)',
       assertion: 'textMatches',
       pattern: '[1-9]\\d*\\.\\d+%',
@@ -18,7 +18,7 @@ const scenario: ScenarioDeclaration = {
     },
     {
       surface: 'homeErrorClasses',
-      page: 'home',
+      page: 'services',
       locator: '[class*="wrap"]:has(span:text-matches("^Error classes")) li:has-text("product-reviews")',
       assertion: 'countGt0',
       timeoutMs: 30_000,
@@ -32,8 +32,8 @@ const scenario: ScenarioDeclaration = {
     },
   
     {
-      surface: 'homeDetectedIssuesproductreviews',
-      page: 'home',
+      surface: 'overviewDetectedIssuesproductreviews',
+      page: 'overview',
       locator: '[class*="wrap"]:has(span:text-matches("^Detected Issues")) a:has-text("product-reviews")',
       assertion: 'countGt0',
       timeoutMs: 60_000,

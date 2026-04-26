@@ -12,7 +12,7 @@ const scenario: ScenarioDeclaration = {
   surfaceChecks: [
     {
       surface: 'homeAdErrorChip',
-      page: 'home',
+      page: 'services',
       locator: 'table tbody tr:has-text("ad") td:nth-child(3)',
       assertion: 'textMatches',
       pattern: '[0-9]+\\.\\d+%',
@@ -20,15 +20,15 @@ const scenario: ScenarioDeclaration = {
     },
     {
       surface: 'homeErrorClasses',
-      page: 'home',
+      page: 'services',
       locator: '[class*="wrap"]:has(span:text-matches("^Error classes")) li:has-text("ad")',
       assertion: 'countGt0',
       timeoutMs: 60_000,
     },
   
     {
-      surface: 'homeDetectedIssuesad',
-      page: 'home',
+      surface: 'overviewDetectedIssuesad',
+      page: 'overview',
       locator: '[class*="wrap"]:has(span:text-matches("^Detected Issues")) a:has-text("ad")',
       assertion: 'countGt0',
       timeoutMs: 60_000,

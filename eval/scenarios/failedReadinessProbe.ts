@@ -16,7 +16,7 @@ const scenario: ScenarioDeclaration = {
   surfaceChecks: [
     {
       surface: 'homeCheckoutErrorChip',
-      page: 'home',
+      page: 'services',
       locator: 'table tbody tr:has-text("checkout") td:nth-child(3)',
       assertion: 'textMatches',
       pattern: '[1-9]\\d*\\.\\d+%|0\\.[0-9]*[1-9]+\\d*%',
@@ -24,15 +24,15 @@ const scenario: ScenarioDeclaration = {
     },
     {
       surface: 'homeErrorClasses',
-      page: 'home',
+      page: 'services',
       locator: '[class*="wrap"]:has(span:text-matches("^Error classes")) li:has-text("cart")',
       assertion: 'countGt0',
       timeoutMs: 60_000,
     },
   
     {
-      surface: 'homeDetectedIssuescheckout',
-      page: 'home',
+      surface: 'overviewDetectedIssuescheckout',
+      page: 'overview',
       locator: '[class*="wrap"]:has(span:text-matches("^Detected Issues")) a:has-text("checkout")',
       assertion: 'countGt0',
       timeoutMs: 60_000,

@@ -12,7 +12,7 @@ const scenario: ScenarioDeclaration = {
   surfaceChecks: [
     {
       surface: 'homeP95Chip',
-      page: 'home',
+      page: 'services',
       locator: 'table tbody tr:has-text("email") [title*="vs previous window"]',
       assertion: 'visible',
       timeoutMs: 60_000,
@@ -26,8 +26,8 @@ const scenario: ScenarioDeclaration = {
     },
   
     {
-      surface: 'homeDetectedIssuesemail',
-      page: 'home',
+      surface: 'overviewDetectedIssuesemail',
+      page: 'overview',
       locator: '[class*="wrap"]:has(span:text-matches("^Detected Issues")) a:has-text("email")',
       assertion: 'countGt0',
       timeoutMs: 60_000,
