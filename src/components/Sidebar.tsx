@@ -81,14 +81,6 @@ export default function Sidebar() {
   const [collapsed, setCollapsed] = useState(false);
   return (
     <nav className={`${s.sidebar} ${collapsed ? s.sidebarCollapsed : ''}`}>
-      <NavLink to="/" end className={s.brand}>
-        <svg className={s.brandIcon} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <circle cx="11" cy="11" r="7" />
-          <path d="M21 21l-4.35-4.35" />
-        </svg>
-        {!collapsed && 'Cribl APM'}
-      </NavLink>
-
       {sections.map((section, si) => (
         <div key={si}>
           {si > 0 && <div className={s.divider} />}
