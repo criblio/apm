@@ -552,6 +552,12 @@ export async function getTraceLogs(
 const METRIC_EXCLUDE_KEYS = new Set([
   '_time', 'source', 'datatype', '_raw', 'dataset',
   '_metric_type', '_datatype_detection', '_metric', '_value',
+  // Numeric OTel attributes that are NOT metrics — status codes,
+  // port numbers, PIDs, etc. Aggregating these produces nonsense.
+  'http.status_code', 'http.flavor',
+  'net.host.port', 'net.peer.port', 'net.sock.peer.port', 'net.sock.host.port',
+  'process.pid',
+  'rpc.grpc.status_code',
 ]);
 
 /**

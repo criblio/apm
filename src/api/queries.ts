@@ -765,11 +765,24 @@ export function dependencies(): string {
  * the Metrics page reads the catalog from $vt_results in ~1s.
  */
 export function listMetricNames(): string {
+  // The regex finds any numeric field in _raw. This catches real
+  // metrics (http.server.duration, redis.cpu.time) but also numeric
+  // ATTRIBUTES that are dimensions, not measured values. The
+  // blocklist excludes well-known OTel attribute names that are
+  // numeric but not metrics (status codes, port numbers, PIDs, etc.)
   return `${metricsBase()}
     | extend metric_name=extract("\\"([a-zA-Z][a-zA-Z0-9._]*)\\"\\\\s*:\\\\s*-?[0-9]", 1, _raw)
     | where isnotempty(metric_name)
         and metric_name != "_metric_type"
         and metric_name != "_datatype_detection"
+        and metric_name != "http.status_code"
+        and metric_name != "http.flavor"
+        and metric_name != "net.host.port"
+        and metric_name != "net.peer.port"
+        and metric_name != "process.pid"
+        and metric_name != "rpc.grpc.status_code"
+        and metric_name != "net.sock.peer.port"
+        and metric_name != "net.sock.host.port"
     | extend svc=tostring(['service.name'])
     | summarize samples=count(), services=dcount(svc),
                 metric_type=max(_metric_type)
