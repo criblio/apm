@@ -15,17 +15,19 @@ that feeds it test telemetry lives separately in
 **Read these before making changes:**
 
 1. **`AGENTS.md`** — Cribl App Platform developer guide (host
-   globals, fetch proxy, proxies.yml, KV store, React Router)
-2. **`packages/cribl-app-skill/skill.md`** — platform rules, KQL
-   caveats, sandbox constraints, and patterns learned from building
-   this app. This is the canonical reference for "how Cribl packs
-   work" — consult it before writing KQL queries, provisioning
-   scheduled searches, or working around iframe constraints.
+   globals, fetch proxy, proxies.yml, KV store, React Router).
+   This is the official platform API reference.
+2. **`docs/cribl-app-skill/skill.md`** — lessons learned from
+   building this app: KQL caveats (crashes, unsupported functions),
+   sandboxed iframe constraints (no downloads, no popups, CSP),
+   scheduled search patterns (provisioning, caching, lookups,
+   alert state machine), and UI patterns (non-destructive refresh,
+   graph stability). Consult this before writing KQL queries or
+   working around platform limitations.
 
-When building a feature, inspect the relevant Cribl REST APIs first
-(the Cribl MCP server is wired up via `.mcp.json` — use it to list
-datasets, run searches, etc.) and consult the skill doc for known
-KQL limitations before writing query code.
+When building a feature, check `AGENTS.md` for the API surface and
+`docs/cribl-app-skill/skill.md` for known pitfalls. Use the Cribl
+MCP server (`.mcp.json`) to inspect live APIs and run test queries.
 
 ## How we work
 

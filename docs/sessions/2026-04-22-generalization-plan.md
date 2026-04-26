@@ -153,14 +153,16 @@ create-cribl-app/
 
 ## Execution plan
 
-1. **This session**: document the plan (this file), commit eval results
-2. **Next session**: extract `@cribl/app-utils` as a shared package
-   within this repo (or a sibling repo). Start with kvstore, cribl,
-   provisioner, alertState — the most reused modules.
-3. **New app session**: use the template to scaffold the new app,
-   import `@cribl/app-utils`, and validate that the extraction works
-   by building a real feature with it.
-4. **Component library**: extract after the second app is working —
-   the second consumer will validate the API surface.
-5. **Claude skill**: write `cribl-app` skill after the second app,
-   incorporating lessons from both projects.
+1. **Done**: Claude skill written at `docs/cribl-app-skill/skill.md`,
+   referenced from CLAUDE.md. Covers platform rules, KQL caveats,
+   sandbox constraints, and patterns.
+2. **Next (when second app starts)**: extract `@cribl/app-utils` by
+   copying the reusable modules (kvstore, cribl, provisioner,
+   alertState, settings) into a sibling repo or monorepo package.
+   Don't extract until a second consumer exists — premature
+   extraction creates dead code that drifts.
+3. **Component library**: extract after the second app is working —
+   the second consumer validates the API surface.
+4. **Template repo**: scaffold from the APM repo using the manifest
+   in this doc. Copy the platform infrastructure, strip the
+   domain-specific code.
