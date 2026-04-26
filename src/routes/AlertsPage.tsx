@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import StatusBanner from '../components/StatusBanner';
+import AlertTimeline from '../components/AlertTimeline';
 import { runQuery } from '../api/cribl';
 import { serviceColor } from '../utils/spans';
 import type { CachedAlertRow } from '../api/panelCache';
@@ -60,6 +61,7 @@ interface AlertEvent {
 export default function AlertsPage() {
   const [alerts, setAlerts] = useState<CachedAlertRow[]>([]);
   const [history, setHistory] = useState<AlertEvent[]>([]);
+  const [timeRange, setTimeRange] = useState<[number, number] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -92,6 +94,15 @@ export default function AlertsPage() {
 
   const nonOk = alerts.filter((a) => a.alertStatus !== 'ok' || a.isBad);
 
+  const filteredHistory = useMemo(() => {
+    if (!timeRange) return history;
+    return history.filter((h) => h.time >= timeRange[0] && h.time <= timeRange[1]);
+  }, [history, timeRange]);
+
+  const timelineEvents = useMemo(() =>
+    history.map((h) => ({ time: h.time, eventType: h.eventType, service: h.service })),
+  [history]);
+
   return (
     <div className={s.page}>
       <div className={s.header}>
@@ -108,6 +119,12 @@ export default function AlertsPage() {
       </div>
 
       {error && <StatusBanner kind="error">{error}</StatusBanner>}
+
+      <AlertTimeline
+        events={timelineEvents}
+        onRangeSelect={(start, end) => setTimeRange([start, end])}
+        onRangeClear={() => setTimeRange(null)}
+      />
 
       {loading && alerts.length === 0 ? (
         <div className={s.card}>
@@ -218,10 +235,10 @@ export default function AlertsPage() {
               </tbody>
             </table>
           </div>
-          {history.length > 0 && (
+          {filteredHistory.length > 0 && (
             <div className={s.card}>
               <h2 className={s.sectionTitle}>
-                Recent Alert Events
+                {timeRange ? `Alert Events (${filteredHistory.length} in selection)` : 'Recent Alert Events'}
               </h2>
               <table className={s.table}>
                 <thead>
@@ -235,7 +252,7 @@ export default function AlertsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {history.map((h, i) => (
+                  {filteredHistory.map((h, i) => (
                     <tr key={i}>
                       <td style={{ whiteSpace: 'nowrap' }}>{new Date(h.time).toLocaleString()}</td>
                       <td>
