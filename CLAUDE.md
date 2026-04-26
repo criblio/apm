@@ -12,25 +12,22 @@ that feeds it test telemetry lives separately in
 
 ## Developing
 
-**Read `AGENTS.md` before making changes to the app.** It is the
-authoritative developer guide for the Cribl App Platform and covers
-things that are not obvious from the code:
+**Read these before making changes:**
 
-- Global `window.CRIBL_API_URL` / `window.CRIBL_BASE_PATH` injected by the host
-- The automatic `fetch()` proxy (auth injection, pack-scoped URL rewrites,
-  external domain routing, 30s timeout)
-- `config/proxies.yml` — every external domain the app calls must be
-  declared here with path/header allowlists and KV-backed header injection
-- Scoped KV store endpoints under `CRIBL_API_URL + '/kvstore/...'`
-- Config-group contextual APIs: search endpoints **must** use
-  `/m/default_search/search/...`
-- React Router: `basename={window.CRIBL_BASE_PATH}`
-- Parent/child navigation sync via `pushState`/`popstate`
+1. **`AGENTS.md`** — Cribl App Platform developer guide (host
+   globals, fetch proxy, proxies.yml, KV store, React Router).
+   This is the official platform API reference.
+2. **`docs/cribl-app-skill/skill.md`** — lessons learned from
+   building this app: KQL caveats (crashes, unsupported functions),
+   sandboxed iframe constraints (no downloads, no popups, CSP),
+   scheduled search patterns (provisioning, caching, lookups,
+   alert state machine), and UI patterns (non-destructive refresh,
+   graph stability). Consult this before writing KQL queries or
+   working around platform limitations.
 
-When building a feature, inspect the relevant Cribl REST APIs first (the
-Cribl MCP server is wired up via `.mcp.json` — use it to list datasets,
-run searches, etc.) and consult `AGENTS.md` for platform rules before
-writing app code.
+When building a feature, check `AGENTS.md` for the API surface and
+`docs/cribl-app-skill/skill.md` for known pitfalls. Use the Cribl
+MCP server (`.mcp.json`) to inspect live APIs and run test queries.
 
 ## How we work
 
