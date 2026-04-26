@@ -21,23 +21,26 @@ export default function App() {
         <Routes>
           <Route element={<AppShell />}>
             <Route index element={<HomePage />} />
-            <Route path="/signals/traces" element={<SearchPage />} />
-            <Route path="/signals/logs" element={<LogsPage />} />
-            <Route path="/signals/metrics" element={<MetricsPage />} />
+            <Route path="/services" element={<ServicesListPage />} />
+            <Route path="/map" element={<SystemArchPage />} />
+            <Route path="/traces" element={<SearchPage />} />
+            <Route path="/logs" element={<LogsPage />} />
+            <Route path="/metrics" element={<MetricsPage />} />
+            <Route path="/alerts" element={<AlertsPage />} />
+            <Route path="/errors" element={<AlertsPage />} />
+            <Route path="/investigate" element={<InvestigatePage />} />
+            <Route path="/settings" element={<SettingsPage />} />
             <Route path="/trace/:traceId" element={<TraceView />} />
             <Route path="/compare" element={<ComparePage />} />
             <Route path="/compare/:idA/:idB" element={<ComparePage />} />
-            <Route path="/services" element={<ServicesListPage />} />
-            <Route path="/services/architecture" element={<SystemArchPage />} />
-            <Route path="/architecture" element={<Navigate to="/services/architecture" replace />} />
             <Route path="/service/:serviceName" element={<ServiceDetailPage />} />
-            <Route path="/alerts" element={<AlertsPage />} />
-            <Route path="/investigate" element={<InvestigatePage />} />
-            <Route path="/settings" element={<SettingsPage />} />
             {/* Backwards compat redirects */}
-            <Route path="/search" element={<Navigate to="/signals/traces" replace />} />
-            <Route path="/logs" element={<Navigate to="/signals/logs" replace />} />
-            <Route path="/metrics" element={<Navigate to="/signals/metrics" replace />} />
+            <Route path="/search" element={<Navigate to="/traces" replace />} />
+            <Route path="/signals/traces" element={<Navigate to="/traces" replace />} />
+            <Route path="/signals/logs" element={<Navigate to="/logs" replace />} />
+            <Route path="/signals/metrics" element={<Navigate to="/metrics" replace />} />
+            <Route path="/architecture" element={<Navigate to="/map" replace />} />
+            <Route path="/services/architecture" element={<Navigate to="/map" replace />} />
           </Route>
         </Routes>
       </BrowserRouter>

@@ -1,0 +1,116 @@
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  width: 220px;
+  height: 100%;
+  background: var(--cds-brand-navy);
+  flex-shrink: 0;
+  transition: width 200ms ease;
+  overflow: hidden;
+}
+.sidebarCollapsed {
+  width: 56px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: var(--cds-space-sm);
+  padding: var(--cds-space-md) var(--cds-space-md);
+  color: var(--cds-brand-teal);
+  font-size: var(--cds-font-size-md);
+  font-weight: var(--cds-font-weight-semibold);
+  text-decoration: none;
+  white-space: nowrap;
+  overflow: hidden;
+  height: 48px;
+  flex-shrink: 0;
+}
+.brand:hover { color: var(--cds-brand-teal); text-decoration: none; }
+.brandIcon {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--cds-space-xs) var(--cds-space-sm);
+}
+
+.divider {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.08);
+  margin: var(--cds-space-xs) var(--cds-space-md);
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: var(--cds-space-sm);
+  padding: 8px 12px;
+  color: var(--cds-color-fg-subtle);
+  font-size: var(--cds-font-size-sm);
+  font-weight: var(--cds-font-weight-medium);
+  text-decoration: none;
+  border-radius: var(--cds-radius-md);
+  white-space: nowrap;
+  overflow: hidden;
+  transition: color 120ms ease, background 120ms ease;
+}
+.item:hover {
+  color: var(--cds-color-fg-inverse);
+  background: rgba(255, 255, 255, 0.06);
+  text-decoration: none;
+}
+.itemActive {
+  color: var(--cds-color-fg-inverse);
+  background: rgba(255, 255, 255, 0.10);
+}
+.itemIcon {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+.itemActive .itemIcon {
+  opacity: 1;
+}
+.itemLabel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.spacer { flex: 1; }
+
+.collapseBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--cds-space-sm);
+  padding: 8px 12px;
+  color: var(--cds-color-fg-subtle);
+  font-size: var(--cds-font-size-xs);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  border-radius: var(--cds-radius-md);
+  margin: var(--cds-space-xs) var(--cds-space-sm) var(--cds-space-md);
+}
+.collapseBtn:hover {
+  color: var(--cds-color-fg-inverse);
+  background: rgba(255, 255, 255, 0.06);
+}
+.collapseIcon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  transition: transform 200ms ease;
+}
+.collapseIconFlipped {
+  transform: rotate(180deg);
+}

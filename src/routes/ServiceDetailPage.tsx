@@ -1012,7 +1012,7 @@ export default function ServiceDetailPage() {
                     key={op.operation}
                     onClick={() =>
                       navigate(
-                        `/signals/traces?service=${encodeURIComponent(serviceName)}&operation=${encodeURIComponent(op.operation)}&lookback=${range}`,
+                        `/traces?service=${encodeURIComponent(serviceName)}&operation=${encodeURIComponent(op.operation)}&lookback=${range}`,
                       )
                     }
                   >
