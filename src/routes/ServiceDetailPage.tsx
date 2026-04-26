@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import TimeRangePicker from '../components/TimeRangePicker';
 import { binSecondsFor } from '../components/timeRanges';
 import LineChart, { type LineSeries } from '../components/LineChart';
@@ -194,9 +194,26 @@ function relativeTimeMs(rel: string): number {
   return n * { s: 1000, m: 60_000, h: 3600_000, d: 86_400_000 }[unit];
 }
 
+type SvcTab = 'overview' | 'traces' | 'logs' | 'errors' | 'dependencies';
+const SVC_TABS: Array<{ id: SvcTab; label: string }> = [
+  { id: 'overview', label: 'Overview' },
+  { id: 'traces', label: 'Traces' },
+  { id: 'logs', label: 'Logs' },
+  { id: 'errors', label: 'Errors' },
+  { id: 'dependencies', label: 'Dependencies' },
+];
+
 export default function ServiceDetailPage() {
   const { serviceName = '' } = useParams();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeTab = (searchParams.get('tab') as SvcTab) || 'overview';
+  const setTab = (tab: SvcTab) => {
+    const next = new URLSearchParams(searchParams);
+    if (tab === 'overview') next.delete('tab');
+    else next.set('tab', tab);
+    setSearchParams(next, { replace: true });
+  };
   const [range, setRange] = useRangeParam(DEFAULT_RANGE);
   const [summary, setSummary] = useState<ServiceSummary | null>(null);
   const [prevSummary, setPrevSummary] = useState<ServiceSummary | null>(null);
@@ -879,6 +896,62 @@ export default function ServiceDetailPage() {
         </div>
       </div>
 
+      {/* Tab bar */}
+      <div className={s.tabBar}>
+        {SVC_TABS.map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            className={`${s.tab} ${activeTab === tab.id ? s.tabActive : ''}`}
+            onClick={() => setTab(tab.id)}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Tab content */}
+      {activeTab === 'traces' && (
+        <div className={s.tabContent}>
+          <div className={s.tabPlaceholder}>
+            <p>Trace search filtered to <strong>{serviceName}</strong></p>
+            <Link to={`/traces?service=${encodeURIComponent(serviceName)}&lookback=${range}`} className={s.tabLink}>
+              Open in full Traces view →
+            </Link>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'logs' && (
+        <div className={s.tabContent}>
+          <div className={s.tabPlaceholder}>
+            <p>Log search filtered to <strong>{serviceName}</strong></p>
+            <Link to={`/logs?service=${encodeURIComponent(serviceName)}&lookback=${range}`} className={s.tabLink}>
+              Open in full Logs view →
+            </Link>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'errors' && (
+        <div className={s.tabContent}>
+          <div className={s.tabPlaceholder}>
+            <p>Error classes for <strong>{serviceName}</strong></p>
+            <Link to={`/errors`} className={s.tabLink}>
+              Open in full Errors view →
+            </Link>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'dependencies' && (
+        <div className={s.tabContent}>
+          {/* Dependencies section from the overview — render inline */}
+        </div>
+      )}
+
+      {activeTab === 'overview' && (
+      <>
       {/* RED charts */}
       <div className={s.charts}>
         <LineChart
@@ -1202,6 +1275,9 @@ export default function ServiceDetailPage() {
           </table>
         )}
       </div>
+
+      </>
+      )}
 
       {alertHistory.length > 0 && (
         <div className={s.opsCard}>
