@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import StatusBanner from '../components/StatusBanner';
 import AlertTimeline from '../components/AlertTimeline';
@@ -137,9 +137,9 @@ export default function AlertsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchAlerts = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+  const hasData = useRef(false);
+  const fetchAlerts = useCallback(async (silent = false) => {
+    if (!silent) { setLoading(true); setError(null); }
     try {
       const [alertRows, historyRows] = await Promise.all([
         runQuery('dataset="$vt_results" | where jobName == "criblapm__home_alerts"', '-1h', 'now', 500),
@@ -157,14 +157,22 @@ export default function AlertsPage() {
         errorRate: Number(r.curr_error_rate ?? 0),
         prevErrorRate: Number(r.prev_error_rate ?? 0),
       })));
+      hasData.current = true;
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (!silent) setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [historyRange]);
 
   useEffect(() => { void fetchAlerts(); }, [fetchAlerts]);
+
+  const refreshRef = useRef(fetchAlerts);
+  refreshRef.current = fetchAlerts;
+  useEffect(() => {
+    const id = setInterval(() => { void refreshRef.current(true); }, 30_000);
+    return () => clearInterval(id);
+  }, []);
 
   const nonOk = alerts.filter((a) => a.alertStatus !== 'ok' || a.isBad);
 
