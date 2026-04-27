@@ -24,7 +24,9 @@ async function navigateToPage(
     }).catch(() => {});
     return true;
   } else if (pageName === 'home' || pageName === 'services') {
-    await gotoApm(page, '/services?range=-15m');
+    await gotoApm(page, '/');
+    await page.waitForTimeout(1000);
+    await page.getByRole('link', { name: 'Services', exact: true }).click();
     await page.getByText(/^Services \(\d+\)/).waitFor({
       state: 'visible',
       timeout: 60_000,
@@ -37,10 +39,15 @@ async function navigateToPage(
     await page.waitForTimeout(5000);
     return true;
   } else if (pageName === 'serviceDetail') {
-    await gotoApm(page, '/services?range=-15m');
-    await page.waitForTimeout(5000);
-    // Click the service name link directly — more reliable than
-    // finding the row by accessible name
+    await gotoApm(page, '/');
+    await page.waitForTimeout(1000);
+    await page.getByRole('link', { name: 'Services', exact: true }).click();
+    const tableLoaded = await page.getByText(/^Services \(\d+\)/).waitFor({
+      state: 'visible',
+      timeout: 60_000,
+    }).then(() => true).catch(() => false);
+    if (!tableLoaded) return false;
+    await page.waitForTimeout(2000);
     const svcLink = page.locator(`table tbody a:has-text("${serviceName}")`).first();
     const visible = await svcLink
       .waitFor({ state: 'visible', timeout: 30_000 })
