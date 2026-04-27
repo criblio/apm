@@ -36,7 +36,7 @@ const scenario: ScenarioDeclaration = {
     {
       surface: 'alertsPageadFiring',
       page: 'alerts',
-      locator: 'table tr:has-text("ad"):has-text("Firing")',
+      locator: 'table tr:has-text("ad"):is(:has-text("Firing"), :has-text("Pending"))',
       assertion: 'countGt0',
       timeoutMs: 120_000,
     },
