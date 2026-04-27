@@ -16,25 +16,45 @@ async function navigateToPage(
   serviceName: string,
   gotoApm: (page: Page, path: string) => Promise<void>,
 ): Promise<boolean> {
-  if (pageName === 'home') {
+  if (pageName === 'overview') {
     await gotoApm(page, '/?range=-15m');
+    await page.getByRole('heading', { name: 'Overview' }).waitFor({
+      state: 'visible',
+      timeout: 60_000,
+    }).catch(() => {});
+    return true;
+  } else if (pageName === 'home' || pageName === 'services') {
+    await gotoApm(page, '/');
+    await page.waitForTimeout(1000);
+    await page.getByRole('link', { name: 'Services', exact: true }).click();
     await page.getByText(/^Services \(\d+\)/).waitFor({
       state: 'visible',
       timeout: 60_000,
     }).catch(() => {});
     return true;
+  } else if (pageName === 'errors') {
+    await gotoApm(page, '/');
+    await page.waitForTimeout(1000);
+    await page.getByRole('link', { name: 'Errors', exact: true }).click();
+    await page.waitForTimeout(5000);
+    return true;
   } else if (pageName === 'serviceDetail') {
-    await gotoApm(page, '/?range=-15m');
+    await gotoApm(page, '/');
+    await page.waitForTimeout(1000);
+    await page.getByRole('link', { name: 'Services', exact: true }).click();
+    const tableLoaded = await page.getByText(/^Services \(\d+\)/).waitFor({
+      state: 'visible',
+      timeout: 60_000,
+    }).then(() => true).catch(() => false);
+    if (!tableLoaded) return false;
     await page.waitForTimeout(2000);
-    const row = page.getByRole('row', {
-      name: new RegExp(`^${serviceName}\\s`),
-    });
-    const visible = await row
+    const svcLink = page.locator(`table tbody a:has-text("${serviceName}")`).first();
+    const visible = await svcLink
       .waitFor({ state: 'visible', timeout: 30_000 })
       .then(() => true)
       .catch(() => false);
     if (!visible) return false;
-    await row.getByRole('link').first().click();
+    await svcLink.click();
     await page.waitForURL(/\/service\//, { timeout: 15_000 });
     await page.getByText(/^Top operations/).waitFor({
       state: 'visible',

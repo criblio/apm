@@ -145,7 +145,15 @@ users query on arbitrary attributes with autocomplete and facets.
 - Cardinality-aware autocomplete
 - "Edit as KQL" escape hatch for power users
 
-### 6. User-created alerts + notification dispatch
+### 6. Alert timeline with time range selection
+
+Alerts page gains a visual timechart showing alert events over
+time. Users can highlight/drag-select a time range on the chart
+to filter the events table below to that window — "what was
+firing between 2am and 4am?" Backed by the alert history events
+in the otel dataset (`data_datatype == "criblapm_alert"`).
+
+### 7. User-created alerts + notification dispatch
 
 Phase 2 of alerting: "Create alert" button that persists a threshold
 as a Cribl saved search with notification targets. Full design in
@@ -182,6 +190,56 @@ via `db.statement` / `db.system`.
 
 Streaming logs and spans as they arrive. "Tail" button on the
 Logs page.
+
+### 13. Universal data mapping (schema-agnostic APM)
+
+The APM currently depends on OpenTelemetry's field naming conventions
+(`resource.attributes['service.name']`, `status.code`, `end_time_unix_nano`, etc.).
+This limits the app to OTel-instrumented workloads.
+
+**Vision:** any data in Cribl Search should be mappable to the APM's
+service model — Cribl internal logs/metrics, custom application logs,
+legacy monitoring data. The same dashboards, alerts, and investigations
+would work regardless of the source schema.
+
+**Design questions:**
+- **Configuration UI** — a mapping editor that lets users define
+  "service name is field X", "error indicator is field Y == value Z",
+  "latency is field W". Store mappings in KV per dataset.
+- **LLM-assisted mapping** — given a sample of records from a dataset,
+  use an LLM to suggest field mappings automatically. "This looks like
+  `hostname` maps to service, `response_time_ms` maps to duration,
+  `status >= 400` maps to error."
+- **Copilot Investigator tool** — a `create_field_mapping` tool that
+  the Investigator can call to build mappings interactively during an
+  investigation. "I see this dataset uses `app_name` for the service
+  identifier — let me configure that for you."
+- **Query abstraction** — all query builders in queries.ts should read
+  from the mapping config instead of hardcoding OTel field paths.
+  A `fieldResolver(dataset, 'service.name')` function that returns
+  the mapped field path.
+
+**Scope:** this is a foundational architecture change that affects
+every query, every panel, and every scheduled search. It should be
+designed carefully and implemented incrementally — start with the
+mapping config UI + one query builder, validate the abstraction,
+then roll out to all queries.
+
+### Blocked on Cribl
+
+- **Metrics: `_metric_name` in wide-column format** — Cribl's
+  wide-column metric storage flattens the metric value and its
+  numeric attributes into top-level fields with no way to
+  distinguish them. Fields like `http.status_code` (a dimension)
+  are indistinguishable from `http.server.duration` (the metric).
+  We use a blocklist of known numeric attributes as a workaround.
+  Feature request submitted to Cribl to preserve `_metric_name`
+  (or equivalent) in the wide-column ingest pipeline.
+
+- **`summarize → summarize max(iff(...))`** — Cribl KQL crashes
+  on real data when a second `summarize` uses `max(iff(...))` on
+  output from a prior `summarize`. Workaround: split into separate
+  scheduled searches joined via lookups. Bug report pending.
 
 ### Future categories (whole new signal types)
 

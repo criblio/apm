@@ -103,6 +103,45 @@
   color: var(--cds-color-danger);
 }
 
+/* Tab bar */
+.tabBar {
+  display: flex;
+  gap: 0;
+  border-bottom: 2px solid var(--cds-color-border-subtle);
+}
+.tab {
+  padding: var(--cds-space-sm) var(--cds-space-lg);
+  font-size: var(--cds-font-size-sm);
+  font-weight: var(--cds-font-weight-medium);
+  color: var(--cds-color-fg-muted);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease;
+}
+.tab:hover { color: var(--cds-color-fg); }
+.tabActive {
+  color: var(--cds-color-fg);
+  font-weight: var(--cds-font-weight-semibold);
+  border-bottom-color: var(--cds-color-accent);
+}
+.tabContent {
+  min-height: 200px;
+}
+.tabPlaceholder {
+  padding: var(--cds-space-xxl);
+  text-align: center;
+  color: var(--cds-color-fg-muted);
+}
+.tabLink {
+  color: var(--cds-color-accent);
+  text-decoration: none;
+  font-weight: var(--cds-font-weight-medium);
+}
+.tabLink:hover { text-decoration: underline; }
+
 .heroControls {
   display: flex;
   align-items: center;

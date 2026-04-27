@@ -93,7 +93,7 @@ export default function OperationAnomalyList({ items, loading, lookback }: Props
           {items.map((item) => (
             <li key={`${item.service}\u0000${item.operation}`}>
               <Link
-                to={`/signals/traces?service=${encodeURIComponent(item.service)}&operation=${encodeURIComponent(item.operation)}&lookback=${lookback}`}
+                to={`/traces?service=${encodeURIComponent(item.service)}&operation=${encodeURIComponent(item.operation)}&lookback=${lookback}`}
                 className={s.row}
               >
                 <div className={s.mainCol}>

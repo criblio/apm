@@ -10,14 +10,14 @@ const scenario: ScenarioDeclaration = {
   surfaceChecks: [
     {
       surface: 'homeP99Chip',
-      page: 'home',
+      page: 'services',
       locator: 'table tbody tr:has-text("fraud-detection") [title*="vs previous window"]',
       assertion: 'visible',
       timeoutMs: 30_000,
     },
     {
       surface: 'homeSlowestTraceClasses',
-      page: 'home',
+      page: 'services',
       locator: '[class*="wrap"]:has(span:text-matches("^Slowest trace")) li:has-text("consumed")',
       assertion: 'countGt0',
       timeoutMs: 60_000,

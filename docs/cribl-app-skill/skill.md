@@ -175,3 +175,36 @@ signal decay from the previous scenario.
 Every new UI feature must be validated via Playwright against
 staging before reporting it as done. Write a short script that
 navigates, asserts key elements, and captures a screenshot.
+
+## Performance review process
+
+After making significant view/navigation changes, audit the data
+loading patterns across all pages:
+
+### Static code audit
+1. List every page and what data it fetches
+2. Check whether each fetch uses the panel cache ($vt_results
+   batched read) or fires live queries
+3. Flag pages that COULD read from cached scheduled search output
+   but don't — these are easy wins
+4. Check cache hit conditions: most caches only work on `-1h`
+   range with stream filter enabled. Pages that always fire live
+   queries regardless of range are candidates for caching.
+5. Check for redundant fetches — data that's loaded on page A
+   and then re-loaded when navigating to page B (consider
+   lifting to a shared context or React Router loader)
+
+### Eval framework performance checks
+The eval harness should time each page load and flag slow ones:
+1. Measure time from navigation to first meaningful content
+2. Compare cached vs live query paths
+3. Flag pages that take >3s on the cached path or >10s on live
+4. Suggest specific scheduled searches that could cache the
+   slow live queries
+
+### Panel cache checklist
+For each page, verify:
+- [ ] Uses `listCachedXxxPanels()` on the default range
+- [ ] Falls back to live queries on non-default ranges
+- [ ] Shows stale-cache indicator when cache is old
+- [ ] Non-destructive refresh (keeps previous data visible)

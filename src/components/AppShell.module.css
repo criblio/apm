@@ -1,6 +1,6 @@
 .shell {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   height: 100%;
 }
 
@@ -9,4 +9,5 @@
   overflow-y: auto;
   padding: var(--cds-space-xl);
   background: var(--cds-color-bg);
+  min-width: 0;
 }
