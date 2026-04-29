@@ -2,11 +2,9 @@
 /**
  * Reconcile scheduled searches against the provisioning plan.
  *
- * Imports the same reconcile() + HttpClient interface the Settings
- * UI uses, but wires it to a Node fetch + Bearer token instead of
- * the browser's cookie-authenticated fetch proxy. This lets
- * `npm run deploy` call `npm run provision` automatically after
- * pack install, and it can also be run standalone.
+ * Wires the framework's reconcile() / planOnly() to a Node fetch
+ * + Bearer token via createNodeHttpClient. Used by `npm run deploy`
+ * after pack install, and runnable standalone.
  *
  * Usage:
  *   npx tsx scripts/provision.ts          # reconcile (create/update/delete)
@@ -16,11 +14,11 @@ import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  reconcile,
-  planOnly,
+  createNodeHttpClient,
   type HttpClient,
   type PlanAction,
-} from '../src/api/provisioner.js';
+} from '@cribl/app-utils/provisioner';
+import { reconcile, planOnly } from '../src/api/provisioner.js';
 import { setSearchCadence } from '../src/api/searchCadence.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -44,71 +42,6 @@ function loadDotEnv(): Record<string, string> {
   return env;
 }
 
-async function getToken(
-  baseUrl: string,
-  clientId: string,
-  clientSecret: string,
-): Promise<string> {
-  const isStaging = /cribl-staging\.cloud/.test(baseUrl);
-  const tokenUrl = isStaging
-    ? 'https://login.cribl-staging.cloud/oauth/token'
-    : 'https://login.cribl.cloud/oauth/token';
-  const audience = isStaging
-    ? 'https://api.cribl-staging.cloud'
-    : 'https://api.cribl.cloud';
-  const resp = await fetch(tokenUrl, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      grant_type: 'client_credentials',
-      client_id: clientId,
-      client_secret: clientSecret,
-      audience,
-    }),
-  });
-  if (!resp.ok) throw new Error(`Token exchange failed: ${resp.status}`);
-  const data = (await resp.json()) as { access_token: string };
-  return data.access_token;
-}
-
-function makeHttpClient(baseUrl: string, token: string): HttpClient {
-  const apiBase = baseUrl.replace(/\/$/, '') + '/api/v1';
-  const headers = {
-    authorization: `Bearer ${token}`,
-    'content-type': 'application/json',
-    accept: 'application/json',
-  };
-
-  async function request(
-    method: string,
-    path: string,
-    body?: unknown,
-  ): Promise<unknown> {
-    const url = `${apiBase}${path}`;
-    const resp = await fetch(url, {
-      method,
-      headers,
-      body: body !== undefined ? JSON.stringify(body) : undefined,
-    });
-    const text = await resp.text();
-    if (!resp.ok) {
-      throw new Error(`${method} ${path} failed (${resp.status}): ${text}`);
-    }
-    try {
-      return JSON.parse(text);
-    } catch {
-      return text;
-    }
-  }
-
-  return {
-    get: (path) => request('GET', path),
-    post: (path, body) => request('POST', path, body),
-    patch: (path, body) => request('PATCH', path, body),
-    del: (path) => request('DELETE', path),
-  };
-}
-
 function actionLabel(a: PlanAction): string {
   if (a.kind === 'create') return `  + create ${a.want.id}`;
   if (a.kind === 'update') return `  ~ update ${a.want.id}`;
@@ -127,7 +60,7 @@ async function loadCadenceFromKV(http: HttpClient): Promise<void> {
       }
     }
   } catch {
-    // KV not available or empty — use default cadence
+    // KV not available or empty — use default cadence.
   }
 }
 
@@ -147,8 +80,7 @@ async function main(): Promise<void> {
   }
 
   const dryRun = process.argv.includes('--dry');
-  const token = await getToken(baseUrl, clientId, clientSecret);
-  const http = makeHttpClient(baseUrl, token);
+  const http = await createNodeHttpClient({ baseUrl, clientId, clientSecret });
 
   await loadCadenceFromKV(http);
 
