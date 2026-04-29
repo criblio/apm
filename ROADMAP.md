@@ -60,81 +60,7 @@ See [`docs/research/ux-competitive-analysis.md`](docs/research/ux-competitive-an
 for the full competitive analysis against Datadog, New Relic,
 Dynatrace, and Grafana that drives this priority order.
 
-### 1. Left sidebar navigation
-
-**The single biggest UX gap vs every competitor.** Replace the
-horizontal top nav with a collapsible left sidebar with icons.
-Every major APM (Datadog, New Relic, Dynatrace, Grafana) uses a
-vertical sidebar. Our horizontal nav is out of space, hides
-primary surfaces behind dropdowns, and feels like a website.
-
-```
-┌─────────────────────────┐
-│ 🔍 Search (Cmd+K)      │
-│                         │
-│ ◉  Overview            │
-│ 📋 Services            │
-│ 🗺️  Service Map        │
-│ ─────────────           │
-│ 🔍 Traces              │
-│ 📝 Logs                │
-│ 📊 Metrics             │
-│ ─────────────           │
-│ 🔴 Alerts              │
-│ ❌ Errors              │
-│ ─────────────           │
-│ 🤖 Investigate         │
-│ ⚙️  Settings            │
-└─────────────────────────┘
-```
-
-Collapsible to icon-only mode. No dropdowns. 10 items fit
-comfortably. Active item highlighted. Persistent across views.
-
-### 2. Overview page (replace Home)
-
-The current Home page crams 6 panels into one scroll. Competitors
-split these into focused views. The new Overview answers one
-question: "is anything wrong right now?"
-
-1. Detected Issues panel (compact — just the firing alerts)
-2. Key metrics row: total services, req/min, global error rate, p95
-3. Mini service health table (only services with issues, not all 18)
-4. Recent alert events (last 5 transitions)
-
-NOT the full service catalog (that's Services), NOT the system
-architecture graph (that's Service Map), NOT slow traces/error
-classes (those belong in Traces and Errors).
-
-### 3. Errors Inbox (top-level view)
-
-**Every competitor has this. We don't.** Promote from a Home panel
-to a first-class page.
-
-- Error groups: `(service, operation, exception.type, normalized
-  stack frame hash)` — Sentry-style fingerprinting
-- First-seen / last-seen / count sparkline per fingerprint
-- State: new / acknowledged / resolved / ignored (stored in KV)
-- Regression detection: alert when a resolved fingerprint reappears
-- Sample traces + sample logs per error group
-- Click through to trace detail / service detail
-
-### 4. Service Detail tabs
-
-The current Service Detail is a dead end — charts and tables but
-no way to pivot to traces, logs, or errors for that service.
-Competitors make the service page a **hub with tabs**:
-
-- **Overview**: RED charts, summary stats, top operations, instances
-  (current layout)
-- **Traces**: filtered trace search scoped to this service
-- **Logs**: filtered log search scoped to this service
-- **Errors**: error classes for this service
-- **Metrics**: service-specific metric cards
-- **Dependencies**: upstream/downstream with edge health
-- **Alerts**: alert history for this service
-
-### 5. Faceted trace search
+### 1. Faceted trace search
 
 The current Search form is fixed-shape. Every commercial APM lets
 users query on arbitrary attributes with autocomplete and facets.
@@ -145,53 +71,45 @@ users query on arbitrary attributes with autocomplete and facets.
 - Cardinality-aware autocomplete
 - "Edit as KQL" escape hatch for power users
 
-### 6. Alert timeline with time range selection
-
-Alerts page gains a visual timechart showing alert events over
-time. Users can highlight/drag-select a time range on the chart
-to filter the events table below to that window — "what was
-firing between 2am and 4am?" Backed by the alert history events
-in the otel dataset (`data_datatype == "criblapm_alert"`).
-
-### 7. User-created alerts + notification dispatch
+### 2. User-created alerts + notification dispatch
 
 Phase 2 of alerting: "Create alert" button that persists a threshold
 as a Cribl saved search with notification targets. Full design in
 [`docs/research/alerting-design.md`](docs/research/alerting-design.md).
 
-### 7. SLO budgets
+### 3. SLO budgets
 
 Thin layer on top of alerts. SLO = saved search tracking
 (success / total) over a 28-day window, plus budget burn rate
 alerts at 1h / 6h / 24h windows.
 
-### 8. Dashboards (via Cribl Saved Searches)
+### 4. Dashboards (via Cribl Saved Searches)
 
 User-created dashboards composing multiple saved views as widgets.
 "Save this view" button on Traces / Logs / Metrics / ServiceDetail.
 
-### 9. Flame graph + critical path on Trace detail
+### 5. Flame graph + critical path on Trace detail
 
 - Flame graph / icicle chart for self-time visualization
 - Critical-path highlighting (spans that drove end-to-end duration)
 - Latency histogram per operation
 
-### 10. Service catalog / ownership
+### 6. Service catalog / ownership
 
 Tag services with team, oncall, runbook URL, repository link.
 Route alerts by ownership. Backstage-style but lightweight.
 
-### 11. Database query performance
+### 7. Database query performance
 
 Top slow queries, fingerprints, execution plans. Linked to traces
 via `db.statement` / `db.system`.
 
-### 12. Live tail
+### 8. Live tail
 
 Streaming logs and spans as they arrive. "Tail" button on the
 Logs page.
 
-### 13. Universal data mapping (schema-agnostic APM)
+### 9. Universal data mapping (schema-agnostic APM)
 
 The APM currently depends on OpenTelemetry's field naming conventions
 (`resource.attributes['service.name']`, `status.code`, `end_time_unix_nano`, etc.).
@@ -271,6 +189,28 @@ then roll out to all queries.
 
 Items below shipped and are kept for historical reference. See git
 log and linked PRs for implementation details.
+
+### Navigation overhaul + focused views (v0.7.0) — DONE
+
+PR #30. Driven by competitive analysis against Datadog, New Relic,
+Dynatrace, and Grafana.
+
+- **Left sidebar navigation** — collapsible sidebar with 10 nav items,
+  section dividers, icon-only collapse mode. Replaces horizontal nav.
+- **Overview page** — focused "is anything wrong?" dashboard: Detected
+  Issues, Key Metrics row, Services Needing Attention, Recent Alerts.
+- **Errors Inbox** — first-class error tracking page with error groups
+  by (service, operation, message), count badges, sample traces,
+  Investigate buttons.
+- **Service Detail tabs** — Overview / Traces / Logs / Errors /
+  Dependencies, URL-driven via `?tab=` param.
+- **Alert timeline** — stacked service bars with drag-to-select
+  filtering, incident pairing (firing→resolved with duration), time
+  range picker (1h–30d), 30s auto-refresh.
+- **Metric catalog cleanup** — blocklist for numeric OTel attributes
+  misclassified as metrics.
+- **Eval framework** — updated for new views, SPA sidebar navigation,
+  Pending/Firing alert checks. Mean score 0.71 (5/13 fully detected).
 
 ### AI-powered investigations (Copilot Investigator) — DONE
 

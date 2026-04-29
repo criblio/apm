@@ -20,6 +20,7 @@
     "eval": "tsx eval/run.ts"
   },
   "dependencies": {
+    "@cribl/app-utils": "file:../cribl-search-app-framework/packages/app-utils",
     "d3-array": "^3.2.4",
     "d3-force": "^3.0.0",
     "d3-scale": "^4.0.2",
