@@ -50,7 +50,7 @@ export default function AlertTimeline({ intervals, onRangeSelect, onRangeClear, 
   const height = propHeight ?? Math.max(60, M.top + M.bottom + services.length * (BAR_H + BAR_GAP));
   const innerH = height - M.top - M.bottom;
 
-  const now = Date.now();
+  const [now] = useState(Date.now);
   const xScale = useMemo(() => {
     if (intervals.length === 0) {
       return scaleTime().domain([now - 86400000, now]).range([0, innerW]);
