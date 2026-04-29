@@ -14,7 +14,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Clone shared framework
-        run: git clone --depth 1 https://github.com/criblio/cribl-search-app-framework.git ../cribl-search-app-framework
+        run: git clone --depth 1 https://x-access-token:${{ github.token }}@github.com/criblio/cribl-search-app-framework.git ../cribl-search-app-framework
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
