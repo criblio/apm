@@ -28,8 +28,11 @@
  * change the provisioner must be re-run to pick up the new
  * baked-in values. The ROADMAP caveats section covers this.
  */
+import type { ProvisionedSearch, SeedLookup } from '@cribl/app-utils/provisioner';
 import * as Q from './queries';
 import { getSearchCadenceCron } from './searchCadence';
+
+export type { ProvisionedSearch };
 
 /** Stable prefix for every app-managed saved search ID. Used by
  * the provisioner to find and reconcile rows without stomping
@@ -43,24 +46,21 @@ export const CRIBLAPM_PREFIX = 'criblapm__';
  * underscore pattern without looking weird in the UI. */
 export const OP_BASELINES_LOOKUP = 'criblapm_op_baselines';
 export const ALERT_STATES_LOOKUP = 'criblapm_alert_states';
+export const ALERT_PREV_LOOKUP = 'criblapm_alert_prev';
 
-/** The subset of the Cribl saved-search object that the provisioner
- * cares about. The server fills in the rest (`user`, etc.). */
-export interface ProvisionedSearch {
-  id: string;
-  name: string;
-  description: string;
-  query: string;
-  earliest: string;
-  latest: string;
-  sampleRate?: number;
-  schedule: {
-    enabled: boolean;
-    cronSchedule: string;
-    tz: string;
-    keepLastN: number;
-  };
-}
+/** Lookup tables that must exist before scheduled searches that
+ * `lookup` against them can be created. The framework provisioner
+ * probes each by name and runs the seed query if absent. */
+export const SEED_LOOKUPS: SeedLookup[] = [
+  {
+    name: ALERT_STATES_LOOKUP,
+    seedQuery: `dataset="otel" | limit 1 | project alert_id="__init__", alert_status="ok", consecutive_bad=0, consecutive_good=0, fire_count=0 | export mode=overwrite description="Cribl APM - alert state init" to lookup ${ALERT_STATES_LOOKUP}`,
+  },
+  {
+    name: ALERT_PREV_LOOKUP,
+    seedQuery: `dataset="otel" | limit 1 | project svc="__init__", prev_req=0, prev_err=0, prev_err_rate=0.0, prev_p95_us=0 | export mode=overwrite description="Cribl APM - prev window init" to lookup ${ALERT_PREV_LOOKUP}`,
+  },
+];
 
 /**
  * Baseline query for the latency anomaly detector. Same aggregation
