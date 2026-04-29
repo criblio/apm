@@ -10,10 +10,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/checkout@v4
-        with:
-          repository: criblio/cribl-search-app-framework
-          path: ../cribl-search-app-framework
+      - name: Clone shared framework (for file: dependency)
+        run: git clone --depth 1 https://github.com/criblio/cribl-search-app-framework.git ../cribl-search-app-framework
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
