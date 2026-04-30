@@ -30,7 +30,7 @@
  */
 import type { ProvisionedSearch, SeedLookup } from '@cribl/app-utils/provisioner';
 import * as Q from './queries';
-import { getSearchCadenceCron } from './searchCadence';
+import { getSearchCadenceCron } from '@cribl/app-utils/cadence';
 
 export type { ProvisionedSearch };
 

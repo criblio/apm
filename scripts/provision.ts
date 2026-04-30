@@ -19,7 +19,7 @@ import {
   type PlanAction,
 } from '@cribl/app-utils/provisioner';
 import { reconcile, planOnly } from '../src/api/provisioner.js';
-import { setSearchCadence } from '../src/api/searchCadence.js';
+import { setSearchCadence } from '@cribl/app-utils/cadence';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..');
