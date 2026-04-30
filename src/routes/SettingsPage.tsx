@@ -1,11 +1,16 @@
 import { useCallback, useEffect, useState } from 'react';
 import StatusBanner from '../components/StatusBanner';
-import ProvisioningPanel from '../components/ProvisioningPanel';
+import ProvisioningPanel from '@cribl/app-utils/provisioning-panel';
 import { loadAppSettings, saveAppSettings } from '../api/appSettings';
 import { listNotificationTargets, type NotificationTarget } from '../api/notificationTargets';
 import { setCurrentDataset } from '../api/dataset';
 import { setStreamFilterEnabled } from '../api/streamFilter';
-import { setSearchCadence, CADENCE_OPTIONS, type CadenceOption } from '../api/searchCadence';
+import { setSearchCadence, CADENCE_OPTIONS, type CadenceOption } from '@cribl/app-utils/cadence';
+import {
+  CRIBLAPM_PREFIX,
+  SEED_LOOKUPS,
+  getProvisioningPlan,
+} from '../api/provisionedSearches';
 import { useDataset } from '../hooks/useDataset';
 import { useStreamFilterEnabled } from '../hooks/useStreamFilter';
 import { useSearchCadence } from '../hooks/useSearchCadence';
@@ -335,7 +340,33 @@ export default function SettingsPage() {
         {flash && <span className={s.successFlash}>{flash}</span>}
       </div>
 
-      <ProvisioningPanel />
+      <ProvisioningPanel
+        config={{
+          prefix: CRIBLAPM_PREFIX,
+          plan: getProvisioningPlan,
+          seedLookups: SEED_LOOKUPS,
+        }}
+        helpText={
+          <>
+            Cribl APM caches its expensive panel queries (Home catalog,
+            sparklines, slow trace classes, error classes, dependency graph,
+            latency baselines) as scheduled Cribl Saved Searches that run
+            every few minutes. Pages then read the cached rows via{' '}
+            <code>$vt_results</code> / lookup joins, which is ~10× faster
+            than running the underlying queries live on every load. Re-run
+            the preview after changing the <strong>Dataset</strong> or{' '}
+            <strong>Noise filters</strong> setting so the cached queries
+            pick up the new values.
+          </>
+        }
+        dangerHelpText={
+          <>
+            Deletes every <code>criblapm__*</code> saved search from the
+            workspace. Page loads revert to live queries (slower). Use
+            before reinstalling the pack or to fully reset state.
+          </>
+        }
+      />
     </div>
   );
 }

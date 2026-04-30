@@ -64,6 +64,14 @@ const injectScriptFromQueryPlugin = () => {
 export default defineConfig({
   plugins: [react(), packageEndpointPlugin(), injectScriptFromQueryPlugin()],
   base: './',
+  resolve: {
+    // The @cribl/app-utils package is consumed via a file: link and has
+    // React as a peer dep. Without dedupe, vite/rolldown can't resolve
+    // `react` imports inside the framework's source — those imports start
+    // their lookup from the framework's directory, which has no React.
+    // Dedupe redirects them to the consumer's node_modules.
+    dedupe: ['react', 'react-dom'],
+  },
   server: {
     cors: true,
   },

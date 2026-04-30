@@ -13,7 +13,7 @@ import { useEffect, type ReactNode } from 'react';
 import { loadAppSettings } from '../api/appSettings';
 import { setCurrentDataset } from '../api/dataset';
 import { setStreamFilterEnabled } from '../api/streamFilter';
-import { setSearchCadence } from '../api/searchCadence';
+import { setSearchCadence } from '@cribl/app-utils/cadence';
 
 interface Props {
   children: ReactNode;
