@@ -198,10 +198,12 @@ function mergeDependencyEdges(
  * scheduled search hasn't run yet. The caller falls back to the
  * live query path for any null field.
  */
-export async function listCachedHomePanels(): Promise<CachedPanels> {
+export async function listCachedHomePanels(
+  rules: import('./errorFilter').ErrorFilterRule[] = DEFAULT_FILTER_RULES,
+): Promise<CachedPanels> {
   const names = getHomePanelJobNames();
   const partitions = await readCachedPanelsRaw(names);
-  return buildCachedPanels(partitions);
+  return buildCachedPanels(partitions, rules);
 }
 
 /** Same pattern for the System Architecture view. Includes the
@@ -239,6 +241,7 @@ function parseAlertRows(rows: Record<string, unknown>[]): CachedAlertRow[] {
  * in the partition map stays null. */
 function buildCachedPanels(
   partitions: Map<string, Record<string, unknown>[]>,
+  rules: import('./errorFilter').ErrorFilterRule[] = DEFAULT_FILTER_RULES,
 ): CachedPanels {
   let lastUpdatedMs: number | null = null;
   for (const rows of partitions.values()) {
@@ -265,7 +268,7 @@ function buildCachedPanels(
 
   // Compute the filter once and reuse for all three error-related
   // fields. groupErrorClasses is cheap (linear over ≤300 rows).
-  const errorFilter = errorRows ? applyFilterRulesToRaw(errorRows, DEFAULT_FILTER_RULES) : null;
+  const errorFilter = errorRows ? applyFilterRulesToRaw(errorRows, rules) : null;
 
   return {
     serviceSummaries: summaryRows ? parseServiceSummaries(summaryRows) : null,

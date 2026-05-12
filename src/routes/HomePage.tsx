@@ -17,6 +17,12 @@ import {
   getDependencies,
 } from '../api/search';
 import { listCachedHomePanels } from '../api/panelCache';
+import {
+  DEFAULT_FILTER_RULES,
+  getActiveFilterRules,
+  type ErrorFilterRule,
+} from '../api/errorFilter';
+import { loadAppSettings } from '../api/appSettings';
 import { serviceColor } from '../utils/spans';
 import { serviceHealth, healthRowBg } from '../utils/health';
 import { buildDetectedIssues, buildDetectedIssuesFromCache } from '../utils/detectedIssues';
@@ -179,6 +185,18 @@ export default function HomePage() {
   const [unfilteredErrorClasses, setUnfilteredErrorClasses] = useState<ErrorClass[]>([]);
   const [errorDroppedBy, setErrorDroppedBy] = useState<Record<string, number>>({});
   const [showUnfilteredErrors, setShowUnfilteredErrors] = useState(false);
+  const [activeRules, setActiveRules] = useState<ErrorFilterRule[]>(DEFAULT_FILTER_RULES);
+
+  // Load Settings-defined rule toggles once on mount.
+  useEffect(() => {
+    void loadAppSettings()
+      .then((s) => {
+        if (s?.disabledFilterRules) {
+          setActiveRules(getActiveFilterRules(s.disabledFilterRules));
+        }
+      })
+      .catch(() => {});
+  }, []);
   const [anomalies, setAnomalies] = useState<OperationAnomaly[]>([]);
   const [loadingSummaries, setLoadingSummaries] = useState(true);
   const [loadingBuckets, setLoadingBuckets] = useState(true);
@@ -233,7 +251,7 @@ export default function HomePage() {
 
     if (range === '-1h' && streamFilterEnabled) {
       try {
-        const cached = await listCachedHomePanels();
+        const cached = await listCachedHomePanels(activeRules);
         if (
           cached.serviceSummaries &&
           cached.serviceBuckets &&
@@ -253,7 +271,7 @@ export default function HomePage() {
             setErrorDroppedBy(cached.errorDroppedBy ?? {});
             setLoadingErrors(false);
           } else {
-            void listErrorClassesWithBreakdown(range, 'now')
+            void listErrorClassesWithBreakdown(range, 'now', 300, 20, activeRules)
               .then((r) => {
                 setErrorClasses(r.classes);
                 setUnfilteredErrorClasses(r.unfilteredClasses);
@@ -299,7 +317,7 @@ export default function HomePage() {
       .catch(() => setSlowClasses([]))
       .finally(() => setLoadingSlow(false));
 
-    const pErrors = listErrorClassesWithBreakdown(range, 'now')
+    const pErrors = listErrorClassesWithBreakdown(range, 'now', 300, 20, activeRules)
       .then((r) => {
         setErrorClasses(r.classes);
         setUnfilteredErrorClasses(r.unfilteredClasses);
@@ -324,7 +342,7 @@ export default function HomePage() {
     hasDataRef.current = true;
     setRefreshing(false);
     setLastRefresh(Date.now());
-  }, [range, streamFilterEnabled]);
+  }, [range, streamFilterEnabled, activeRules]);
 
   useEffect(() => {
     void fetchAll();

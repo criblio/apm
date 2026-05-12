@@ -303,3 +303,21 @@ export const DEFAULT_FILTER_RULES: ErrorFilterRule[] = [
     match: { grpcStatusIn: [3, 5, 6, 7, 11, 16] },
   },
 ];
+
+/**
+ * Apply a "disabled" map (rule id → bool) to the default rules and
+ * return the subset that's still active. Used by the Home panel to
+ * honor user toggles from Settings. NOTE: this only affects the
+ * client-side display path. The metric layer and the scheduled
+ * searches use DEFAULT_FILTER_RULES unconditionally — bringing the
+ * backend in line with a user's toggle requires re-running the
+ * provisioner (and someday: regenerating the compiled KQL with the
+ * disabled rules omitted). Documented in HEURISTICS.md.
+ */
+export function getActiveFilterRules(
+  disabled: Record<string, boolean> | null | undefined,
+  rules: ErrorFilterRule[] = DEFAULT_FILTER_RULES,
+): ErrorFilterRule[] {
+  if (!disabled) return rules;
+  return rules.filter((r) => !disabled[r.id]);
+}

@@ -21,6 +21,19 @@ export interface AppSettings {
   /** Cribl notification target IDs for auto-alert notifications.
    *  Multi-select — alerts fire to all listed targets. Empty = silent. */
   alertNotificationTargets?: string[];
+  /** Services to treat as user-origin regardless of auto-detection.
+   *  Lets the user pull a newly-deployed synthetic-user service into
+   *  filtering immediately, before the trace-originator scheduled
+   *  search has accumulated enough signal. See HEURISTICS.md §1. */
+  forceUserOriginators?: string[];
+  /** Services to treat as service-origin regardless of auto-detection.
+   *  Inverse of forceUserOriginators — flips false-positive user
+   *  classifications back into the service bucket. */
+  forceServiceOriginators?: string[];
+  /** Per-rule disable map. Keys are rule IDs from DEFAULT_FILTER_RULES;
+   *  value `true` means "disable this rule on Home". Missing/false
+   *  means "rule is enabled" (the default). */
+  disabledFilterRules?: Record<string, boolean>;
   [k: string]: unknown;
 }
 

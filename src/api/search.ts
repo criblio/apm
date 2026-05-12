@@ -368,6 +368,56 @@ export async function listErrorClasses(
 }
 
 /**
+ * Trace-originator classifications observed in the current window.
+ * Same shape as the `criblapm_trace_originators` lookup the scheduled
+ * search writes — re-running the underlying KQL ad-hoc here is cheap
+ * (small per-service aggregate) and gives Settings a current view
+ * without depending on the lookup being readable directly.
+ */
+export interface TraceOriginatorRow {
+  rootService: string;
+  type: 'user' | 'service' | 'unknown';
+  total: number;
+  signals: {
+    browser: number;
+    loadtest: number;
+    probe: number;
+    messaging: number;
+    nameUser: number;
+    nameService: number;
+  };
+}
+
+export async function listTraceOriginators(
+  earliest = '-15m',
+  latest = 'now',
+): Promise<TraceOriginatorRow[]> {
+  const rows = await runQuery(Q.traceOriginators(), earliest, latest, 500);
+  return rows.map((r) => {
+    const t = String(r.type ?? 'unknown');
+    const type: TraceOriginatorRow['type'] =
+      t === 'user' || t === 'service' ? t : 'unknown';
+    const num = (v: unknown): number => {
+      const n = typeof v === 'number' ? v : Number(v ?? 0);
+      return Number.isFinite(n) ? n : 0;
+    };
+    return {
+      rootService: String(r.root_svc ?? 'unknown'),
+      type,
+      total: num(r.total),
+      signals: {
+        browser: num(r.n_browser),
+        loadtest: num(r.n_loadtest),
+        probe: num(r.n_probe),
+        messaging: num(r.n_msg),
+        nameUser: num(r.n_name_user),
+        nameService: num(r.n_name_service),
+      },
+    };
+  });
+}
+
+/**
  * Variant that returns BOTH the filtered class set AND the unfiltered
  * one, plus the per-rule drop counts. Used by the Home page to power
  * the "N hidden — show" toggle. Keeps the simpler `listErrorClasses`
@@ -384,9 +434,10 @@ export async function listErrorClassesWithBreakdown(
   latest = 'now',
   rawLimit = 300,
   topClasses = 20,
+  rules: import('./errorFilter').ErrorFilterRule[] = DEFAULT_FILTER_RULES,
 ): Promise<ErrorClassesBreakdown> {
   const rows = await runQuery(Q.rawRecentErrorSpans(rawLimit), earliest, latest, rawLimit);
-  const { kept, droppedBy } = applyFilterRulesToRaw(rows, DEFAULT_FILTER_RULES);
+  const { kept, droppedBy } = applyFilterRulesToRaw(rows, rules);
   return {
     classes: groupErrorClasses(kept, topClasses),
     unfilteredClasses: groupErrorClasses(rows, topClasses),

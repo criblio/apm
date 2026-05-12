@@ -11,6 +11,8 @@ import {
   SEED_LOOKUPS,
   getProvisioningPlan,
 } from '../api/provisionedSearches';
+import { DEFAULT_FILTER_RULES } from '../api/errorFilter';
+import { listTraceOriginators, type TraceOriginatorRow } from '../api/search';
 import { useDataset } from '../hooks/useDataset';
 import { useStreamFilterEnabled } from '../hooks/useStreamFilter';
 import { useSearchCadence } from '../hooks/useSearchCadence';
@@ -47,6 +49,10 @@ export default function SettingsPage() {
   const [notifTargets, setNotifTargets] = useState<NotificationTarget[]>([]);
   const [selectedTargets, setSelectedTargets] = useState<string[]>([]);
   const [notifSaving, setNotifSaving] = useState(false);
+  const [disabledRules, setDisabledRules] = useState<Record<string, boolean>>({});
+  const [rulesSaving, setRulesSaving] = useState(false);
+  const [originators, setOriginators] = useState<TraceOriginatorRow[]>([]);
+  const [originatorsLoading, setOriginatorsLoading] = useState(true);
 
   // Load notification targets + saved selection on mount
   useEffect(() => {
@@ -55,8 +61,32 @@ export default function SettingsPage() {
       if (s?.alertNotificationTargets) {
         setSelectedTargets(s.alertNotificationTargets);
       }
+      if (s?.disabledFilterRules) {
+        setDisabledRules(s.disabledFilterRules);
+      }
     }).catch(() => {});
+    listTraceOriginators()
+      .then(setOriginators)
+      .catch(() => setOriginators([]))
+      .finally(() => setOriginatorsLoading(false));
   }, []);
+
+  const handleRuleToggle = useCallback(async (ruleId: string, disabled: boolean) => {
+    const next = { ...disabledRules, [ruleId]: disabled };
+    // Drop falsy entries so the stored map stays minimal.
+    if (!disabled) delete next[ruleId];
+    setDisabledRules(next);
+    setRulesSaving(true);
+    try {
+      await saveAppSettings({ disabledFilterRules: next });
+      setFlash(`Filter rule ${disabled ? 'disabled' : 'enabled'}. Reload Home to see the change; alerts/metrics need a redeploy.`);
+      setTimeout(() => setFlash(null), 6000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRulesSaving(false);
+    }
+  }, [disabledRules]);
 
   const handleTargetToggle = useCallback(async (targetId: string) => {
     const next = selectedTargets.includes(targetId)
@@ -266,6 +296,99 @@ export default function SettingsPage() {
             </div>
           </div>
         </label>
+      </div>
+
+      <div className={s.card}>
+        <h2 className={s.sectionTitle}>Error filtering</h2>
+        <p className={s.sectionHelp}>
+          Rules that decide which error spans the Home "Error classes" panel
+          surfaces. Disabling a rule shows the rows it was dropping;
+          re-enabling re-applies the filter. See{' '}
+          <code>HEURISTICS.md</code> for the design and the
+          consistency principle.
+        </p>
+        <div className={s.fieldHelp} style={{ marginBottom: 'var(--cds-space-md)' }}>
+          Toggles affect the Home panel on the next reload. The metric layer
+          feeding alerts uses the default rules until you redeploy
+          (<code>npm run deploy</code>) — the alert pipeline rebuilds its
+          KQL at provision time. Mismatch is logged here so you can audit.
+        </div>
+
+        {DEFAULT_FILTER_RULES.map((rule) => {
+          const isDisabled = !!disabledRules[rule.id];
+          return (
+            <label key={rule.id} className={s.toggleRow}>
+              <input
+                type="checkbox"
+                checked={!isDisabled}
+                disabled={rulesSaving}
+                onChange={(e) => void handleRuleToggle(rule.id, !e.target.checked)}
+              />
+              <div>
+                <div className={s.toggleTitle}>
+                  <code>{rule.id}</code>{' '}
+                  <span className={s.subtitle} style={{ fontWeight: 'normal' }}>
+                    scope: {rule.scope}
+                  </span>
+                </div>
+                <div className={s.toggleSub}>{rule.description}</div>
+              </div>
+            </label>
+          );
+        })}
+      </div>
+
+      <div className={s.card}>
+        <h2 className={s.sectionTitle}>Trace originators</h2>
+        <p className={s.sectionHelp}>
+          Auto-detected from each captured trace's root span by the
+          <code> criblapm__trace_originators </code> scheduled search.
+          Classifications drive the user-trace filter rules above. See{' '}
+          <code>HEURISTICS.md</code> for the signal priority.
+        </p>
+        {originatorsLoading ? (
+          <div className={s.fieldHelp}>Loading classifications…</div>
+        ) : originators.length === 0 ? (
+          <div className={s.fieldHelp}>
+            No root spans observed in the last 15 minutes. The classifier
+            needs ≥ 10 root spans per service to commit a classification.
+          </div>
+        ) : (
+          <table className={s.table}>
+            <thead>
+              <tr>
+                <th>Root service</th>
+                <th>Type</th>
+                <th style={{ textAlign: 'right' }}>Roots</th>
+                <th>Dominant signal</th>
+              </tr>
+            </thead>
+            <tbody>
+              {originators.map((o) => {
+                const sig =
+                  o.signals.browser > 0 ? `${o.signals.browser} browser UA`
+                  : o.signals.loadtest > 0 ? `${o.signals.loadtest} load-test UA`
+                  : o.signals.probe > 0 ? `${o.signals.probe} k8s-probe UA`
+                  : o.signals.messaging > 0 ? `${o.signals.messaging} messaging.system`
+                  : o.signals.nameUser > 0 ? `${o.signals.nameUser} user_* span names`
+                  : o.signals.nameService > 0 ? `${o.signals.nameService} cron/worker names`
+                  : '—';
+                return (
+                  <tr key={o.rootService}>
+                    <td><code>{o.rootService}</code></td>
+                    <td>
+                      <span className={`${s.originatorChip} ${s[`originatorChip_${o.type}`] ?? ''}`}>
+                        {o.type}
+                      </span>
+                    </td>
+                    <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{o.total}</td>
+                    <td>{sig}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
       </div>
 
       <div className={s.card}>
