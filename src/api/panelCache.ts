@@ -31,6 +31,7 @@ import {
   getSvcDetailPanelJobNames,
 } from './provisionedSearches';
 import { groupSlowTraceClasses, groupErrorClasses } from './search';
+import { applyFilterRulesToRaw, DEFAULT_FILTER_RULES } from './errorFilter';
 import { toDependencyEdges, toMessagingEdges } from './transform';
 import type {
   ServiceSummary,
@@ -261,7 +262,9 @@ function buildCachedPanels(
     serviceSummaries: summaryRows ? parseServiceSummaries(summaryRows) : null,
     serviceBuckets: timeSeriesRows ? parseServiceBuckets(timeSeriesRows) : null,
     slowClasses: slowRows ? groupSlowTraceClasses(slowRows) : null,
-    errorClasses: errorRows ? groupErrorClasses(errorRows) : null,
+    errorClasses: errorRows
+      ? groupErrorClasses(applyFilterRulesToRaw(errorRows, DEFAULT_FILTER_RULES).kept)
+      : null,
     dependencies: mergeDependencyEdges(depRows, msgDepRows),
     alertRows: alertsRows ? parseAlertRows(alertsRows) : null,
     lastUpdatedMs,

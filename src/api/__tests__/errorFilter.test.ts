@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   applyFilterRules,
+  applyFilterRulesToRaw,
   normalizeErrorRow,
   DEFAULT_FILTER_RULES,
   type ErrorRow,
@@ -181,5 +182,32 @@ describe('normalizeErrorRow', () => {
     // missing status was OK (gRPC code 0) and drop the wrong rows.
     const row = normalizeErrorRow({ grpc_status: '' });
     expect(row.grpcStatus).toBeUndefined();
+  });
+});
+
+describe('applyFilterRulesToRaw', () => {
+  it('filters raw rows in place and preserves shape', () => {
+    const raw = [
+      { svc: 'pc', name: 'op', msg: 'm', trace_id: 't1', grpc_status: 5, trace_origin: 'user' },
+      { svc: 'pc', name: 'op', msg: 'm', trace_id: 't2', grpc_status: 14, trace_origin: 'user' },
+      { svc: 'pc', name: 'op', msg: 'm', trace_id: 't3', grpc_status: 5, trace_origin: 'service' },
+    ];
+    const { kept, droppedBy } = applyFilterRulesToRaw(raw, DEFAULT_FILTER_RULES);
+    // Only the 'user'-origin gRPC 5 row gets dropped. UNAVAILABLE (14)
+    // stays; service-trace NOT_FOUND stays (different actor caused it).
+    expect(kept).toHaveLength(2);
+    expect(kept.map((r) => r.trace_id).sort()).toEqual(['t2', 't3']);
+    expect(droppedBy['user-trace-grpc-client-fault']).toBe(1);
+    // Kept rows are returned with their original raw shape (not normalized).
+    expect(kept[0]).toHaveProperty('svc');
+  });
+
+  it('returns input unchanged when no rules match', () => {
+    const raw = [
+      { svc: 'a', name: 'b', msg: 'c', trace_id: 't', trace_origin: 'service', grpc_status: 5 },
+    ];
+    const { kept, droppedBy } = applyFilterRulesToRaw(raw, DEFAULT_FILTER_RULES);
+    expect(kept).toHaveLength(1);
+    expect(droppedBy['user-trace-grpc-client-fault']).toBe(0);
   });
 });

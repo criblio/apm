@@ -4,6 +4,7 @@
  */
 import { runQuery } from './cribl';
 import { listCachedMetricCatalog } from './panelCache';
+import { applyFilterRulesToRaw, DEFAULT_FILTER_RULES } from './errorFilter';
 import * as Q from './queries';
 import { toJaegerTraces, summarizeTrace, toDependencyEdges, toMessagingEdges } from './transform';
 import type {
@@ -362,7 +363,8 @@ export async function listErrorClasses(
   topClasses = 20,
 ): Promise<ErrorClass[]> {
   const rows = await runQuery(Q.rawRecentErrorSpans(rawLimit), earliest, latest, rawLimit);
-  return groupErrorClasses(rows, topClasses);
+  const { kept } = applyFilterRulesToRaw(rows, DEFAULT_FILTER_RULES);
+  return groupErrorClasses(kept, topClasses);
 }
 
 /**

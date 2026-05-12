@@ -133,6 +133,36 @@ export function applyFilterRules(rows: ErrorRow[], rules: ErrorFilterRule[]): Fi
   return { kept, droppedBy };
 }
 
+/** Apply filter rules to raw rows (the shape returned by
+ * Q.rawRecentErrorSpans / $vt_results), returning the raw subset
+ * that survives. Convenience wrapper around normalizeErrorRow +
+ * applyFilterRules; lets callers stay on the raw shape and pass
+ * the survivors straight into groupErrorClasses without
+ * round-tripping the field names. */
+export function applyFilterRulesToRaw(
+  rows: Record<string, unknown>[],
+  rules: ErrorFilterRule[],
+): { kept: Record<string, unknown>[]; droppedBy: Record<string, number> } {
+  const kept: Record<string, unknown>[] = [];
+  const droppedBy: Record<string, number> = Object.fromEntries(rules.map((r) => [r.id, 0]));
+  for (const raw of rows) {
+    const norm = normalizeErrorRow(raw);
+    let droppedByRule: string | null = null;
+    for (const rule of rules) {
+      if (ruleApplies(rule, norm)) {
+        droppedByRule = rule.id;
+        break;
+      }
+    }
+    if (droppedByRule) {
+      droppedBy[droppedByRule] = (droppedBy[droppedByRule] ?? 0) + 1;
+    } else {
+      kept.push(raw);
+    }
+  }
+  return { kept, droppedBy };
+}
+
 /** Convert a raw row from Q.rawRecentErrorSpans into our normalized
  * ErrorRow shape. Tolerant of missing columns (older cached panels
  * may not have them) so the filter degrades to "no semconv data,
