@@ -577,17 +577,23 @@ export function rawSlowestTraces(limit: number = 500): string {
  * the Cribl KQL join-truncation behavior we hit during Phase 0.
  */
 export function rawRecentErrorSpans(limit: number = 300): string {
+  // Two leftouter joins, both on small right sides to dodge the
+  // Cribl KQL join-truncation we hit during Phase 0:
+  //   1. trace-origin lookup — one row per captured trace.
+  //   2. has_error_child — pre-aggregated to (trace_id, parent_id) so
+  //      the join has at most one match per row (no count inflation).
   return `${spansBase()}
     | extend svc=tostring(resource.attributes['service.name']),
              span_kind=tostring(kind),
              is_error=(tostring(status.code)=="2"),
              msg=tostring(status.message),
              http_status=toint(attributes['http.response.status_code']),
-             grpc_status=toint(attributes['rpc.grpc.status_code'])
+             grpc_status=toint(attributes['rpc.grpc.status_code']),
+             sid=tostring(span_id)
     | where is_error
     | sort by _time desc
     | limit ${limit}
-    | project _time, svc, name, span_kind, http_status, grpc_status, msg, trace_id
+    | project _time, svc, name, span_kind, http_status, grpc_status, msg, trace_id, sid
     | join kind=leftouter (
         ${spansBase()}
         | where tostring(parent_span_id) == ""
@@ -596,8 +602,16 @@ export function rawRecentErrorSpans(limit: number = 300): string {
         | lookup criblapm_trace_originators on root_svc
       ) on trace_id
     | extend trace_origin=coalesce(type, "unknown")
+    | join kind=leftouter (
+        ${spansBase()}
+        | extend is_error_c=(tostring(status.code)=="2"),
+                 child_parent=tostring(parent_span_id)
+        | where is_error_c and isnotempty(child_parent)
+        | summarize n_error_children=count() by trace_id, child_parent
+      ) on trace_id, $left.sid == $right.child_parent
+    | extend has_error_child=isnotnull(n_error_children)
     | project _time, svc, name, span_kind, http_status, grpc_status,
-              msg, trace_id, root_svc, trace_origin`;
+              msg, trace_id, root_svc, trace_origin, has_error_child`;
 }
 
 /**

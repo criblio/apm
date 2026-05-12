@@ -30,6 +30,10 @@ export interface ErrorRow {
   traceId: string;
   rootService?: string;
   traceOrigin: TraceOrigin;
+  /** True if some other error span in the same trace has this span
+   * as its parent — i.e., this span is propagation, not a leaf
+   * error. Computed by the rawRecentErrorSpans self-join. */
+  hasErrorChild: boolean;
 }
 
 /**
@@ -53,6 +57,11 @@ export interface ErrorRowMatcher {
   message?: string | RegExp;
   /** Match the span kind (e.g. "2" for SERVER, "3" for CLIENT). */
   spanKind?: string;
+  /** Match `has_error_child` — a span that has any error span child
+   * in the same trace is propagation, not a leaf. Setting `true`
+   * drops propagation rows; setting `false` would drop leaves
+   * (rare; useful only as a debug-mode inversion). */
+  hasErrorChild?: boolean;
 }
 
 export interface ErrorFilterRule {
@@ -97,6 +106,7 @@ function rowMatches(row: ErrorRow, m: ErrorRowMatcher): boolean {
   if (m.operation !== undefined && !matchString(m.operation, row.operation)) return false;
   if (m.message !== undefined && !matchString(m.message, row.message)) return false;
   if (m.spanKind !== undefined && row.spanKind !== m.spanKind) return false;
+  if (m.hasErrorChild !== undefined && row.hasErrorChild !== m.hasErrorChild) return false;
   return true;
 }
 
@@ -187,6 +197,7 @@ export function normalizeErrorRow(r: Record<string, unknown>): ErrorRow {
     traceId: String(r.trace_id ?? ''),
     rootService: r.root_svc ? String(r.root_svc) : undefined,
     traceOrigin,
+    hasErrorChild: r.has_error_child === true || r.has_error_child === 'true',
   };
 }
 
@@ -202,6 +213,13 @@ export function normalizeErrorRow(r: Record<string, unknown>): ErrorRow {
  * service-initiated traces and unknown-origin traces stay visible.
  */
 export const DEFAULT_FILTER_RULES: ErrorFilterRule[] = [
+  {
+    id: 'propagation-leaf-only',
+    description:
+      'Span has an error-status child in the same trace — keep only leaf errors so a single root cause does not appear as a row at every layer of the call chain.',
+    scope: 'any',
+    match: { hasErrorChild: true },
+  },
   {
     id: 'user-trace-http-4xx',
     description:

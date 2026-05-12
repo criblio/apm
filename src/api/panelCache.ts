@@ -78,6 +78,11 @@ export interface CachedPanels {
   serviceBuckets: ServiceBucket[] | null;
   slowClasses: SlowTraceClass[] | null;
   errorClasses: ErrorClass[] | null;
+  /** Same grouping as errorClasses but without the default filter
+   * rules applied — used by the "show unfiltered" toggle on Home. */
+  unfilteredErrorClasses: ErrorClass[] | null;
+  /** Per-rule drop counts feeding the panel's "N hidden" affordance. */
+  errorDroppedBy: Record<string, number> | null;
   dependencies: DependencyEdge[] | null;
   alertRows: CachedAlertRow[] | null;
   /** Latest bucket timestamp observed across the cached panels,
@@ -258,13 +263,17 @@ function buildCachedPanels(
   const msgDepRows = get('criblapm__sysarch_messaging_deps');
   const alertsRows = get('criblapm__home_alerts');
 
+  // Compute the filter once and reuse for all three error-related
+  // fields. groupErrorClasses is cheap (linear over ≤300 rows).
+  const errorFilter = errorRows ? applyFilterRulesToRaw(errorRows, DEFAULT_FILTER_RULES) : null;
+
   return {
     serviceSummaries: summaryRows ? parseServiceSummaries(summaryRows) : null,
     serviceBuckets: timeSeriesRows ? parseServiceBuckets(timeSeriesRows) : null,
     slowClasses: slowRows ? groupSlowTraceClasses(slowRows) : null,
-    errorClasses: errorRows
-      ? groupErrorClasses(applyFilterRulesToRaw(errorRows, DEFAULT_FILTER_RULES).kept)
-      : null,
+    errorClasses: errorFilter ? groupErrorClasses(errorFilter.kept) : null,
+    unfilteredErrorClasses: errorRows ? groupErrorClasses(errorRows) : null,
+    errorDroppedBy: errorFilter ? errorFilter.droppedBy : null,
     dependencies: mergeDependencyEdges(depRows, msgDepRows),
     alertRows: alertsRows ? parseAlertRows(alertsRows) : null,
     lastUpdatedMs,

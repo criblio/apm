@@ -368,6 +368,33 @@ export async function listErrorClasses(
 }
 
 /**
+ * Variant that returns BOTH the filtered class set AND the unfiltered
+ * one, plus the per-rule drop counts. Used by the Home page to power
+ * the "N hidden — show" toggle. Keeps the simpler `listErrorClasses`
+ * verb available for consumers that just want the filtered output.
+ */
+export interface ErrorClassesBreakdown {
+  classes: ErrorClass[];
+  unfilteredClasses: ErrorClass[];
+  droppedBy: Record<string, number>;
+}
+
+export async function listErrorClassesWithBreakdown(
+  earliest = '-1h',
+  latest = 'now',
+  rawLimit = 300,
+  topClasses = 20,
+): Promise<ErrorClassesBreakdown> {
+  const rows = await runQuery(Q.rawRecentErrorSpans(rawLimit), earliest, latest, rawLimit);
+  const { kept, droppedBy } = applyFilterRulesToRaw(rows, DEFAULT_FILTER_RULES);
+  return {
+    classes: groupErrorClasses(kept, topClasses),
+    unfilteredClasses: groupErrorClasses(rows, topClasses),
+    droppedBy,
+  };
+}
+
+/**
  * Pure grouping logic shared by the live `listErrorClasses` verb
  * and the panel-cache partitioner. Expects rows with svc, name,
  * msg, trace_id, _time as produced by `Q.rawRecentErrorSpans`.

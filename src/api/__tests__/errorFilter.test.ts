@@ -18,6 +18,7 @@ function makeRow(overrides: Partial<ErrorRow> = {}): ErrorRow {
     message: '',
     traceId: 't1',
     traceOrigin: 'unknown',
+    hasErrorChild: false,
     ...overrides,
   };
 }
@@ -28,9 +29,40 @@ describe('applyFilterRules', () => {
     const result = applyFilterRules(rows, DEFAULT_FILTER_RULES);
     expect(result.kept).toHaveLength(1);
     expect(result.droppedBy).toEqual({
+      'propagation-leaf-only': 0,
       'user-trace-http-4xx': 0,
       'user-trace-grpc-client-fault': 0,
     });
+  });
+
+  it('drops propagation across all scopes (hasErrorChild=true)', () => {
+    const rows = [
+      makeRow({ traceOrigin: 'user', hasErrorChild: true }),
+      makeRow({ traceOrigin: 'service', hasErrorChild: true }),
+      makeRow({ traceOrigin: 'unknown', hasErrorChild: true }),
+    ];
+    const result = applyFilterRules(rows, DEFAULT_FILTER_RULES);
+    expect(result.kept).toHaveLength(0);
+    expect(result.droppedBy['propagation-leaf-only']).toBe(3);
+  });
+
+  it('keeps leaf errors (hasErrorChild=false) regardless of scope', () => {
+    const rows = [
+      makeRow({ traceOrigin: 'service', hasErrorChild: false, grpcStatus: 13 }),
+      makeRow({ traceOrigin: 'unknown', hasErrorChild: false }),
+    ];
+    const result = applyFilterRules(rows, DEFAULT_FILTER_RULES);
+    expect(result.kept).toHaveLength(2);
+  });
+
+  it('propagation rule wins over semconv rule (first-match)', () => {
+    // A user-trace span that is BOTH propagation AND gRPC NOT_FOUND.
+    // The propagation rule comes first, so it gets credited.
+    const rows = [makeRow({ traceOrigin: 'user', hasErrorChild: true, grpcStatus: 5 })];
+    const result = applyFilterRules(rows, DEFAULT_FILTER_RULES);
+    expect(result.kept).toHaveLength(0);
+    expect(result.droppedBy['propagation-leaf-only']).toBe(1);
+    expect(result.droppedBy['user-trace-grpc-client-fault']).toBe(0);
   });
 
   it('drops user-trace HTTP 4xx', () => {
@@ -150,6 +182,7 @@ describe('normalizeErrorRow', () => {
       trace_id: 'abc123',
       root_svc: 'load-generator',
       trace_origin: 'user',
+      has_error_child: false,
     };
     const row = normalizeErrorRow(raw);
     expect(row).toEqual({
@@ -163,7 +196,19 @@ describe('normalizeErrorRow', () => {
       traceId: 'abc123',
       rootService: 'load-generator',
       traceOrigin: 'user',
+      hasErrorChild: false,
     });
+  });
+
+  it('coerces has_error_child string "true" to boolean true', () => {
+    // The Cribl search results sometimes return booleans as strings.
+    const row = normalizeErrorRow({ has_error_child: 'true' });
+    expect(row.hasErrorChild).toBe(true);
+  });
+
+  it('treats missing has_error_child as false', () => {
+    const row = normalizeErrorRow({});
+    expect(row.hasErrorChild).toBe(false);
   });
 
   it('falls back to unknown origin when column missing', () => {
