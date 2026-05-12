@@ -9,6 +9,7 @@
  */
 import { getCurrentDataset } from './dataset';
 import { streamFilterKqlClause, streamFilterSpanKqlClause } from './streamFilter';
+import { DEFAULT_FILTER_RULES, compileFilterRulesToKql } from './errorFilter';
 
 function quoteDataset(): string {
   // The dataset name must be a simple identifier to embed safely as
@@ -23,6 +24,60 @@ function datasetClause(): string {
 function spansBase(): string {
   return `${datasetClause()} | where isnotnull(end_time_unix_nano)`;
 }
+
+/**
+ * Shared KQL fragment that joins each span to its trace's root, looks
+ * up the originator classification, and detects propagation. Output
+ * columns added by this fragment, on top of whatever the caller
+ * already projected:
+ *   trace_origin     ('user' | 'service' | 'unknown')
+ *   root_svc         (string)
+ *   has_error_child  (bool)
+ *
+ * The caller must have already projected `trace_id` and `sid`
+ * (= span_id as string) before piping into this fragment.
+ *
+ * Right side of both joins is small enough to dodge the Cribl KQL
+ * leftouter truncation we hit in Phase 0 — trace_origins is one row
+ * per captured trace, error_parents is pre-aggregated to one row
+ * per (trace_id, parent_span_id) pair.
+ *
+ * Used by both `rawRecentErrorSpans` (display) and `serviceSummary`
+ * / `prevWindowSummary` (metrics) so a single change to the
+ * heuristic flows to alerts and panel together. See
+ * docs/research/error-filter-design.md + HEURISTICS.md.
+ */
+function errorClassificationJoins(): string {
+  return `
+    | join kind=leftouter (
+        ${spansBase()}
+        | where tostring(parent_span_id) == ""
+        | extend root_svc=tostring(resource.attributes['service.name'])
+        | project trace_id, root_svc
+        | lookup criblapm_trace_originators on root_svc
+      ) on trace_id
+    | extend trace_origin=coalesce(type, "unknown")
+    | join kind=leftouter (
+        ${spansBase()}
+        | extend is_error_c=(tostring(status.code)=="2"),
+                 child_parent=tostring(parent_span_id)
+        | where is_error_c and isnotempty(child_parent)
+        | summarize n_error_children=count() by trace_id, child_parent
+      ) on trace_id, $left.sid == $right.child_parent
+    | extend has_error_child=isnotnull(n_error_children)`;
+}
+
+/**
+ * KQL boolean expression that returns `true` for spans the default
+ * filter rules would drop. Compiled once at module load — adding a
+ * default rule in errorFilter.ts automatically flows here. See
+ * HEURISTICS.md for the cross-layer consistency principle.
+ *
+ * References columns produced by `errorClassificationJoins()` plus
+ * the `http_status` / `grpc_status` / `span_kind` columns the
+ * caller is expected to project.
+ */
+const DEFAULT_FILTER_KQL = compileFilterRulesToKql(DEFAULT_FILTER_RULES);
 
 /**
  * Metrics base: Cribl tags OTel metric records with
@@ -173,14 +228,26 @@ export function serviceSummary(service?: string): string {
   const svcFilter = service
     ? `| where svc=="${service.replace(/"/g, '\\"')}"`
     : '';
+  // `errors` counts only spans that the default filter rules would
+  // KEEP — propagation and user-trace caller-faults are excluded so
+  // the error_rate this metric feeds (alert evaluator → auto:error_rate
+  // alerts) agrees with what the Home panel shows. See HEURISTICS.md
+  // for the cross-layer consistency principle.
   return `${spansBase()}
     | extend svc=tostring(resource.attributes['service.name']),
             dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
-            is_error=(tostring(status.code)=="2")
+            is_error=(tostring(status.code)=="2"),
+            span_kind=tostring(kind),
+            http_status=toint(attributes['http.response.status_code']),
+            grpc_status=toint(attributes['rpc.grpc.status_code']),
+            sid=tostring(span_id)
     ${svcFilter}
     ${streamFilterSpanKqlClause()}
+    ${errorClassificationJoins()}
+    | extend counts_as_error = is_error and not(${DEFAULT_FILTER_KQL})
     | summarize requests=count(),
-                errors=countif(is_error),
+                errors=countif(counts_as_error),
+                raw_errors=countif(is_error),
                 p50_us=percentile(dur_us, 50),
                 p95_us=percentile(dur_us, 95),
                 p99_us=percentile(dur_us, 99),
@@ -197,13 +264,24 @@ export function serviceSummary(service?: string): string {
  * so the alert evaluator can join against it without a pivot.
  */
 export function prevWindowSummary(): string {
+  // Mirrors serviceSummary's filter logic so the previous-window
+  // error_rate the alert evaluator joins to is on the same scale
+  // as the current window. Without this, an alert would trigger
+  // on the *change* from raw error rate to filtered error rate
+  // the first time the new metric definition rolls in.
   return `${spansBase()}
     | extend svc=tostring(resource.attributes['service.name']),
             dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
-            is_error=(tostring(status.code)=="2")
+            is_error=(tostring(status.code)=="2"),
+            span_kind=tostring(kind),
+            http_status=toint(attributes['http.response.status_code']),
+            grpc_status=toint(attributes['rpc.grpc.status_code']),
+            sid=tostring(span_id)
     ${streamFilterSpanKqlClause()}
+    ${errorClassificationJoins()}
+    | extend counts_as_error = is_error and not(${DEFAULT_FILTER_KQL})
     | summarize prev_req=count(),
-                prev_err=countif(is_error),
+                prev_err=countif(counts_as_error),
                 prev_p95_us=percentile(dur_us, 95)
       by svc
     | extend prev_err_rate=iff(prev_req > 0, toreal(prev_err)/toreal(prev_req), 0.0)
@@ -577,11 +655,6 @@ export function rawSlowestTraces(limit: number = 500): string {
  * the Cribl KQL join-truncation behavior we hit during Phase 0.
  */
 export function rawRecentErrorSpans(limit: number = 300): string {
-  // Two leftouter joins, both on small right sides to dodge the
-  // Cribl KQL join-truncation we hit during Phase 0:
-  //   1. trace-origin lookup — one row per captured trace.
-  //   2. has_error_child — pre-aggregated to (trace_id, parent_id) so
-  //      the join has at most one match per row (no count inflation).
   return `${spansBase()}
     | extend svc=tostring(resource.attributes['service.name']),
              span_kind=tostring(kind),
@@ -594,22 +667,7 @@ export function rawRecentErrorSpans(limit: number = 300): string {
     | sort by _time desc
     | limit ${limit}
     | project _time, svc, name, span_kind, http_status, grpc_status, msg, trace_id, sid
-    | join kind=leftouter (
-        ${spansBase()}
-        | where tostring(parent_span_id) == ""
-        | extend root_svc=tostring(resource.attributes['service.name'])
-        | project trace_id, root_svc
-        | lookup criblapm_trace_originators on root_svc
-      ) on trace_id
-    | extend trace_origin=coalesce(type, "unknown")
-    | join kind=leftouter (
-        ${spansBase()}
-        | extend is_error_c=(tostring(status.code)=="2"),
-                 child_parent=tostring(parent_span_id)
-        | where is_error_c and isnotempty(child_parent)
-        | summarize n_error_children=count() by trace_id, child_parent
-      ) on trace_id, $left.sid == $right.child_parent
-    | extend has_error_child=isnotnull(n_error_children)
+    ${errorClassificationJoins()}
     | project _time, svc, name, span_kind, http_status, grpc_status,
               msg, trace_id, root_svc, trace_origin, has_error_child`;
 }

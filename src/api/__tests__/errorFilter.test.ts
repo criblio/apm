@@ -3,6 +3,8 @@ import {
   applyFilterRules,
   applyFilterRulesToRaw,
   normalizeErrorRow,
+  compileRuleToKqlWhere,
+  compileFilterRulesToKql,
   DEFAULT_FILTER_RULES,
   type ErrorRow,
   type ErrorFilterRule,
@@ -227,6 +229,68 @@ describe('normalizeErrorRow', () => {
     // missing status was OK (gRPC code 0) and drop the wrong rows.
     const row = normalizeErrorRow({ grpc_status: '' });
     expect(row.grpcStatus).toBeUndefined();
+  });
+});
+
+describe('compileRuleToKqlWhere', () => {
+  it('compiles the propagation-leaf-only rule', () => {
+    const rule: ErrorFilterRule = {
+      id: 'p',
+      description: '',
+      scope: 'any',
+      match: { hasErrorChild: true },
+    };
+    expect(compileRuleToKqlWhere(rule)).toBe('(has_error_child == true)');
+  });
+
+  it('compiles a user-scoped HTTP-range rule', () => {
+    const rule: ErrorFilterRule = {
+      id: 'h',
+      description: '',
+      scope: 'user',
+      match: { httpStatusRange: { min: 400, max: 499 } },
+    };
+    expect(compileRuleToKqlWhere(rule)).toBe(
+      '(trace_origin == "user" and (isnotnull(http_status) and http_status >= 400 and http_status <= 499))',
+    );
+  });
+
+  it('compiles a user-scoped grpc-status-in rule', () => {
+    const rule: ErrorFilterRule = {
+      id: 'g',
+      description: '',
+      scope: 'user',
+      match: { grpcStatusIn: [3, 5, 6, 7, 11, 16] },
+    };
+    expect(compileRuleToKqlWhere(rule)).toBe(
+      '(trace_origin == "user" and grpc_status in (3,5,6,7,11,16))',
+    );
+  });
+
+  it('throws on regex matchers (kept client-side only)', () => {
+    const rule: ErrorFilterRule = {
+      id: 'r',
+      description: '',
+      scope: 'any',
+      match: { message: /Product Not Found/ },
+    };
+    expect(() => compileRuleToKqlWhere(rule)).toThrow(/can't translate to KQL/);
+  });
+});
+
+describe('compileFilterRulesToKql', () => {
+  it('ORs multiple rules together', () => {
+    const kql = compileFilterRulesToKql(DEFAULT_FILTER_RULES);
+    // All three default rules must appear in the compiled output.
+    expect(kql).toContain('has_error_child == true');
+    expect(kql).toContain('http_status >= 400');
+    expect(kql).toContain('grpc_status in (3,5,6,7,11,16)');
+    // Glued by OR.
+    expect(kql.split(' or ').length).toBe(DEFAULT_FILTER_RULES.length);
+  });
+
+  it('returns false for empty rule lists (so where not(...) is a noop)', () => {
+    expect(compileFilterRulesToKql([])).toBe('false');
   });
 });
 

@@ -202,6 +202,74 @@ export function normalizeErrorRow(r: Record<string, unknown>): ErrorRow {
 }
 
 // ─────────────────────────────────────────────────────────────────
+// KQL compilation — keep backend metrics consistent with UI filter
+// ─────────────────────────────────────────────────────────────────
+
+/**
+ * Translate a single ErrorFilterRule into a KQL boolean expression
+ * that returns `true` for rows the rule would drop. The caller wraps
+ * it with `where not (...)` (to exclude) or `iff(..., 1, 0)` (to
+ * count differently). Output references the same column names
+ * `rawRecentErrorSpans` projects:
+ *   `trace_origin`, `has_error_child`, `http_status`, `grpc_status`,
+ *   `span_kind`, `svc`, `name`, `msg`, `root_svc`.
+ *
+ * Regex / string matchers throw — they can't translate cleanly to KQL
+ * without escaping risk. Phase 1 only the numeric / boolean / scope
+ * matchers go to the metric layer; user-authored regex rules stay
+ * client-side. The architectural principle in HEURISTICS.md still
+ * applies — flag a warning at compile time if a backend-relevant
+ * rule contains a regex matcher, so the next reviewer knows it isn't
+ * mirrored to alerts.
+ */
+export function compileRuleToKqlWhere(rule: ErrorFilterRule): string {
+  const conditions: string[] = [];
+  if (rule.scope !== 'any') {
+    conditions.push(`trace_origin == "${rule.scope}"`);
+  }
+  const m = rule.match;
+  if (m.httpStatusRange) {
+    const { min, max } = m.httpStatusRange;
+    conditions.push(`(isnotnull(http_status) and http_status >= ${min} and http_status <= ${max})`);
+  }
+  if (m.grpcStatusIn && m.grpcStatusIn.length > 0) {
+    conditions.push(`grpc_status in (${m.grpcStatusIn.join(',')})`);
+  }
+  if (m.hasErrorChild !== undefined) {
+    conditions.push(`has_error_child == ${m.hasErrorChild ? 'true' : 'false'}`);
+  }
+  if (m.spanKind !== undefined) {
+    conditions.push(`span_kind == "${m.spanKind}"`);
+  }
+  if (
+    m.service !== undefined ||
+    m.operation !== undefined ||
+    m.message !== undefined ||
+    m.rootService !== undefined
+  ) {
+    throw new Error(
+      `Rule ${rule.id}: string/regex matchers (service/operation/message/rootService) can't translate to KQL. ` +
+        `Apply this rule client-side only or restate it using attribute matchers.`,
+    );
+  }
+  if (conditions.length === 0) {
+    // A rule with empty match (no conditions) matches *everything*; if scope='any', it's a kill-switch.
+    return rule.scope === 'any' ? 'true' : `trace_origin == "${rule.scope}"`;
+  }
+  return `(${conditions.join(' and ')})`;
+}
+
+/**
+ * Compile a rules list into a single KQL expression: `true` when ANY
+ * rule would drop the row. Returns `false` for an empty list so the
+ * caller can `where not (compileFilterRulesToKql(rules))` safely.
+ */
+export function compileFilterRulesToKql(rules: ErrorFilterRule[]): string {
+  if (rules.length === 0) return 'false';
+  return rules.map(compileRuleToKqlWhere).join(' or ');
+}
+
+// ─────────────────────────────────────────────────────────────────
 // Default rules
 // ─────────────────────────────────────────────────────────────────
 
