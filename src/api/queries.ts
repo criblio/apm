@@ -558,19 +558,46 @@ export function rawSlowestTraces(limit: number = 500): string {
 }
 
 /**
- * Raw error span rows enriched with service + operation + status.message
- * for client-side error class grouping. Returns up to `limit` of the most
- * recent error spans.
+ * Raw error span rows enriched with service, operation, status.message,
+ * and trace-origin context for client-side filtering and grouping.
+ * Returns up to `limit` of the most recent error spans.
+ *
+ * Each row is joined to the per-trace root via parent_span_id=="", and
+ * the root's service is looked up in criblapm_trace_originators to
+ * attach a `trace_origin` tag (`user` | `service` | `unknown`). The
+ * error filter uses this to scope rules — same status code means
+ * different things depending on whether a user or a service started
+ * the trace. See docs/research/error-filter-design.md for the design.
+ *
+ * Output columns: _time, svc, name, span_kind, http_status, grpc_status,
+ * msg, trace_id, root_svc, trace_origin.
+ *
+ * The right side of the leftouter join is one row per captured trace
+ * (not per span), bounded by the time window — small enough to dodge
+ * the Cribl KQL join-truncation behavior we hit during Phase 0.
  */
 export function rawRecentErrorSpans(limit: number = 300): string {
   return `${spansBase()}
     | extend svc=tostring(resource.attributes['service.name']),
+             span_kind=tostring(kind),
              is_error=(tostring(status.code)=="2"),
-             msg=tostring(status.message)
+             msg=tostring(status.message),
+             http_status=toint(attributes['http.response.status_code']),
+             grpc_status=toint(attributes['rpc.grpc.status_code'])
     | where is_error
     | sort by _time desc
-    | project _time, svc, name, trace_id, msg
-    | limit ${limit}`;
+    | limit ${limit}
+    | project _time, svc, name, span_kind, http_status, grpc_status, msg, trace_id
+    | join kind=leftouter (
+        ${spansBase()}
+        | where tostring(parent_span_id) == ""
+        | extend root_svc=tostring(resource.attributes['service.name'])
+        | project trace_id, root_svc
+        | lookup criblapm_trace_originators on root_svc
+      ) on trace_id
+    | extend trace_origin=coalesce(type, "unknown")
+    | project _time, svc, name, span_kind, http_status, grpc_status,
+              msg, trace_id, root_svc, trace_origin`;
 }
 
 /**
