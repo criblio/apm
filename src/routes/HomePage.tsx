@@ -12,7 +12,7 @@ import {
   listServiceSummaries,
   getServiceTimeSeries,
   listSlowTraceClasses,
-  listErrorClasses,
+  listErrorClassesWithBreakdown,
   listOperationAnomalies,
   getDependencies,
 } from '../api/search';
@@ -176,6 +176,9 @@ export default function HomePage() {
   const [buckets, setBuckets] = useState<ServiceBucket[]>([]);
   const [slowClasses, setSlowClasses] = useState<SlowTraceClass[]>([]);
   const [errorClasses, setErrorClasses] = useState<ErrorClass[]>([]);
+  const [unfilteredErrorClasses, setUnfilteredErrorClasses] = useState<ErrorClass[]>([]);
+  const [errorDroppedBy, setErrorDroppedBy] = useState<Record<string, number>>({});
+  const [showUnfilteredErrors, setShowUnfilteredErrors] = useState(false);
   const [anomalies, setAnomalies] = useState<OperationAnomaly[]>([]);
   const [loadingSummaries, setLoadingSummaries] = useState(true);
   const [loadingBuckets, setLoadingBuckets] = useState(true);
@@ -246,11 +249,21 @@ export default function HomePage() {
 
           if (cached.errorClasses && cached.errorClasses.length > 0) {
             setErrorClasses(cached.errorClasses);
+            setUnfilteredErrorClasses(cached.unfilteredErrorClasses ?? cached.errorClasses);
+            setErrorDroppedBy(cached.errorDroppedBy ?? {});
             setLoadingErrors(false);
           } else {
-            void listErrorClasses(range, 'now')
-              .then((r) => setErrorClasses(r))
-              .catch(() => setErrorClasses([]))
+            void listErrorClassesWithBreakdown(range, 'now')
+              .then((r) => {
+                setErrorClasses(r.classes);
+                setUnfilteredErrorClasses(r.unfilteredClasses);
+                setErrorDroppedBy(r.droppedBy);
+              })
+              .catch(() => {
+                setErrorClasses([]);
+                setUnfilteredErrorClasses([]);
+                setErrorDroppedBy({});
+              })
               .finally(() => setLoadingErrors(false));
           }
 
@@ -286,9 +299,17 @@ export default function HomePage() {
       .catch(() => setSlowClasses([]))
       .finally(() => setLoadingSlow(false));
 
-    const pErrors = listErrorClasses(range, 'now')
-      .then((r) => setErrorClasses(r))
-      .catch(() => setErrorClasses([]))
+    const pErrors = listErrorClassesWithBreakdown(range, 'now')
+      .then((r) => {
+        setErrorClasses(r.classes);
+        setUnfilteredErrorClasses(r.unfilteredClasses);
+        setErrorDroppedBy(r.droppedBy);
+      })
+      .catch(() => {
+        setErrorClasses([]);
+        setUnfilteredErrorClasses([]);
+        setErrorDroppedBy({});
+      })
       .finally(() => setLoadingErrors(false));
 
     await Promise.allSettled([
@@ -763,7 +784,7 @@ export default function HomePage() {
         <TraceClassList
           title="Error classes"
           subtitle="Grouped by (service, operation, message) — click to view a sample"
-          items={errorClasses.map<ClassItem>((c) => ({
+          items={(showUnfilteredErrors ? unfilteredErrorClasses : errorClasses).map<ClassItem>((c) => ({
             key: `${c.service}\u0000${c.operation}\u0000${c.message}`,
             service: c.service,
             operation: c.operation,
@@ -776,6 +797,11 @@ export default function HomePage() {
           mode="errors"
           emptyMessage="No errors in this range — all clear."
           staleCacheAgeMs={panelCacheStaleAgeMs}
+          filterInfo={{
+            hiddenCount: Object.values(errorDroppedBy).reduce((s, n) => s + n, 0),
+            showingUnfiltered: showUnfilteredErrors,
+            onToggle: () => setShowUnfilteredErrors((v) => !v),
+          }}
         />
       </div>
 

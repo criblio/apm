@@ -45,6 +45,14 @@ interface Props {
    *  responsible for only passing a value when the age exceeds the
    *  staleness threshold; this component just formats and renders. */
   staleCacheAgeMs?: number | null;
+  /** When the caller has applied a default filter and wants to expose
+   *  the dropped count + a "show unfiltered" toggle. Pass null/undefined
+   *  to render no affordance. */
+  filterInfo?: {
+    hiddenCount: number;
+    showingUnfiltered: boolean;
+    onToggle: () => void;
+  };
 }
 
 function fmtDurationUs(us: number): string {
@@ -80,6 +88,7 @@ export default function TraceClassList({
   mode,
   emptyMessage,
   staleCacheAgeMs,
+  filterInfo,
 }: Props) {
   const staleChipText =
     staleCacheAgeMs != null && staleCacheAgeMs > 0
@@ -101,6 +110,22 @@ export default function TraceClassList({
             >
               {staleChipText}
             </span>
+          )}
+          {filterInfo && filterInfo.hiddenCount > 0 && (
+            <button
+              type="button"
+              className={s.filterChip}
+              onClick={filterInfo.onToggle}
+              title={
+                filterInfo.showingUnfiltered
+                  ? 'Showing all rows, including ones the default filter would hide. Click to re-apply.'
+                  : `${filterInfo.hiddenCount} row${filterInfo.hiddenCount === 1 ? '' : 's'} hidden by the default filter (propagation + user-trace caller-faults). Click to show them.`
+              }
+            >
+              {filterInfo.showingUnfiltered
+                ? `unfiltered — hide ${filterInfo.hiddenCount}`
+                : `${filterInfo.hiddenCount} hidden — show`}
+            </button>
           )}
         </span>
         {subtitle && <span className={s.subtitle}>{subtitle}</span>}
