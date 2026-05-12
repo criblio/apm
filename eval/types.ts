@@ -21,8 +21,12 @@ export interface KqlCheck {
 
 export interface ScenarioDeclaration {
   name: string;
-  flag: string;
-  variant: string;
+  /** flagd feature-flag this scenario manipulates. Omit for scenarios
+   * that observe the natural state of the system (e.g. leak detection)
+   * rather than a triggered fault — the engine skips the flag-flip
+   * step when flag is absent. */
+  flag?: string;
+  variant?: string;
   expectedService: string;
   telemetryWaitMs: number;
   cooldownMs: number;

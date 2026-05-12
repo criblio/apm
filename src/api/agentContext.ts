@@ -221,13 +221,102 @@ For service-to-service dependency analysis: self-join span rows on
 then group by parent service vs child service. For per-minute
 histograms: \`summarize ... by svc, bin(_time, 60s)\`.
 
+### Smooth-climb 5xx (leak signature) — check FIRST when errors are climbing
+
+**Do not chase named failure scenarios (paymentFailure, kafkaQueueProblems,
+productCatalogFailure, etc.) when the error pattern is a smooth climb
+over many hours or days.** Named failure scenarios are step changes —
+they flip on and the rate jumps within minutes. A monotonic climb that
+took days to develop is almost never a flagd-style fault injection. It
+is much more often a memory or cardinality leak in a long-running
+service process.
+
+**The leak signature** has four ingredients. If three or more are
+present, work the leak hypothesis BEFORE looking at flagd flags:
+
+1. **Smooth monotonic climb in error_rate.** Compute the slope over
+   the alert window AND over the prior 7 days. If both are positive
+   AND similar magnitude, the trend is steady — not a recent event.
+   Pattern:
+   \`\`\`kql
+   dataset="${datasetId}" | where isnotnull(end_time_unix_nano)
+     | extend svc=tostring(resource.attributes['service.name']),
+              is_error=(tostring(status.code)=="2")
+     | summarize total=count(), errs=countif(is_error)
+         by svc, bin(_time, 1h)
+     | extend err_rate=todouble(errs)/todouble(total)
+     | sort by svc, _time
+   \`\`\`
+   Then read the err_rate values across the window. If you see
+   0.1% → 1% → 5% → 12% across consecutive buckets, that is a
+   leak fingerprint. A flagd flip would have shown 0.1% → 0.1% →
+   0.1% → 12% (step), not the gradient.
+
+2. **Downstream services are healthy.** A 5xx-producing service whose
+   downstream callees have ~0% span errors is timing out waiting,
+   not propagating a downstream fault. Check the immediate children
+   in the dependency graph and confirm their error rates are < 1%.
+   If they are, label the surface alert as **"latency-induced 5xx,
+   not downstream failure"** and stop chasing the downstream.
+
+3. **Pod has been up for many days without restart.** Pull each
+   pod's start time and uptime:
+   \`\`\`kql
+   dataset="${datasetId}" | where isnotnull(end_time_unix_nano)
+     | extend svc=tostring(resource.attributes['service.name']),
+              pod=tostring(resource.attributes['k8s.pod.name']),
+              start_ts=tostring(resource.attributes['k8s.pod.start_time'])
+     | where svc == "<implicated service>"
+     | summarize start_iso=any(start_ts) by pod
+   \`\`\`
+   Parse the ISO timestamp. If uptime > 7d AND error rate has > 5x'd
+   over that uptime, the leak hypothesis is strongly supported.
+
+4. **High-cardinality attribute growing without bound.** Pick a
+   handful of plausible-fingerprint attributes and run dcount per
+   hour. \`session.id\`, \`user.id\`, \`enduser.id\`, \`request.id\`,
+   \`correlation.id\` are the usual suspects but a fingerprint can be
+   anything stamped on every span. \`trace_id\` is exempt — it's
+   inherently unique. Use \`bag_keys(attributes)\` to enumerate
+   what's available on a sample span first:
+   \`\`\`kql
+   dataset="${datasetId}" | where isnotnull(end_time_unix_nano)
+     | extend svc=tostring(resource.attributes['service.name'])
+     | where svc == "<implicated service>"
+     | limit 1
+     | extend ks=bag_keys(attributes)
+     | project ks
+   \`\`\`
+   Then for any plausible fingerprint key, check its growth:
+   \`\`\`kql
+   dataset="${datasetId}" | where isnotnull(end_time_unix_nano)
+     | extend svc=tostring(resource.attributes['service.name']),
+              sid=tostring(attributes['session.id'])
+     | where isnotempty(sid) and svc == "<implicated service>"
+     | summarize dc=dcount(sid) by bin(_time, 1h)
+     | sort by _time
+   \`\`\`
+   A dcount that climbs linearly hour over hour for many days
+   without flattening is unbounded cardinality.
+
+**Verification action when the leak hypothesis holds:** recommend
+restarting the implicated pod. The exact form depends on the
+deployment, but the operator-facing instruction is along the lines
+of \`kubectl rollout restart deploy/<service>\`. Do NOT recommend
+toggling flagd flags; the leak isn't a feature-flag fault. Do NOT
+recommend code changes ("remove session.id stamping") — that's a
+fix, not a verification. A pod restart resets the leak and confirms
+the diagnosis: if error rate drops to baseline after restart, the
+diagnosis was correct.
+
 ### Common failure modes to check (in priority order)
 
-Do not anchor on the first error signal you see. Work through these
-four checks before committing to a root-cause hypothesis, and weight
-their **recency** — signals in the most recent 1-3 minutes beat
-signals from earlier in the lookback window, because the question is
-almost always "what changed recently?".
+If the leak signature above doesn't fit (e.g. the error pattern is a
+step change, downstream IS failing, or the pod restarted recently),
+work through these checks. Do not anchor on the first error signal
+you see — weight signals by **recency** (most recent 1-3 minutes
+beat signals from earlier in the lookback window, because the
+question is almost always "what changed recently?").
 
 1. **Traffic drops (service went dark).** The loudest signal when a
    service is unreachable is that it **stopped emitting spans**, not

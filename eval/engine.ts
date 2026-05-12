@@ -245,8 +245,12 @@ export async function runScenario(
       '-5m', 'now', 1,
     ).catch(() => {});
 
-    console.log(`  [${scenario.name}] flipping ${scenario.flag}=${scenario.variant}`);
-    await setFlag(scenario.flag, scenario.variant);
+    if (scenario.flag && scenario.variant) {
+      console.log(`  [${scenario.name}] flipping ${scenario.flag}=${scenario.variant}`);
+      await setFlag(scenario.flag, scenario.variant);
+    } else {
+      console.log(`  [${scenario.name}] no flag flip — observing natural state`);
+    }
 
     console.log(
       `  [${scenario.name}] waiting ${scenario.telemetryWaitMs / 1000}s for telemetry`,
