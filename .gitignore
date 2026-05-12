@@ -34,8 +34,11 @@ build/
 !.vscode/extensions.json
 .idea
 
-# Claude Code runtime state
-.claude/
+# Claude Code runtime state — ignore everything in .claude/ except
+# checked-in skills that need to travel with the repo.
+.claude/*
+!.claude/skills/
+!.claude/skills/**
 
 # Playwright
 playwright/.auth/
