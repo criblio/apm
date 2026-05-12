@@ -47,6 +47,12 @@ export const CRIBLAPM_PREFIX = 'criblapm__';
 export const OP_BASELINES_LOOKUP = 'criblapm_op_baselines';
 export const ALERT_STATES_LOOKUP = 'criblapm_alert_states';
 export const ALERT_PREV_LOOKUP = 'criblapm_alert_prev';
+/** Trace-originator classification lookup — joined by the error
+ * filter to tag each error span with the kind of actor that
+ * initiated its trace (user / service / unknown). See
+ * docs/research/error-filter-design.md for the signal priority
+ * and Phase 0 validation against staging. */
+export const TRACE_ORIGINATORS_LOOKUP = 'criblapm_trace_originators';
 
 /** Lookup tables that must exist before scheduled searches that
  * `lookup` against them can be created. The framework provisioner
@@ -59,6 +65,10 @@ export const SEED_LOOKUPS: SeedLookup[] = [
   {
     name: ALERT_PREV_LOOKUP,
     seedQuery: `dataset="otel" | limit 1 | project svc="__init__", prev_req=0, prev_err=0, prev_err_rate=0.0, prev_p95_us=0 | export mode=overwrite description="Cribl APM - prev window init" to lookup ${ALERT_PREV_LOOKUP}`,
+  },
+  {
+    name: TRACE_ORIGINATORS_LOOKUP,
+    seedQuery: `dataset="otel" | limit 1 | project root_svc="__init__", type="unknown", total=0, n_browser=0, n_loadtest=0, n_probe=0, n_msg=0, n_name_user=0, n_name_service=0 | export mode=overwrite description="Cribl APM - trace originators init" to lookup ${TRACE_ORIGINATORS_LOOKUP}`,
   },
 ];
 
@@ -84,6 +94,20 @@ function opBaselineQuery(): string {
     | export mode=overwrite
              description="Cribl APM - rolling 24h per-op p95 baseline"
              to lookup ${OP_BASELINES_LOOKUP}`;
+}
+
+/**
+ * Trace-originator classification, wrapped with the export tail
+ * that lands rows in the criblapm_trace_originators lookup. The
+ * underlying classification logic lives in Q.traceOriginators()
+ * so it stays testable in isolation; this wrapper exists only to
+ * tack the | export on. Same pattern as opBaselineQuery() above.
+ */
+function traceOriginatorsExportQuery(): string {
+  return `${Q.traceOriginators()}
+    | export mode=overwrite
+             description="Cribl APM - trace originator classification"
+             to lookup ${TRACE_ORIGINATORS_LOOKUP}`;
 }
 
 /**
@@ -283,6 +307,18 @@ export function getProvisioningPlan(): ProvisionedSearch[] {
       latest: 'now',
       sampleRate: 1,
       schedule: { ...hourly },
+    },
+    // ── Trace originator classification ─────────────────────
+    {
+      id: 'criblapm__trace_originators',
+      name: 'Cribl APM - trace originator classification',
+      description:
+        'Cribl APM: classifies each captured trace-root service as user-origin (real or synthetic user) or service-origin (cron, queue consumer) by user-agent value, messaging.system, and span-name patterns. Output goes to the criblapm_trace_originators lookup, joined by the error filter at query time. See docs/research/error-filter-design.md.',
+      query: traceOriginatorsExportQuery(),
+      earliest: '-5m',
+      latest: 'now',
+      sampleRate: 1,
+      schedule: { ...panelCadence },
     },
   ];
 }

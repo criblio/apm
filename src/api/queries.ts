@@ -574,6 +574,61 @@ export function rawRecentErrorSpans(limit: number = 300): string {
 }
 
 /**
+ * Trace-originator classification. For each captured trace's root
+ * span (parent_span_id == ""), record the originator's service and
+ * classify it as `user` (real or synthetic user) or `service` (cron,
+ * queue consumer, scheduled task) or `unknown`. Classification reads
+ * the user-agent value, messaging.system, and span-name patterns —
+ * none of which are tied to a specific app or OTel demo. See
+ * docs/research/error-filter-design.md for the signal priority and
+ * Phase 0 v2 validation findings.
+ *
+ * Output columns: root_svc, type, total, n_browser, n_loadtest,
+ * n_probe, n_msg, n_name_user, n_name_service. The signal counts
+ * surface in Settings so users can see *why* a service was
+ * classified the way it was, and override if the classification
+ * doesn't fit their deployment.
+ *
+ * This function returns the underlying classification logic, not
+ * the `| export to lookup` tail. The provisionedSearches wrapper
+ * adds export. Calling this directly is useful for ad-hoc
+ * inspection and unit testing.
+ */
+export function traceOriginators(): string {
+  return `${spansBase()}
+    | where tostring(parent_span_id) == ""
+    | extend root_svc=tostring(resource.attributes['service.name']),
+             ua=tostring(attributes['http.user_agent']),
+             msg_sys=tostring(attributes['messaging.system']),
+             span_name=tostring(name)
+    | extend ua_browser=(ua matches regex "(?i)(mozilla|chrome|safari|firefox|edge|opera)"),
+             ua_loadtest=(ua matches regex "(?i)(k6|locust|jmeter|gatling|wrk|ab/|loadgen)"),
+             ua_probe=(ua matches regex "(?i)(kube-probe|go-http-client|healthcheck|liveness|readiness)"),
+             has_msg=isnotempty(msg_sys),
+             name_user=(span_name matches regex "(?i)(^|_)(user|browse|view|checkout|cart|search)(_|$)"),
+             name_service=(span_name matches regex "(?i)(^|_)(tick|cron|consume|process|poll|worker|job|task)(_|$)")
+    | summarize total=count(),
+                n_browser=countif(ua_browser),
+                n_loadtest=countif(ua_loadtest),
+                n_probe=countif(ua_probe),
+                n_msg=countif(has_msg),
+                n_name_user=countif(name_user),
+                n_name_service=countif(name_service)
+        by root_svc
+    | extend type=case(
+        todouble(n_browser+n_loadtest)/todouble(total) >= 0.5, "user",
+        todouble(n_probe)/todouble(total) >= 0.5, "service",
+        todouble(n_msg)/todouble(total) >= 0.5, "service",
+        todouble(n_name_user)/todouble(total) >= 0.5, "user",
+        todouble(n_name_service)/todouble(total) >= 0.5, "service",
+        "unknown")
+    | where total >= 10
+    | project root_svc, type, total,
+              n_browser, n_loadtest, n_probe, n_msg,
+              n_name_user, n_name_service`;
+}
+
+/**
  * Traces that had at least one error span — "recent errors" panel on
  * Home and Service detail. Optionally scoped to a service.
  */
