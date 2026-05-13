@@ -106,16 +106,61 @@ Run: `npx playwright test tests/<file>.spec.ts`. The
 first, which logs in via Auth0 and caches state to
 `playwright/.auth/cribl-cloud.json`. Subsequent specs reuse it.
 
-### Storage state expires
+### Storage state expires — and how to verify setup ACTUALLY logged in
 
-Auth0 sessions are **not eternal.** After ~a few days the cached state
-stops authenticating silently and the test bounces to login without
-errors — the navigation just doesn't reach the app. Symptoms:
+Auth0 sessions are **not eternal.** Once a session expires server-side
+at Auth0, the cached cookies become "session handles" that silently-
+auth requests reject with `login_required`. The visible failure mode
+is that specs bounce to login despite a green setup project.
+
+**Diagnostic for "did setup actually log in?"**: open
+`playwright/.auth/cribl-cloud.json` and look at the cookies.
+
+- **Valid login**: `auth0.<client_id>.is.authenticated = true`,
+  localStorage contains keys like
+  `@@auth0spajs@@::<client_id>::https://manage.cribl-staging.cloud::...`
+  with a populated `access_token`, and the `authentik_session` /
+  `authentik_csrf` cookies exist on `typhoon.org`. Setup duration ≥ 20s.
+- **Half-set / never logged in**: `cribl_redirect = "undefined"` (literal
+  string), the `a0.spajs.txs.<client_id>` cookie still contains
+  `nonce` + `code_verifier` (in-flight PKCE values that should be
+  cleared on success), localStorage has only `AUTH_FROM_PATH`.
+  Setup duration is suspiciously fast (~5-7s). This state is what
+  the original `auth.setup.ts` produced — a JS-redirect race made
+  the URL check fire before the login URL appeared.
+
+**Symptoms a spec hits when setup snapshotted a half-set state**:
 
 - Test fails with `getByText('Cribl APM')` timing out
 - Trace shows redirect chain `/app-ui/apm/` → `/apps/a/apm/` →
   `login.cribl-staging.cloud/u/login/identifier`
 - The screenshot shows the Cribl Cloud login carousel, not the app
+- Console logs `Failed to get token h: Login required`
+- The intercepted `/authorize?prompt=none` request response body
+  contains `"error":"login_required"` (NOT a third-party-cookie issue
+  — the cookies DO arrive at Auth0; the session is invalid)
+
+**Cribl Cloud workspace SSO flow you have to walk through**:
+
+1. `https://login.cribl-staging.cloud/u/login/identifier` — Auth0
+   email page. Fill email, click "Next".
+2. Auth0 federates to the workspace's IdP — for typhoon.org accounts
+   that's `https://typhoon.org:9443/` running **authentik**.
+3. Authentik page 1: `Email or Username` textbox + `Log in` button.
+   Locator: `getByRole('textbox', { name: /email or username/i })`.
+   (`getByLabel` doesn't match — authentik uses div-labels, not
+   `<label>`.)
+4. Authentik page 2: textbox with accessible name `Please enter your
+   password` (NOT just "Password") + `Continue` button (NOT "Log in").
+   Locator: `getByRole('textbox', { name: /please enter your password|password/i })`.
+5. **Authentik OAuth consent screen** (first time per user/client):
+   heading "Redirecting to Cribl.Cloud", button `Continue`. Authentik
+   remembers the consent, so subsequent runs skip this page — race
+   the consent against the workspace-shell URL.
+6. Redirect back to Auth0 callback, then to workspace shell at
+   `https://main-objective-shirley-sho21r7.cribl-staging.cloud/apps/`.
+
+`tests/auth.setup.ts` is the canonical implementation of all of this.
 
 **Fix:** delete the cached state and let setup re-run.
 
