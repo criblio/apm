@@ -61,6 +61,12 @@ export const TRACE_ORIGINATORS_LOOKUP = 'criblapm_trace_originators';
  * each. See HEURISTICS.md §"Cardinality detection". */
 export const ATTR_CATALOG_LOOKUP = 'criblapm_attr_catalog';
 
+/** 7-day per-service daily error-rate history. Read by the
+ * Investigator to compute multi-day slope in one cheap query
+ * (rather than scanning raw spans, which times out at 7d). The
+ * alert pipeline can also surface a "drift" signal from this. */
+export const ERROR_RATE_DAILY_LOOKUP = 'criblapm_error_rate_daily';
+
 /** Lookup tables that must exist before scheduled searches that
  * `lookup` against them can be created. The framework provisioner
  * probes each by name and runs the seed query if absent. */
@@ -80,6 +86,10 @@ export const SEED_LOOKUPS: SeedLookup[] = [
   {
     name: ATTR_CATALOG_LOOKUP,
     seedQuery: `dataset="otel" | limit 1 | project svc="__init__", attr_name="__init__", n_spans_with_key=0, last_seen=0 | export mode=overwrite description="Cribl APM - attr catalog init" to lookup ${ATTR_CATALOG_LOOKUP}`,
+  },
+  {
+    name: ERROR_RATE_DAILY_LOOKUP,
+    seedQuery: `dataset="otel" | limit 1 | project svc="__init__", day=0, total=0, errs=0, err_rate_pct=0.0 | export mode=overwrite description="Cribl APM - error rate daily init" to lookup ${ERROR_RATE_DAILY_LOOKUP}`,
   },
 ];
 
@@ -132,6 +142,14 @@ function attrCatalogExportQuery(): string {
     | export mode=overwrite
              description="Cribl APM - attribute name catalog"
              to lookup ${ATTR_CATALOG_LOOKUP}`;
+}
+
+/** Daily error-rate snapshot to lookup — wrapper for Q.errorRateDaily7d. */
+function errorRateDailyExportQuery(): string {
+  return `${Q.errorRateDaily7d()}
+    | export mode=overwrite
+             description="Cribl APM - 7-day per-service daily error rate"
+             to lookup ${ERROR_RATE_DAILY_LOOKUP}`;
 }
 
 /**
@@ -357,6 +375,22 @@ export function getProvisioningPlan(): ProvisionedSearch[] {
       // Hourly is enough — attribute names don't change minute to
       // minute, and the bag_keys+mv-expand pass is per-row expensive.
       schedule: { ...hourly },
+    },
+    // ── 7-day per-service daily error-rate history (drift) ──
+    {
+      id: 'criblapm__error_rate_daily',
+      name: 'Cribl APM - 7-day per-service daily error rate',
+      description:
+        'Cribl APM: per-service error-rate snapshot bucketed by day, 7-day window. Read by the Investigator playbook (leak signature, ingredient #1) to compute multi-day slope in ONE cheap query rather than scanning raw spans (which times out at -7d hourly). Also feeds future drift-alert signal on the alert pipeline.',
+      query: errorRateDailyExportQuery(),
+      earliest: '-7d',
+      latest: 'now',
+      sampleRate: 1,
+      // Daily snapshots only need to be refreshed daily. The 7d
+      // aggregate is heavy on staging (~60-70s); running hourly
+      // would waste worker capacity. The 1st daily run after a
+      // deploy populates the lookup.
+      schedule: { ...hourly, cronSchedule: '17 * * * *' },
     },
   ];
 }

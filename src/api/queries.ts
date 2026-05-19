@@ -694,6 +694,33 @@ export function rawRecentErrorSpans(limit: number = 300): string {
  * inspection and unit testing.
  */
 /**
+ * Per-service error-rate history, bucketed by day. Foundation for
+ * the drift / slope signal — the alert pipeline today only compares
+ * current vs previous window (1h vs 1h), which can't see a multi-
+ * day climb. This produces a 7-day history that the Investigator
+ * can read in one cheap query to compute slope without scanning
+ * raw spans.
+ *
+ * Cluster reality: a 7d window with HOURLY bins routinely times
+ * out at the 60s search ceiling on staging. DAILY bins over 7d
+ * still take ~60-70s but DO complete. We schedule this once a
+ * day so a long completion time is acceptable — the cluster
+ * isn't busy when this fires.
+ *
+ * Output: (svc, day, total, errs, err_rate_pct).
+ */
+export function errorRateDaily7d(): string {
+  return `${spansBase()}
+    | extend svc=tostring(resource.attributes['service.name']),
+             is_error=(tostring(status.code)=="2")
+    | summarize total=count(), errs=countif(is_error) by svc, day=bin(_time, 1d)
+    | where total >= 100
+    | extend err_rate_pct=100.0*toreal(errs)/toreal(total)
+    | project svc, day, total, errs, err_rate_pct
+    | sort by svc asc, day asc`;
+}
+
+/**
  * Attribute-name catalog. Enumerates every (svc, attr_name) pair
  * observed in the recent span sample via `bag_keys(attributes)` →
  * `mv-expand`. The catalog is the foundation for cardinality / leak
