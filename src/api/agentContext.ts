@@ -247,29 +247,35 @@ service process.
 **The leak signature** has four ingredients. If three or more are
 present, work the leak hypothesis BEFORE looking at flagd flags:
 
-1. **Smooth monotonic climb in error_rate.** Use the query below
-   AS WRITTEN — it's tuned to stay under Cribl Search's query-time
-   ceiling on multi-day windows. Don't add per-operation /
-   per-status group-bys to the same query; those blow up the
-   working set and the search times out. If the suspect service
-   is named, pin it with the \`| where svc == "..."\` clause:
+1. **Smooth monotonic climb in error_rate.** **Multi-day windows
+   (-7d / -10d) routinely time out on Cribl Search.** Don't ask
+   for one. Instead, run THREE SHORT WINDOWS in sequence and read
+   the slope across them — each query completes in seconds. Use
+   the suspect service's name in the \`| where\` clause to keep
+   the working set tiny:
    \`\`\`kql
+   // window 1: current state, last hour
    dataset="${datasetId}" | where isnotnull(end_time_unix_nano)
      | extend svc=tostring(resource.attributes['service.name']),
               is_error=(tostring(status.code)=="2")
      | where svc == "<implicated service>"
-     | summarize total=count(), errs=countif(is_error) by bin(_time, 1h)
-     | extend err_rate=todouble(errs)/todouble(total)
-     | sort by _time asc
+     | summarize total=count(), errs=countif(is_error)
+     | extend err_rate_pct=100.0*errs/total
    \`\`\`
-   If a 7-day window still times out, fall back to 24h with hourly
-   bins AND check yesterday's average error rate via a second 1d
-   window earliest=-2d latest=-1d — that gives you the same
-   "is this a climb or a step?" signal without a single wide
-   query. Read the err_rate values across the buckets. If you see
-   0.1% → 1% → 5% → 12% across consecutive buckets, that is a
-   leak fingerprint. A flagd flip would have shown 0.1% → 0.1% →
-   0.1% → 12% (step), not the gradient.
+   Run the same query three more times with these earliest/latest
+   pairs to get the trend:
+   - earliest=-25h latest=-24h (yesterday)
+   - earliest=-73h latest=-72h (3 days ago)
+   - earliest=-169h latest=-168h (a week ago)
+
+   Four numbers. If you see e.g. \`0.4%, 9.5%, 12.0%, 14.7%\` walking
+   from a week ago to now, that's a smooth climb. If you see
+   \`0.4%, 0.4%, 0.4%, 14.7%\`, that's a step — and a flagd-style
+   fault is more likely.
+
+   DO NOT try to get the same data in a single per-hour or per-day
+   binned query over -7d. The cluster won't service it within the
+   query timeout. Four small queries beats one big one.
 
 2. **Downstream services are healthy.** A 5xx-producing service whose
    downstream callees have ~0% span errors is timing out waiting,
@@ -279,14 +285,16 @@ present, work the leak hypothesis BEFORE looking at flagd flags:
    not downstream failure"** and stop chasing the downstream.
 
 3. **Pod has been up for many days without restart.** Pull each
-   pod's start time and uptime:
+   pod's start time. **Always pass earliest=-1h** so the query is
+   cheap (you only need one recent span per pod to read its
+   start_time resource attribute):
    \`\`\`kql
    dataset="${datasetId}" | where isnotnull(end_time_unix_nano)
      | extend svc=tostring(resource.attributes['service.name']),
               pod=tostring(resource.attributes['k8s.pod.name']),
               start_ts=tostring(resource.attributes['k8s.pod.start_time'])
      | where svc == "<implicated service>"
-     | summarize start_iso=any(start_ts) by pod
+     | summarize start_iso=max(start_ts) by pod
    \`\`\`
    Parse the ISO timestamp. If uptime > 7d AND error rate has > 5x'd
    over that uptime, the leak hypothesis is strongly supported.
