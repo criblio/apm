@@ -60,7 +60,81 @@ See [`docs/research/ux-competitive-analysis.md`](docs/research/ux-competitive-an
 for the full competitive analysis against Datadog, New Relic,
 Dynatrace, and Grafana that drives this priority order.
 
-### 1. Faceted trace search
+### 1. Performance: reclaim search-worker headroom
+
+**This is the only priority on this list that's currently blocking
+the rest of the roadmap.** Background scheduled searches now
+saturate the workspace's `max: 20` concurrent search queue (see
+the corresponding entry in "Blocked on Cribl"). Investigator
+queries and ad-hoc operator searches sit in the queue for
+~56-57 seconds — long enough that every multi-turn
+investigation runs out the per-turn budget before it can read
+any data. The 2026-05-12 `leakFingerprint` eval transcript is
+the concrete artifact: the agent followed the playbook to the
+letter and never got a query through.
+
+**Two orthogonal levers** (both worth pulling):
+
+1. **Acceleration at the dataset level.** Cribl Lakehouse Indexed
+   Fields and Parquet predicate-pushdown both pull JSON-nested
+   fields up to top-level columns so filters and group-bys don't
+   have to deserialize the whole record. Up to **5 indexed
+   fields per Lake Dataset** plus **3 partitions**. (The deprecated
+   "Dataset Acceleration" prescan feature is gone; the
+   replacement is Lakehouse.) Field-access inventory from
+   `src/api/queries.ts` (uses of each as predicate or
+   group-by key):
+
+   | Field | Uses | Why it matters |
+   |---|---:|---|
+   | `resource.attributes['service.name']` | 28 | filtered/grouped by ~every query |
+   | `status.code` | many | error predicate |
+   | `kind` | 19 | server/client/internal filter |
+   | `name` | 171 (mostly proj; ~10 as predicate) | operation grouping |
+   | `end_time_unix_nano` | 19 | "is this a span?" filter |
+   | `parent_span_id` | 12 | trace topology, leaf detection |
+   | `trace_id` | 23 | trace scoping, self-joins |
+   | `span_id` | 9 | trace topology |
+   | `attributes['http.response.status_code']` | 3 | filter rules |
+   | `attributes['rpc.grpc.status_code']` | 3 | filter rules |
+
+   Proposed 5 indexed-field picks (subject to Cribl Lake migration
+   plan): `service.name`, `status.code`, `kind`, `name`,
+   `parent_span_id`. The HTTP/gRPC status fields are used by
+   fewer queries; once the top-five are accelerated, those
+   queries are already cheap.
+
+2. **Reduce the steady-state search load.** Today the workspace
+   runs 16 `criblapm__*` scheduled searches; many fire every 5
+   minutes on -1h windows scanning the same span set. Audit
+   targets:
+
+   - **Cadence drops** for searches whose data doesn't move every
+     5 min: `criblapm__trace_originators`, `criblapm__metric_catalog`
+     could be hourly. `criblapm__svc_operations` could be every
+     15 min.
+   - **Consolidate** searches that scan the same -1h span window
+     and emit related aggregations. The home_service_summary,
+     sysarch_dependencies, sysarch_messaging_deps, svc_operations
+     all derive from the same input — a "wide aggregation"
+     pattern that emits multiple lookups in one pass would
+     eliminate redundant scans. Limitation: `| export` consumes
+     rows, so a single search can write to only one lookup. The
+     workaround is to land the wide aggregation in `$vt_results`
+     and have lookup-emit searches read FROM `$vt_results`
+     rather than spans.
+   - **Tighter windows where possible** — some searches widen
+     to -1h to compute averages; for "current state" panels,
+     -10m or -15m is plenty and dramatically cheaper.
+
+**Detailed implementation plan**:
+[`docs/research/search-perf-plan.md`](docs/research/search-perf-plan.md).
+
+**Out of scope**: replacing the Cribl Lake dataset with another
+storage backend, or building an in-app query cache. The fix is
+within Cribl's existing primitives.
+
+### 2. Faceted trace search
 
 The current Search form is fixed-shape. Every commercial APM lets
 users query on arbitrary attributes with autocomplete and facets.
@@ -71,45 +145,45 @@ users query on arbitrary attributes with autocomplete and facets.
 - Cardinality-aware autocomplete
 - "Edit as KQL" escape hatch for power users
 
-### 2. User-created alerts + notification dispatch
+### 3. User-created alerts + notification dispatch
 
 Phase 2 of alerting: "Create alert" button that persists a threshold
 as a Cribl saved search with notification targets. Full design in
 [`docs/research/alerting-design.md`](docs/research/alerting-design.md).
 
-### 3. SLO budgets
+### 4. SLO budgets
 
 Thin layer on top of alerts. SLO = saved search tracking
 (success / total) over a 28-day window, plus budget burn rate
 alerts at 1h / 6h / 24h windows.
 
-### 4. Dashboards (via Cribl Saved Searches)
+### 5. Dashboards (via Cribl Saved Searches)
 
 User-created dashboards composing multiple saved views as widgets.
 "Save this view" button on Traces / Logs / Metrics / ServiceDetail.
 
-### 5. Flame graph + critical path on Trace detail
+### 6. Flame graph + critical path on Trace detail
 
 - Flame graph / icicle chart for self-time visualization
 - Critical-path highlighting (spans that drove end-to-end duration)
 - Latency histogram per operation
 
-### 6. Service catalog / ownership
+### 7. Service catalog / ownership
 
 Tag services with team, oncall, runbook URL, repository link.
 Route alerts by ownership. Backstage-style but lightweight.
 
-### 7. Database query performance
+### 8. Database query performance
 
 Top slow queries, fingerprints, execution plans. Linked to traces
 via `db.statement` / `db.system`.
 
-### 8. Live tail
+### 9. Live tail
 
 Streaming logs and spans as they arrive. "Tail" button on the
 Logs page.
 
-### 9. Leak-fingerprint detection — hardening
+### 10. Leak-fingerprint detection — hardening
 
 The 2026-05-12 session shipped the architecture for detecting smooth-
 climb / memory-leak / cardinality-leak failures that the named flagd
@@ -181,7 +255,7 @@ Additional polish that didn't land in the foundation commits:
   value (op-baselines is hourly already; the per-5-min cadence on
   several panel caches is probably aggressive). Audit + reduce.
 
-### 10. Universal data mapping (schema-agnostic APM)
+### 11. Universal data mapping (schema-agnostic APM)
 
 The APM currently depends on OpenTelemetry's field naming conventions
 (`resource.attributes['service.name']`, `status.code`, `end_time_unix_nano`, etc.).
