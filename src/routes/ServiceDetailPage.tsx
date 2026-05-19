@@ -10,6 +10,8 @@ import {
   listServiceSummaries,
   getServiceTimeSeries,
   listOperationSummaries,
+  listPodUptime,
+  type PodUptime,
   listServiceInstances,
   listRecentErrorTraces,
   getDependencies,
@@ -128,6 +130,7 @@ function buildServiceSeed(
   prev: ServiceSummary | null,
   operations: OperationSummary[],
   range: string,
+  podUptimes: PodUptime[],
 ): InvestigationSeed {
   const signals: string[] = [];
   if (summary) {
@@ -169,6 +172,23 @@ function buildServiceSeed(
       .map((o) => `${o.operation} (p95=${fmtUs(o.p95Us)})`)
       .join(', ');
     signals.push(`Slowest operations by p95: ${list}`);
+  }
+
+  // Pod uptimes — leak-fingerprint signal. Emit the per-pod uptime
+  // values verbatim so the Investigator can read "is any pod up >
+  // 7 days?" without an extra query. The playbook handles the
+  // threshold check + recommendation.
+  if (podUptimes.length > 0) {
+    const lines = podUptimes
+      .map((p) => `${p.pod} up ${p.uptimeHours.toFixed(0)}h (started ${p.startIso})`)
+      .join('; ');
+    signals.push(`Pod uptime: ${lines}`);
+    const longRunning = podUptimes.filter((p) => p.uptimeHours >= 168);
+    if (longRunning.length > 0) {
+      signals.push(
+        `⚠ ${longRunning.length} pod(s) up >7d — leak-fingerprint ingredient. Slope-check the error rate over the same window.`,
+      );
+    }
   }
 
   const hasErrors = summary && summary.errorRate > 0.01;
@@ -219,6 +239,7 @@ export default function ServiceDetailPage() {
   const [prevSummary, setPrevSummary] = useState<ServiceSummary | null>(null);
   const [buckets, setBuckets] = useState<ServiceBucket[]>([]);
   const [operations, setOperations] = useState<OperationSummary[]>([]);
+  const [podUptimes, setPodUptimes] = useState<PodUptime[]>([]);
   const [opSort, setOpSort] = useState<{
     key: 'operation' | 'requests' | 'errorRate' | 'p50Us' | 'p95Us' | 'p99Us';
     dir: 'asc' | 'desc';
@@ -344,7 +365,12 @@ export default function ServiceDetailPage() {
 
     listOperationSummaries(serviceName, range, 'now')
       .then((ops) => setOperations(ops))
-      .catch(() => setOperations([]))
+      .catch(() => setOperations([]));
+    // Pod uptime — cheap (30m window, one summarize per service)
+    // and feeds the Investigator's leak-fingerprint signal.
+    listPodUptime(serviceName, '-30m', 'now')
+      .then(setPodUptimes)
+      .catch(() => setPodUptimes([]))
       .finally(() => setLoadingOps(false));
 
     listRecentErrorTraces(serviceName, range, 'now')
@@ -889,7 +915,7 @@ export default function ServiceDetailPage() {
           </div>
           <TimeRangePicker value={range} onChange={setRange} />
           <InvestigateButton
-            seed={buildServiceSeed(serviceName, summary, prevSig, operations, range)}
+            seed={buildServiceSeed(serviceName, summary, prevSig, operations, range, podUptimes)}
             variant="primary"
             title={`Investigate ${serviceName}`}
           />

@@ -694,6 +694,33 @@ export function rawRecentErrorSpans(limit: number = 300): string {
  * inspection and unit testing.
  */
 /**
+ * Per-pod start time + uptime for a service. The k8s.pod.start_time
+ * resource attribute is stamped on every span, so this is cheap —
+ * a 1h window is enough to see all currently-emitting pods.
+ *
+ * Used by the Investigator's leak-fingerprint check (ingredient #3:
+ * "Pod has been up for many days without restart") and by the
+ * Service Detail UI to surface uptime chips per instance.
+ *
+ * Output: (pod, start_iso, uptime_hours, current_iso).
+ */
+export function podUptime(svc?: string): string {
+  const svcFilter = svc
+    ? `| where svc == "${svc.replace(/"/g, '\\"')}"`
+    : '';
+  return `${spansBase()}
+    | extend svc=tostring(resource.attributes['service.name']),
+             pod=tostring(resource.attributes['k8s.pod.name']),
+             start_iso=tostring(resource.attributes['k8s.pod.start_time'])
+    | where isnotempty(pod) and isnotempty(start_iso)
+    ${svcFilter}
+    | summarize start_iso=max(start_iso), last_seen=max(_time) by svc, pod
+    | extend uptime_hours=abs(datetime_diff('hour', todatetime(start_iso), unixtime_seconds_todatetime(toreal(last_seen))))
+    | project svc, pod, start_iso, uptime_hours, last_seen
+    | sort by uptime_hours desc`;
+}
+
+/**
  * Per-service error-rate history, bucketed by day. Foundation for
  * the drift / slope signal — the alert pipeline today only compares
  * current vs previous window (1h vs 1h), which can't see a multi-

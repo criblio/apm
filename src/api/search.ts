@@ -235,6 +235,31 @@ export async function listOperationSummaries(
   }));
 }
 
+/**
+ * Per-pod start time + uptime for a service. Used by ServiceDetail
+ * to surface uptime chips, and by the Investigator seed to feed
+ * the leak-fingerprint check ("Pod has been up for many days").
+ */
+export interface PodUptime {
+  service: string;
+  pod: string;
+  startIso: string;
+  uptimeHours: number;
+}
+export async function listPodUptime(
+  service: string,
+  earliest = '-30m',
+  latest = 'now',
+): Promise<PodUptime[]> {
+  const rows = await runQuery(Q.podUptime(service), earliest, latest, 50);
+  return rows.map((r) => ({
+    service: String(r.svc ?? service),
+    pod: String(r.pod ?? 'unknown'),
+    startIso: String(r.start_iso ?? ''),
+    uptimeHours: toNum(r.uptime_hours),
+  }));
+}
+
 export async function listServiceInstances(
   service: string,
   earliest = '-1h',
