@@ -17,7 +17,7 @@
 // The Bearer token is obtained via the same OAuth client-credentials
 // flow that `scripts/deploy.mjs` uses. Token is cached across tests.
 
-import type { Page } from '@playwright/test';
+import type { FrameLocator, Page } from '@playwright/test';
 
 export const APM_APP_PATH = process.env.CRIBL_APM_APP_PATH ?? '/app-ui/apm/';
 
@@ -133,9 +133,44 @@ export async function installCriblHostGlobals(page: Page): Promise<void> {
  * Navigate to a pack-relative path. The React Router treats the pack
  * mount point as its basename, so in-app paths look like plain
  * `/`, `/service/payment`, `/investigate`, etc.
+ *
+ * Cribl Cloud's workspace shell intercepts requests to `/app-ui/apm/*`
+ * and serves `/apps/a/apm` instead, then loads the APM pack inside an
+ * iframe with `src=/app-ui/apm/`. The shell injects `CRIBL_BASE_PATH`
+ * and `CRIBL_API_URL` into the iframe automatically. The result:
+ * Playwright sees TWO frames after navigation, and the actual APM
+ * UI lives in the iframe — `page.getByRole('link', ...)` against the
+ * main frame won't find any APM navigation. Use `apmFrame(page)` to
+ * get a `FrameLocator` rooted in the iframe and route all locators
+ * through it.
+ *
+ * Note: deep-link paths inside the iframe don't survive the shell
+ * redirect — the shell ignores the path after `/app-ui/apm/`. To
+ * land on a specific app route, navigate first and then click the
+ * appropriate nav link inside the iframe.
  */
 export async function gotoApm(page: Page, inAppPath = '/'): Promise<void> {
   const trimmed = inAppPath.replace(/^\//, '');
   const target = APM_APP_PATH.replace(/\/$/, '') + '/' + trimmed;
   await page.goto(target, { waitUntil: 'domcontentloaded' });
+  // Wait for the APM iframe to be present in the DOM. The shell
+  // injects it after its own scripts evaluate; specs that race this
+  // will see an empty FrameLocator and time out on selectors.
+  await page
+    .locator('iframe[src*="/app-ui/apm"]')
+    .first()
+    .waitFor({ state: 'attached', timeout: 30_000 });
+}
+
+/**
+ * Return a FrameLocator rooted in the APM app's iframe. All in-app
+ * navigation + content queries (nav links, page headings, error
+ * panels, etc.) must go through this — the main page is the
+ * workspace shell, not the app.
+ *
+ * Wait for a known nav link before issuing selectors against this
+ * frame; the iframe DOM finishes parsing after `goto` resolves.
+ */
+export function apmFrame(page: Page): FrameLocator {
+  return page.frameLocator('iframe[src*="/app-ui/apm"]').first();
 }

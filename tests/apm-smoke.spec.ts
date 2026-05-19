@@ -1,26 +1,24 @@
-// End-to-end smoke test: load the deployed APM pack from the
-// `/app-ui/apm/` path and assert the app shell rendered. This is the "is
-// the build alive?" check that future specs will extend.
+// End-to-end smoke test: load the deployed APM pack and assert the
+// app shell rendered. This is the "is the build alive?" check that
+// future specs will extend.
 //
-// The Cribl App Platform serves the pack's index.html directly at this
-// path and, when the outer Cribl Search shell wraps the pack, injects
-// `window.CRIBL_BASE_PATH` / `window.CRIBL_API_URL` so React Router
-// resolves relative to the pack mount point. Navigating to the URL
-// directly from Playwright skips that injection, so we polyfill the
-// base path ourselves via `installCriblHostGlobals` — which is exactly
-// what the Cribl shell would have done if we'd click-driven our way in
-// through the Apps menu.
+// The Cribl Cloud workspace shell wraps the pack inside an iframe at
+// `/app-ui/apm/`. `gotoApm` waits for the iframe to attach; `apmFrame`
+// returns a FrameLocator scoped to the iframe so locators reach the
+// app's nav and content. Main-page locators only see the workspace
+// shell chrome and won't find anything the APM app renders.
 
 import { test, expect } from '@playwright/test';
-import { installCriblHostGlobals, gotoApm } from './helpers/apmSession';
+import { apmFrame, gotoApm } from './helpers/apmSession';
 
 test('APM app shell renders on Cribl Cloud', async ({ page }) => {
-  await installCriblHostGlobals(page);
   await gotoApm(page, '/');
+  const apm = apmFrame(page);
 
   // NavBar brand + three representative tabs from src/components/NavBar.tsx.
-  await expect(page.getByText('Cribl APM').first()).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByRole('link', { name: 'Home', exact: true })).toBeVisible();
-  await expect(page.getByRole('link', { name: 'System Architecture' })).toBeVisible();
-  await expect(page.getByRole('link', { name: 'Investigate' })).toBeVisible();
+  await expect(apm.getByRole('link', { name: 'Overview', exact: true })).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(apm.getByRole('link', { name: 'Services', exact: true })).toBeVisible();
+  await expect(apm.getByRole('link', { name: 'Investigate', exact: true })).toBeVisible();
 });

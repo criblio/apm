@@ -1,6 +1,7 @@
 import type { Page } from 'playwright-core';
 import { setFlag, allOff } from '../tests/helpers/flagd.js';
 import { runQuery } from '../tests/helpers/criblSearch.js';
+import { apmFrame } from '../tests/helpers/apmSession.js';
 import type {
   ScenarioDeclaration,
   ScenarioResult,
@@ -16,9 +17,15 @@ async function navigateToPage(
   serviceName: string,
   gotoApm: (page: Page, path: string) => Promise<void>,
 ): Promise<boolean> {
+  // Cribl Cloud's workspace shell wraps the APM app in an iframe.
+  // All nav links and content live inside the iframe; main-page
+  // locators only see the workspace chrome. Route every selector
+  // through `apm` so we land on real APM content.
+  const apm = apmFrame(page);
+
   if (pageName === 'overview') {
     await gotoApm(page, '/?range=-15m');
-    await page.getByRole('heading', { name: 'Overview' }).waitFor({
+    await apm.getByRole('heading', { name: 'Overview' }).waitFor({
       state: 'visible',
       timeout: 60_000,
     }).catch(() => {});
@@ -26,8 +33,8 @@ async function navigateToPage(
   } else if (pageName === 'home' || pageName === 'services') {
     await gotoApm(page, '/');
     await page.waitForTimeout(1000);
-    await page.getByRole('link', { name: 'Services', exact: true }).click();
-    await page.getByText(/^Services \(\d+\)/).waitFor({
+    await apm.getByRole('link', { name: 'Services', exact: true }).click();
+    await apm.getByText(/^Services \(\d+\)/).waitFor({
       state: 'visible',
       timeout: 60_000,
     }).catch(() => {});
@@ -35,28 +42,29 @@ async function navigateToPage(
   } else if (pageName === 'errors') {
     await gotoApm(page, '/');
     await page.waitForTimeout(1000);
-    await page.getByRole('link', { name: 'Errors', exact: true }).click();
+    await apm.getByRole('link', { name: 'Errors', exact: true }).click();
     await page.waitForTimeout(5000);
     return true;
   } else if (pageName === 'serviceDetail') {
     await gotoApm(page, '/');
     await page.waitForTimeout(1000);
-    await page.getByRole('link', { name: 'Services', exact: true }).click();
-    const tableLoaded = await page.getByText(/^Services \(\d+\)/).waitFor({
+    await apm.getByRole('link', { name: 'Services', exact: true }).click();
+    const tableLoaded = await apm.getByText(/^Services \(\d+\)/).waitFor({
       state: 'visible',
       timeout: 60_000,
     }).then(() => true).catch(() => false);
     if (!tableLoaded) return false;
     await page.waitForTimeout(2000);
-    const svcLink = page.locator(`table tbody a:has-text("${serviceName}")`).first();
+    const svcLink = apm.locator(`table tbody a:has-text("${serviceName}")`).first();
     const visible = await svcLink
       .waitFor({ state: 'visible', timeout: 30_000 })
       .then(() => true)
       .catch(() => false);
     if (!visible) return false;
     await svcLink.click();
-    await page.waitForURL(/\/service\//, { timeout: 15_000 });
-    await page.getByText(/^Top operations/).waitFor({
+    // Inner-frame URL change isn't observable via page.waitForURL —
+    // wait on the page-detail content instead.
+    await apm.getByText(/^Top operations/).waitFor({
       state: 'visible',
       timeout: 60_000,
     }).catch(() => {});
@@ -64,7 +72,7 @@ async function navigateToPage(
   } else if (pageName === 'alerts') {
     await gotoApm(page, '/');
     await page.waitForTimeout(2000);
-    const alertsLink = page.getByRole('link', { name: 'Alerts' });
+    const alertsLink = apm.getByRole('link', { name: 'Alerts' });
     const visible = await alertsLink
       .waitFor({ state: 'visible', timeout: 10_000 })
       .then(() => true)
@@ -83,7 +91,10 @@ async function evaluateCheck(
 ): Promise<SurfaceResult> {
   const start = Date.now();
   try {
-    const loc = page.locator(check.locator);
+    // Scenario locators target APM content, which lives in the
+    // workspace shell's iframe. Run them through `apmFrame` rather
+    // than the main page.
+    const loc = apmFrame(page).locator(check.locator);
     let detected = false;
 
     if (check.assertion === 'visible') {
@@ -172,16 +183,15 @@ async function runInvestigator(
 ): Promise<InvestigatorResult> {
   try {
     await gotoApm(page, '/');
+    const apm = apmFrame(page);
     await page.waitForTimeout(1000);
-    await page.getByRole('link', { name: 'Investigate', exact: true }).click();
-    await page.waitForURL(/\/investigate/, { timeout: 15_000 });
-    await page.waitForLoadState('domcontentloaded');
+    await apm.getByRole('link', { name: 'Investigate', exact: true }).click();
+    // Inner-frame URL changes aren't observable via page.waitForURL —
+    // wait on the composer instead.
 
-    const composer = page.locator(
-      'textarea[placeholder*="Ask me to investigate"]',
-    );
+    const composer = apm.locator('textarea[placeholder*="Ask me to investigate"]');
     const composerVisible = await composer
-      .waitFor({ state: 'visible', timeout: 15_000 })
+      .waitFor({ state: 'visible', timeout: 30_000 })
       .then(() => true)
       .catch(() => false);
 
@@ -197,17 +207,33 @@ async function runInvestigator(
     await composer.fill(config.prompt);
     await composer.press('Enter');
 
-    const summaryTitle = page.getByText('📋 Investigation summary').first();
+    const summaryTitle = apm.getByText('📋 Investigation summary').first();
     const arrived = await summaryTitle
       .waitFor({ state: 'visible', timeout: config.waitMs })
       .then(() => true)
       .catch(() => false);
 
-    const transcript = await page
+    const transcript = await apm
       .locator('[class*="transcript" i]')
       .first()
       .innerText()
       .catch(() => '');
+
+    // Persist whatever ran so we can diagnose timeouts / partials.
+    // Both the rendered transcript and a screenshot go to disk; the
+    // result struct keeps the transcript inline for in-process scoring.
+    try {
+      const { mkdirSync, writeFileSync } = await import('node:fs');
+      const ts = new Date().toISOString().replace(/[:.]/g, '-');
+      const dir = '/tmp/apm-eval-runs';
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(`${dir}/transcript-${ts}.txt`, transcript || '(empty)');
+      await page.screenshot({ path: `${dir}/screen-${ts}.png`, fullPage: true });
+      // Also flag in stdout so the user knows where to look.
+      console.log(`  [investigator] artifacts: ${dir}/{transcript,screen}-${ts}.*`);
+    } catch {
+      /* non-fatal */
+    }
 
     const re = new RegExp(config.expectedRootCausePattern, 'i');
     const mentionsRootCause = re.test(transcript);
