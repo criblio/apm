@@ -223,6 +223,19 @@ histograms: \`summarize ... by svc, bin(_time, 60s)\`.
 
 ### Smooth-climb 5xx (leak signature) — check FIRST when errors are climbing
 
+**Prompt-pattern trigger — this section applies when the question
+mentions ANY of:**
+- "climb", "climbing", "trending up", "monotonic", "gradient"
+- "over the last N days" or "over N weeks"
+- "X% to Y%" or "from <small> to <large>" framed as a trend
+- "error rate has grown" / "rising error rate"
+
+If you see any of those signals, **RUN THE FOUR LEAK CHECKS BELOW
+BEFORE running any errors-by-operation or errors-by-service query.**
+Investigations that start by "find dominant error signature" land on
+whatever leaf service has the highest current error count — but in
+a leak, that leaf service isn't the cause. It's the symptom.
+
 **Do not chase named failure scenarios (paymentFailure, kafkaQueueProblems,
 productCatalogFailure, etc.) when the error pattern is a smooth climb
 over many hours or days.** Named failure scenarios are step changes —
@@ -234,20 +247,26 @@ service process.
 **The leak signature** has four ingredients. If three or more are
 present, work the leak hypothesis BEFORE looking at flagd flags:
 
-1. **Smooth monotonic climb in error_rate.** Compute the slope over
-   the alert window AND over the prior 7 days. If both are positive
-   AND similar magnitude, the trend is steady — not a recent event.
-   Pattern:
+1. **Smooth monotonic climb in error_rate.** Use the query below
+   AS WRITTEN — it's tuned to stay under Cribl Search's query-time
+   ceiling on multi-day windows. Don't add per-operation /
+   per-status group-bys to the same query; those blow up the
+   working set and the search times out. If the suspect service
+   is named, pin it with the \`| where svc == "..."\` clause:
    \`\`\`kql
    dataset="${datasetId}" | where isnotnull(end_time_unix_nano)
      | extend svc=tostring(resource.attributes['service.name']),
               is_error=(tostring(status.code)=="2")
-     | summarize total=count(), errs=countif(is_error)
-         by svc, bin(_time, 1h)
+     | where svc == "<implicated service>"
+     | summarize total=count(), errs=countif(is_error) by bin(_time, 1h)
      | extend err_rate=todouble(errs)/todouble(total)
-     | sort by svc, _time
+     | sort by _time asc
    \`\`\`
-   Then read the err_rate values across the window. If you see
+   If a 7-day window still times out, fall back to 24h with hourly
+   bins AND check yesterday's average error rate via a second 1d
+   window earliest=-2d latest=-1d — that gives you the same
+   "is this a climb or a step?" signal without a single wide
+   query. Read the err_rate values across the buckets. If you see
    0.1% → 1% → 5% → 12% across consecutive buckets, that is a
    leak fingerprint. A flagd flip would have shown 0.1% → 0.1% →
    0.1% → 12% (step), not the gradient.
@@ -308,6 +327,21 @@ recommend code changes ("remove session.id stamping") — that's a
 fix, not a verification. A pod restart resets the leak and confirms
 the diagnosis: if error rate drops to baseline after restart, the
 diagnosis was correct.
+
+**Stopping rule.** Once the leak signature is confirmed (three or
+more of the four ingredients present), STOP investigating the
+downstream error signatures. The 100%-error gRPC operation you
+see at the leaf isn't the cause — it's a side-effect of the BFF's
+memory/cardinality pressure timing out its own gRPC calls. Going
+deeper into the leaf service's traces wastes turns and lands on
+the wrong conclusion. Call \`present_investigation_summary\`
+immediately with:
+- \`findings\`: each of the leak ingredients you confirmed, one
+  per row, with the actual numeric value (slope per hour, pod
+  uptime, top cardinality attribute + dcount)
+- \`conclusion\`: name the implicated service + recommend
+  \`kubectl rollout restart deploy/<service>\` as the verification
+  action.
 
 ### Common failure modes to check (in priority order)
 

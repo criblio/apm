@@ -89,7 +89,11 @@ const scenario: ScenarioDeclaration = {
     // a downstream service.
     expectedRootCausePattern:
       'leak|cardinality|session\\.id|pod (age|uptime|restart)|rollout restart|long(-| )running pod',
-    waitMs: 6 * 60_000,
+    // 10m — the leak playbook involves 4 separate KQL queries
+    // (slope, downstream health, pod uptime, cardinality) and an
+    // explicit decision step. Realistic completion is ~6-8 min;
+    // 10m leaves headroom without bloating the per-scenario budget.
+    waitMs: 10 * 60_000,
   },
 };
 
