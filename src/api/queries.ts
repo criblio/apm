@@ -693,6 +693,45 @@ export function rawRecentErrorSpans(limit: number = 300): string {
  * adds export. Calling this directly is useful for ad-hoc
  * inspection and unit testing.
  */
+/**
+ * Attribute-name catalog. Enumerates every (svc, attr_name) pair
+ * observed in the recent span sample via `bag_keys(attributes)` →
+ * `mv-expand`. The catalog is the foundation for cardinality / leak
+ * detection — once we know what attribute names exist per service,
+ * a follow-up search computes dcount for each (auto-generated KQL).
+ *
+ * Output schema: root-style with one row per (svc, attr_name):
+ *   svc, attr_name, n_spans_with_key, last_seen
+ *
+ * Filter at the lookup level: rows with `n_spans_with_key >= 10`
+ * stay (a name has to appear on ≥10 spans in the window to count
+ * as "present"). This filters one-off trace attributes that aren't
+ * structural.
+ *
+ * Bag-keys is the only reliable way to enumerate attribute names
+ * dynamically in Cribl KQL — `foldkeys` output is opaque,
+ * `extract_all` on `_raw` returns empty arrays on real spans
+ * (regex size limit), and dynamic indexing `attributes[col]` is
+ * not supported. See HEURISTICS.md §1 for the rationale.
+ *
+ * Cadence: 6h (attribute names change slowly). Window: 5m sample —
+ * bag_keys + mv-expand is heavy per row; keep the input set tiny.
+ */
+export function attrCatalog(sampleSpans: number = 5000): string {
+  return `${spansBase()}
+    | limit ${sampleSpans}
+    | extend svc=tostring(resource.attributes['service.name']),
+             ks=bag_keys(attributes)
+    | mv-expand attr_name=ks
+    | extend attr_name=tostring(attr_name)
+    | where isnotempty(attr_name)
+    | summarize n_spans_with_key=count(),
+                last_seen=max(_time)
+        by svc, attr_name
+    | where n_spans_with_key >= 10
+    | project svc, attr_name, n_spans_with_key, last_seen`;
+}
+
 export function traceOriginators(): string {
   return `${spansBase()}
     | where tostring(parent_span_id) == ""

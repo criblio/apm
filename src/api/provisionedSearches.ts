@@ -54,6 +54,13 @@ export const ALERT_PREV_LOOKUP = 'criblapm_alert_prev';
  * and Phase 0 validation against staging. */
 export const TRACE_ORIGINATORS_LOOKUP = 'criblapm_trace_originators';
 
+/** Per-(svc, attr_name) catalog of attribute names observed in
+ * recent spans. Foundation for the cardinality / leak-fingerprint
+ * detection pipeline — once we know what attributes exist per
+ * service, a follow-up cardinality search computes dcount for
+ * each. See HEURISTICS.md §"Cardinality detection". */
+export const ATTR_CATALOG_LOOKUP = 'criblapm_attr_catalog';
+
 /** Lookup tables that must exist before scheduled searches that
  * `lookup` against them can be created. The framework provisioner
  * probes each by name and runs the seed query if absent. */
@@ -69,6 +76,10 @@ export const SEED_LOOKUPS: SeedLookup[] = [
   {
     name: TRACE_ORIGINATORS_LOOKUP,
     seedQuery: `dataset="otel" | limit 1 | project root_svc="__init__", type="unknown", total=0, n_browser=0, n_loadtest=0, n_probe=0, n_msg=0, n_name_user=0, n_name_service=0 | export mode=overwrite description="Cribl APM - trace originators init" to lookup ${TRACE_ORIGINATORS_LOOKUP}`,
+  },
+  {
+    name: ATTR_CATALOG_LOOKUP,
+    seedQuery: `dataset="otel" | limit 1 | project svc="__init__", attr_name="__init__", n_spans_with_key=0, last_seen=0 | export mode=overwrite description="Cribl APM - attr catalog init" to lookup ${ATTR_CATALOG_LOOKUP}`,
   },
 ];
 
@@ -108,6 +119,19 @@ function traceOriginatorsExportQuery(): string {
     | export mode=overwrite
              description="Cribl APM - trace originator classification"
              to lookup ${TRACE_ORIGINATORS_LOOKUP}`;
+}
+
+/**
+ * Attribute-name catalog wrapper — same pattern. Q.attrCatalog()
+ * holds the bag_keys discovery logic; this function adds export.
+ * Cardinality (dcount per (svc, attr_name)) is a follow-up that
+ * generates its KQL at provision time from the catalog contents.
+ */
+function attrCatalogExportQuery(): string {
+  return `${Q.attrCatalog(5000)}
+    | export mode=overwrite
+             description="Cribl APM - attribute name catalog"
+             to lookup ${ATTR_CATALOG_LOOKUP}`;
 }
 
 /**
@@ -319,6 +343,20 @@ export function getProvisioningPlan(): ProvisionedSearch[] {
       latest: 'now',
       sampleRate: 1,
       schedule: { ...panelCadence },
+    },
+    // ── Attribute-name catalog (leak detection foundation) ──
+    {
+      id: 'criblapm__attr_catalog',
+      name: 'Cribl APM - attribute name catalog',
+      description:
+        'Cribl APM: enumerates the attribute names observed on spans per service via bag_keys + mv-expand on a recent sample. Output is the foundation for the cardinality / leak-fingerprint pipeline. See HEURISTICS.md §"Cardinality detection".',
+      query: attrCatalogExportQuery(),
+      earliest: '-5m',
+      latest: 'now',
+      sampleRate: 1,
+      // Hourly is enough — attribute names don't change minute to
+      // minute, and the bag_keys+mv-expand pass is per-row expensive.
+      schedule: { ...hourly },
     },
   ];
 }
