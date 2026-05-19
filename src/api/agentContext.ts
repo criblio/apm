@@ -247,12 +247,27 @@ service process.
 **The leak signature** has four ingredients. If three or more are
 present, work the leak hypothesis BEFORE looking at flagd flags:
 
-1. **Smooth monotonic climb in error_rate.** **Multi-day windows
-   (-7d / -10d) routinely time out on Cribl Search.** Don't ask
-   for one. Instead, run THREE SHORT WINDOWS in sequence and read
-   the slope across them — each query completes in seconds. Use
-   the suspect service's name in the \`| where\` clause to keep
-   the working set tiny:
+1. **Smooth monotonic climb in error_rate.** **PREFERRED: read the
+   pre-computed lookup.** The app provisions a daily snapshot search
+   that maintains \`criblapm_error_rate_daily\` with 7 days of
+   per-service error rates already aggregated. Read it in one
+   small query rather than computing the slope yourself:
+   \`\`\`kql
+   dataset="${datasetId}" | take 1 | project svc="<implicated service>"
+     | lookup criblapm_error_rate_daily on svc
+     | project day, total, errs, err_rate_pct
+     | sort by day asc
+   \`\`\`
+   That returns up to 7 rows with the slope ready to read. If the
+   numbers walk from <1% to >10% over consecutive days, that's a
+   smooth climb — leak fingerprint.
+
+   **FALLBACK** if the lookup isn't populated yet (first deploy,
+   <24h old): run FOUR SHORT WINDOWS **SEQUENTIALLY, not in
+   parallel.** The workspace's search queue caps at 20 concurrent
+   jobs; firing four searches at once gets you 429s. Run the first,
+   wait for it, then the next. Use the suspect service's name in
+   the \`| where\` clause to keep the working set tiny:
    \`\`\`kql
    // window 1: current state, last hour
    dataset="${datasetId}" | where isnotnull(end_time_unix_nano)
@@ -299,13 +314,29 @@ present, work the leak hypothesis BEFORE looking at flagd flags:
    Parse the ISO timestamp. If uptime > 7d AND error rate has > 5x'd
    over that uptime, the leak hypothesis is strongly supported.
 
-4. **High-cardinality attribute growing without bound.** Pick a
-   handful of plausible-fingerprint attributes and run dcount per
-   hour. \`session.id\`, \`user.id\`, \`enduser.id\`, \`request.id\`,
-   \`correlation.id\` are the usual suspects but a fingerprint can be
-   anything stamped on every span. \`trace_id\` is exempt — it's
-   inherently unique. Use \`bag_keys(attributes)\` to enumerate
-   what's available on a sample span first:
+4. **High-cardinality attribute growing without bound.**
+   **PREFERRED: read the attribute catalog lookup**, which is
+   populated by a scheduled bag_keys discovery search and tells
+   you which attribute names exist per service:
+   \`\`\`kql
+   dataset="${datasetId}" | take 1 | project svc="<implicated service>"
+     | lookup criblapm_attr_catalog on svc
+     | project attr_name, n_spans_with_key
+     | sort by n_spans_with_key desc
+   \`\`\`
+   Walk the result, pick obvious fingerprint candidates
+   (\`session.id\`, \`user.id\`, \`enduser.id\`, \`request.id\`,
+   \`correlation.id\`, anything ending in \`.id\` that isn't
+   \`trace_id\`/\`span_id\`/\`parent_span_id\`), and run a single
+   dcount query per candidate.
+
+   **FALLBACK** (no catalog yet): pick a handful of plausible-
+   fingerprint attributes from the known OTel/semconv set and
+   query directly. \`session.id\`, \`user.id\`, \`enduser.id\`,
+   \`request.id\`, \`correlation.id\` are the usual suspects but a
+   fingerprint can be anything stamped on every span. \`trace_id\`
+   is exempt — it's inherently unique. Use \`bag_keys(attributes)\`
+   to enumerate what's available on a sample span first:
    \`\`\`kql
    dataset="${datasetId}" | where isnotnull(end_time_unix_nano)
      | extend svc=tostring(resource.attributes['service.name'])
