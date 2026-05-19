@@ -109,7 +109,79 @@ via `db.statement` / `db.system`.
 Streaming logs and spans as they arrive. "Tail" button on the
 Logs page.
 
-### 9. Universal data mapping (schema-agnostic APM)
+### 9. Leak-fingerprint detection — hardening
+
+The 2026-05-12 session shipped the architecture for detecting smooth-
+climb / memory-leak / cardinality-leak failures that the named flagd
+scenarios don't cover. Foundations are in (Investigator playbook,
+attribute catalog, daily error-rate snapshot, pod uptime feed into
+knownSignals, origin attribution in trace view). The
+`leakFingerprint` eval scores 0.70 (3/3 surface checks; Investigator
+times out on cluster queue saturation, not on misdiagnosis — the
+transcript shows the agent correctly opens with the leak hypothesis
+and follows the playbook step by step).
+
+Three follow-ups to take the eval to 1.0:
+
+- **Cardinality dcount search** (the actual per-(svc, attr_name)
+  growth signal). Today only the attribute *catalog* ships; computing
+  dcount needs KQL that's regenerated at provision time from the
+  catalog contents (each attribute baked into the query as a static
+  name, since Cribl KQL doesn't support `attributes[col]` dynamic
+  indexing). Requires a provisioner change to read the catalog
+  lookup before building the plan. Bigger plumbing change held back
+  in the foundation commit.
+
+- **`lookup` semantics: returns one row per key**. The
+  `criblapm_error_rate_daily` lookup has 7 daily rows per service,
+  but `| project svc="frontend" | lookup criblapm_error_rate_daily
+  on svc` returns only ONE row — the first match. Playbook's "read
+  the 7-day slope in one query" pattern only delivers one data
+  point. Workaround: restructure the lookup as one row per service
+  with the daily history as a list field (`days_json`, or seven
+  columns `d0_pct .. d6_pct`). Tracked as a Cribl ergonomic issue
+  in "Blocked on Cribl" below.
+
+- **Eval `runInvestigator` plumbing**: today the eval clicks the
+  top-nav "Investigate" link, which lands on the free-form composer
+  with no `knownSignals` seeded. The C work plumbs pod uptime into
+  `buildServiceSeed` on Service Detail — but the eval doesn't route
+  through Service Detail, so those signals never reach the agent.
+  Two options: (a) change `runInvestigator` to navigate Service
+  Detail and click ITS Investigate button (changes the prompt
+  contract for the eval), or (b) wire the free-form composer to
+  auto-fetch known signals when the user's prompt mentions a service
+  name. Option (b) is the better product change.
+
+Additional polish that didn't land in the foundation commits:
+
+- **Drift alert state-machine wiring.** The 7-day daily error-rate
+  history lookup exists; the alert evaluator doesn't yet emit a
+  `drift` signal type from it. State machine + UI sparkline +
+  "errors trending up: X% → Y%" affordance on service rows are
+  separate features.
+- **Pod-uptime timeline overlay on Service Detail.** Today the
+  uptime feeds `knownSignals` and renders in the Investigator
+  context, but there's no visible chip or timeline marker on the
+  Service Detail page itself.
+- **`tests/scenarios/payment-failure.spec.ts` iframe migration.**
+  Iframe-nav fix updated `apm-smoke.spec.ts` and the eval engine,
+  but payment-failure.spec.ts still uses `page.getByRole(...)` on
+  the main frame and would fail the same way the smoke test did
+  before. Mechanical update — copy the `apmFrame(page)` pattern.
+- **Extract `attributeOrigin` from `SpanDetail.tsx`** to its own
+  utility module and unit-test it. The function is pure and the
+  branching logic deserves the same coverage `errorFilter.ts`
+  rules get.
+- **Cluster capacity / scheduled-search load.** The workspace now
+  has ~16 `criblapm__*` scheduled searches; with `max: 20`
+  concurrent search jobs, the queue is consistently full and live
+  Investigator queries are stuck behind 56-57s queue waits. Some
+  scheduled searches could move to longer cadences without losing
+  value (op-baselines is hourly already; the per-5-min cadence on
+  several panel caches is probably aggressive). Audit + reduce.
+
+### 10. Universal data mapping (schema-agnostic APM)
 
 The APM currently depends on OpenTelemetry's field naming conventions
 (`resource.attributes['service.name']`, `status.code`, `end_time_unix_nano`, etc.).
@@ -158,6 +230,40 @@ then roll out to all queries.
   on real data when a second `summarize` uses `max(iff(...))` on
   output from a prior `summarize`. Workaround: split into separate
   scheduled searches joined via lookups. Bug report pending.
+
+- **`lookup` returns only one row per key.** When a lookup table
+  has multiple rows for the same key, `| project key="X" | lookup
+  T on key` returns only the first match — not all matches.
+  Confirmed against `criblapm_error_rate_daily` which holds 7
+  daily rows per service: the join collapses to one. This shapes
+  every "read a series from a lookup" pattern (drift, daily
+  history, per-attribute cardinality over time, etc.).
+  Workarounds today: pack the series into one row (CSV string,
+  array column, or N parallel columns). A real fix lets the
+  consumer say "return all matching rows."
+
+- **Dynamic field access `attributes[col_name]` is rejected.**
+  KQL parses `attributes['session.id']` (static string) fine but
+  fails on `attributes[some_column]` where `some_column` holds a
+  value chosen at query time. This is the constraint that makes
+  per-(svc, attr_name) cardinality search require KQL generated at
+  provision time rather than a single dynamic search reading from
+  the catalog lookup at query time. `bag_keys` discovers names;
+  `bag_values` doesn't exist either, so even pairing keys with
+  their values per row inside one query isn't possible. The most
+  natural fix is dynamic indexing or a `bag_values` companion.
+
+- **Long-window aggregations (-7d hourly bins, -10d any bins)
+  routinely exceed the 60s search-job timeout.** Workaround: run
+  shorter windows in sequence and aggregate client-side, or use
+  daily bins instead of hourly (still ~60-70s on -7d but
+  completes). Affects every "show me the multi-day trend" feature.
+
+- **Concurrent search queue limit (`max: 20`).** With the app's
+  ~16 scheduled searches firing on their cadences, a user-issued
+  investigation routinely waits >56s for each query to dequeue.
+  Either the per-pack quota needs raising or scheduled searches
+  need to share workers more efficiently.
 
 ### Future categories (whole new signal types)
 
