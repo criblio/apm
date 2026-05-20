@@ -65,7 +65,12 @@ export const ATTR_CATALOG_LOOKUP = 'criblapm_attr_catalog';
  * Investigator to compute multi-day slope in one cheap query
  * (rather than scanning raw spans, which times out at 7d). The
  * alert pipeline can also surface a "drift" signal from this. */
-export const ERROR_RATE_DAILY_LOOKUP = 'criblapm_error_rate_daily';
+/** Per-service 6-day error-rate history pivoted to one row per
+ * service (columns d1..d6 = yesterday through 6 days ago). Read
+ * by the Investigator leak-fingerprint playbook. The pivot is
+ * essential — Cribl `lookup ... on svc` returns only the first
+ * matching row, so a per-day-row schema would be unreadable. */
+export const ERROR_RATE_HISTORY_LOOKUP = 'criblapm_error_rate_history';
 
 /** Lookup tables that must exist before scheduled searches that
  * `lookup` against them can be created. The framework provisioner
@@ -88,8 +93,8 @@ export const SEED_LOOKUPS: SeedLookup[] = [
     seedQuery: `dataset="otel" | limit 1 | project svc="__init__", attr_name="__init__", n_spans_with_key=0, last_seen=0 | export mode=overwrite description="Cribl APM - attr catalog init" to lookup ${ATTR_CATALOG_LOOKUP}`,
   },
   {
-    name: ERROR_RATE_DAILY_LOOKUP,
-    seedQuery: `dataset="otel" | limit 1 | project svc="__init__", day=0, total=0, errs=0, err_rate_pct=0.0 | export mode=overwrite description="Cribl APM - error rate daily init" to lookup ${ERROR_RATE_DAILY_LOOKUP}`,
+    name: ERROR_RATE_HISTORY_LOOKUP,
+    seedQuery: `dataset="otel" | limit 1 | project svc="__init__", d1_pct=0.0, d2_pct=0.0, d3_pct=0.0, d4_pct=0.0, d5_pct=0.0, d6_pct=0.0, d1_total=0, d2_total=0, d3_total=0, d4_total=0, d5_total=0, d6_total=0 | export mode=overwrite description="Cribl APM - error rate history init" to lookup ${ERROR_RATE_HISTORY_LOOKUP}`,
   },
 ];
 
@@ -138,18 +143,27 @@ function traceOriginatorsExportQuery(): string {
  * generates its KQL at provision time from the catalog contents.
  */
 function attrCatalogExportQuery(): string {
-  return `${Q.attrCatalog(5000)}
+  // Sample 1000 spans (down from 5000). The bag_keys + mv-expand
+  // pass blows the row count up by the per-span key count (~20),
+  // i.e. 5000 input → 100K intermediate rows. The 2026-05-19
+  // baseline showed this search hitting Cribl's `"Unexpected
+  // 'reset' signal"` (resource exhaustion / saturation kill) on
+  // every scheduled run. 1000 input → 20K intermediate is still
+  // plenty for discovering attribute names but lets the run finish.
+  return `${Q.attrCatalog(1000)}
     | export mode=overwrite
              description="Cribl APM - attribute name catalog"
              to lookup ${ATTR_CATALOG_LOOKUP}`;
 }
 
-/** Daily error-rate snapshot to lookup — wrapper for Q.errorRateDaily7d. */
-function errorRateDailyExportQuery(): string {
-  return `${Q.errorRateDaily7d()}
+/** 6-day per-service error-rate history snapshot. Runs once per
+ * day; six of the seven days the previous version recomputed each
+ * hour were immutable, so 23/24 of that work was wasted. */
+function errorRateHistoryExportQuery(): string {
+  return `${Q.errorRateHistory()}
     | export mode=overwrite
-             description="Cribl APM - 7-day per-service daily error rate"
-             to lookup ${ERROR_RATE_DAILY_LOOKUP}`;
+             description="Cribl APM - 6-day per-service error-rate history (yesterday..-6d), pivoted one row per svc"
+             to lookup ${ERROR_RATE_HISTORY_LOOKUP}`;
 }
 
 /**
@@ -331,36 +345,39 @@ export function getProvisioningPlan(): ProvisionedSearch[] {
       id: 'criblapm__metric_catalog',
       name: 'Cribl APM - metric name catalog',
       description:
-        'Cribl APM: pre-computed metric name catalog with sample counts and service coverage. Extracts metric field names from _raw via regex (wide-column schema). Read via $vt_results by the Metrics page picker.',
+        'Cribl APM: pre-computed metric name catalog with sample counts and service coverage. Extracts metric field names from _raw via regex (wide-column schema). Read via $vt_results by the Metrics page picker. Hourly cadence — metric names rarely appear/disappear within an hour, and the regex pass costs ~4s per run.',
       query: Q.listMetricNames(),
       earliest: '-1h',
       latest: 'now',
       sampleRate: 1,
-      schedule: { ...panelCadence },
+      // Was every 5min (panelCadence) — saves ~48s/hr.
+      schedule: { ...hourly, cronSchedule: '7 * * * *' },
     },
     // ── Op baseline lookup ──────────────────────────────────
     {
       id: 'criblapm__op_baselines',
       name: 'Cribl APM - per-op 24h latency baselines',
       description:
-        'Cribl APM: rolling 24h per-(service, operation) p50/p95/p99 baseline, materialized as the criblapm_op_baselines lookup for the anomaly detector.',
+        'Cribl APM: rolling 24h per-(service, operation) p50/p95/p99 baseline, materialized as the criblapm_op_baselines lookup for the anomaly detector. Every 6h — baselines move slowly, and this is the second-heaviest search in the pack (~43s p50).',
       query: opBaselineQuery(),
       earliest: '-24h',
       latest: 'now',
       sampleRate: 1,
-      schedule: { ...hourly },
+      // Was hourly — saves ~35s/hr.
+      schedule: { ...hourly, cronSchedule: '23 */6 * * *' },
     },
     // ── Trace originator classification ─────────────────────
     {
       id: 'criblapm__trace_originators',
       name: 'Cribl APM - trace originator classification',
       description:
-        'Cribl APM: classifies each captured trace-root service as user-origin (real or synthetic user) or service-origin (cron, queue consumer) by user-agent value, messaging.system, and span-name patterns. Output goes to the criblapm_trace_originators lookup, joined by the error filter at query time. See docs/research/error-filter-design.md.',
+        'Cribl APM: classifies each captured trace-root service as user-origin (real or synthetic user) or service-origin (cron, queue consumer) by user-agent value, messaging.system, and span-name patterns. Output goes to the criblapm_trace_originators lookup, joined by the error filter at query time. See docs/research/error-filter-design.md. Hourly — originator type for a service changes ~never.',
       query: traceOriginatorsExportQuery(),
-      earliest: '-5m',
+      earliest: '-15m',
       latest: 'now',
       sampleRate: 1,
-      schedule: { ...panelCadence },
+      // Was every 5min — saves ~12s/hr.
+      schedule: { ...hourly, cronSchedule: '11 * * * *' },
     },
     // ── Attribute-name catalog (leak detection foundation) ──
     {
@@ -376,21 +393,17 @@ export function getProvisioningPlan(): ProvisionedSearch[] {
       // minute, and the bag_keys+mv-expand pass is per-row expensive.
       schedule: { ...hourly },
     },
-    // ── 7-day per-service daily error-rate history (drift) ──
+    // ── 6-day per-service error-rate history (drift) ─────────
     {
-      id: 'criblapm__error_rate_daily',
-      name: 'Cribl APM - 7-day per-service daily error rate',
+      id: 'criblapm__error_rate_history',
+      name: 'Cribl APM - 6-day per-service error-rate history',
       description:
-        'Cribl APM: per-service error-rate snapshot bucketed by day, 7-day window. Read by the Investigator playbook (leak signature, ingredient #1) to compute multi-day slope in ONE cheap query rather than scanning raw spans (which times out at -7d hourly). Also feeds future drift-alert signal on the alert pipeline.',
-      query: errorRateDailyExportQuery(),
+        'Cribl APM: per-service error-rate snapshot for yesterday + 5 prior days, pivoted one row per service (d1..d6 columns). Read by the Investigator playbook (leak signature, ingredient #1) to compute multi-day slope in ONE cheap lookup query. Runs ONCE per day at 00:30 UTC — completed-day rows are immutable, so hourly recompute was wasted work (was 134s/hr; now 134s/day).',
+      query: errorRateHistoryExportQuery(),
       earliest: '-7d',
       latest: 'now',
       sampleRate: 1,
-      // Daily snapshots only need to be refreshed daily. The 7d
-      // aggregate is heavy on staging (~60-70s); running hourly
-      // would waste worker capacity. The 1st daily run after a
-      // deploy populates the lookup.
-      schedule: { ...hourly, cronSchedule: '17 * * * *' },
+      schedule: { ...hourly, cronSchedule: '30 0 * * *' },
     },
   ];
 }

@@ -173,3 +173,136 @@ Re-grounding the plan against the baseline:
 Ship the two-failure fix first (separate PR). Then Phase 2
 cadence audit. Re-run this baseline after each change, append
 to this document for the before / after diff.
+
+---
+
+## 2026-05-20 — round 1 changes shipped
+
+A combined PR landed five changes ahead of Phase 2 proper. Each
+either eliminates wasted recomputation or removes a known failure
+mode the baseline surfaced. Numbers are projected savings against
+the baseline above; a fresh measurement run will append below.
+
+### Changes shipped
+
+1. **`criblapm__error_rate_daily` → `criblapm__error_rate_history`**
+   (renamed, reshaped, slowed cadence). The old version
+   recomputed the same 7-day aggregate every hour; 6 of those 7
+   days were immutable, so 23/24 of the work was wasted. The new
+   version:
+   - Runs **once per day at 00:30 UTC** instead of hourly
+     (`30 0 * * *`).
+   - Outputs **one row per service** with columns
+     `d1_pct .. d6_pct` (yesterday through 6 days ago) instead of
+     one row per (svc, day). This fixes the "lookup returns only
+     one row per key" trap that made the old lookup unreadable
+     by the Investigator playbook.
+   - Today's data point intentionally lives elsewhere (the live
+     1h service summary) — today is partial and would skew the
+     slope.
+   - Projected saving: **~129 s/hr** (134.8 s/hr → 5.6 s/hr
+     amortized).
+
+2. **`criblapm__metric_catalog` cadence drop**: 5min →
+   hourly (`7 * * * *`). Metric names don't appear/disappear at
+   5-min granularity. Projected saving: **~48 s/hr**.
+
+3. **`criblapm__trace_originators` cadence drop**: 5min → hourly
+   (`11 * * * *`); window expanded -5m → -15m to keep the
+   sample size meaningful at the slower cadence. Originator type
+   for a service changes ~never. Projected saving: **~12 s/hr**.
+
+4. **`criblapm__op_baselines` cadence drop**: hourly → every 6h
+   (`23 */6 * * *`). Per-op p95 baselines move slowly; this is
+   the second-heaviest search in the pack. Projected saving:
+   **~35 s/hr**.
+
+5. **`criblapm__attr_catalog` sample reduction**: 5000 → 1000
+   spans. The bag_keys + mv-expand pipeline explodes the row
+   count ~20x per input span; 5000 input → 100K intermediate
+   was hitting Cribl's `"Unexpected 'reset' signal"`
+   (resource-exhaustion kill) on every scheduled run. 1000
+   input is plenty for discovery and lets the run complete.
+   **Fixes a failure**, doesn't change steady-state cost.
+
+### Investigator playbook update
+
+`staticPreamble` in `agentContext.ts` now points the leak
+fingerprint check at the new lookup shape — one `lookup ... on
+svc` per service returns six daily error-rate percentages in a
+single row. Today's data point comes from a separate live
+summary query. The playbook calls out the cron lag explicitly
+("if the lookup isn't populated yet, fall back to four short
+windows").
+
+### Projected aggregate impact
+
+| Change | Saving (s/hr) |
+|---|---:|
+| error_rate_history daily | 129 |
+| metric_catalog hourly | 48 |
+| op_baselines every-6h | 35 |
+| trace_originators hourly | 12 |
+| attr_catalog stable | 0 (correctness) |
+| **Total projected** | **224** |
+
+That's **29% of the pack's 777 s/hr baseline** budget removed,
+before any consolidation or Lakehouse work. Re-measurement run
+will confirm.
+
+### Operational note
+
+The new `criblapm__error_rate_history` search runs at 00:30 UTC
+daily, so the lookup will be empty (seed sentinel only) until the
+first scheduled run after deploy. The Investigator playbook
+falls back to the four-short-windows pattern when the lookup is
+empty, so this is graceful. To populate immediately, kick a
+manual run from the Cribl UI.
+
+### Remaining audit findings (not shipped here)
+
+Documented for the follow-up cycle:
+
+- **`home_alerts_prev` is failing on every run** (same
+  `"Unexpected 'reset' signal"` as the old attr_catalog). This
+  query mirrors `home_service_summary` exactly — does the same
+  three span scans (primary scan + two scans inside the
+  `errorClassificationJoins` subqueries) but on the
+  previous-window range. The alert evaluator reads its output;
+  while it's down, alerts are running against a stale
+  `criblapm_alert_prev` lookup. **Highest-priority follow-up.**
+  Likely fix: split the search into a cheap branch (requests +
+  percentiles, no joins) and a separate filtered-errors branch
+  that operates only on `is_error == true` rows, then merge.
+  Same pattern would also speed up `home_service_summary`
+  (~5-7 s/run × 12 runs/hr = ~60-84 s/hr savings).
+
+- **`sysarch_dependencies` + `sysarch_messaging_deps`** (~7.2s
+  each, both running every 5 min on -1h) share the SAME input
+  span scan and only differ in the join's right-side filter
+  (RPC edges vs messaging edges). Consolidating into one search
+  that emits both shapes via `union` and `case`-tagged rows
+  would save one full -1h span scan per cycle (~75 s/hr).
+
+- **`home_slow_traces`, `svc_operations`,
+  `home_service_time_series`** (all ~3s, 5min, -1h) are
+  candidates for the broader "cache the primary scan in
+  `$vt_results` once per cycle, downstream emit-only searches
+  read from cache" pattern this pack already uses in the alert
+  pipeline. The savings per individual search are small but the
+  pattern compounds.
+
+- **The triple-scan inside `errorClassificationJoins`** is the
+  single largest invisible cost across the alert pipeline. Every
+  call to `serviceSummary` / `prevWindowSummary` /
+  `rawRecentErrorSpans` runs the function — each invocation does
+  3 span scans (primary + 2 inside the subqueries). Pre-computing
+  `(trace_id, trace_origin)` and `(trace_id, parent_span_id) →
+  has_error_child` as small lookups would let the consumers
+  replace two leftouter joins with cheap lookup operations. This
+  is the dataset-level acceleration story Lakehouse indexed
+  fields exist to solve, but it's also tractable in pure KQL via
+  scheduled pre-compute.
+
+Each of these is its own design conversation; not bundled into
+the current change.

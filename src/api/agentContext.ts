@@ -248,19 +248,32 @@ service process.
 present, work the leak hypothesis BEFORE looking at flagd flags:
 
 1. **Smooth monotonic climb in error_rate.** **PREFERRED: read the
-   pre-computed lookup.** The app provisions a daily snapshot search
-   that maintains \`criblapm_error_rate_daily\` with 7 days of
-   per-service error rates already aggregated. Read it in one
-   small query rather than computing the slope yourself:
+   pre-computed lookup.** The app provisions a daily snapshot
+   search that maintains \`criblapm_error_rate_history\` with the
+   last 6 *completed* days, **pivoted one row per service** (so
+   \`lookup ... on svc\` returns the answer in one row, not seven).
+   Read it like:
    \`\`\`kql
    dataset="${datasetId}" | take 1 | project svc="<implicated service>"
-     | lookup criblapm_error_rate_daily on svc
-     | project day, total, errs, err_rate_pct
-     | sort by day asc
+     | lookup criblapm_error_rate_history on svc
+     | project svc, d1_pct, d2_pct, d3_pct, d4_pct, d5_pct, d6_pct
    \`\`\`
-   That returns up to 7 rows with the slope ready to read. If the
-   numbers walk from <1% to >10% over consecutive days, that's a
-   smooth climb — leak fingerprint.
+   Columns: \`d1_pct\` = yesterday's error-rate %, \`d2_pct\` = 2
+   days ago, ..., \`d6_pct\` = 6 days ago. Today's rate is
+   intentionally NOT in this lookup (today's partial; would skew
+   the slope). Get today's rate from the live service summary:
+   \`\`\`kql
+   dataset="${datasetId}" | where isnotnull(end_time_unix_nano)
+     | extend svc=tostring(resource.attributes['service.name']),
+              is_error=(tostring(status.code)=="2")
+     | where svc == "<implicated service>"
+     | summarize total=count(), errs=countif(is_error)
+     | extend err_rate_pct=round(100.0*todouble(errs)/todouble(total), 2)
+   \`\`\`
+   Walk the seven numbers: today, d1, d2, d3, d4, d5, d6.
+   If they form a smooth climb (e.g. \`0.5, 1.2, 2.8, 5.4, 9.7,
+   12.4, 14.1\`), that's a leak fingerprint. A flagd-style step
+   change would look like \`0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 14.1\`.
 
    **FALLBACK** if the lookup isn't populated yet (first deploy,
    <24h old): run FOUR SHORT WINDOWS **SEQUENTIALLY, not in

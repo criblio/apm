@@ -721,30 +721,63 @@ export function podUptime(svc?: string): string {
 }
 
 /**
- * Per-service error-rate history, bucketed by day. Foundation for
- * the drift / slope signal — the alert pipeline today only compares
- * current vs previous window (1h vs 1h), which can't see a multi-
- * day climb. This produces a 7-day history that the Investigator
- * can read in one cheap query to compute slope without scanning
- * raw spans.
+ * Per-service error-rate history for the last 6 *completed* days
+ * (yesterday through 6 days ago). Pivoted so the lookup output is
+ * **one row per service** with `d1..d6` columns — necessary because
+ * Cribl `lookup ... on svc` returns only the FIRST matching row, so
+ * a per-day-row schema is unreadable by consumers (see "Blocked on
+ * Cribl" in ROADMAP.md).
  *
- * Cluster reality: a 7d window with HOURLY bins routinely times
- * out at the 60s search ceiling on staging. DAILY bins over 7d
- * still take ~60-70s but DO complete. We schedule this once a
- * day so a long completion time is acceptable — the cluster
- * isn't busy when this fires.
+ * Today's number deliberately isn't in this snapshot: today is
+ * partial and changes by the hour, so the "now" data point comes
+ * from `criblapm__home_service_summary` (5-min cadence on -1h) when
+ * the Investigator needs it. Two lookups, two readers, one cheap
+ * read each.
  *
- * Output: (svc, day, total, errs, err_rate_pct).
+ * Cluster reality: a 7d window with DAILY bins completes in ~60-70s
+ * on staging — would time out at HOURLY bins, never mind smaller.
+ * The scheduled-search wrapper runs this **once per day** (was
+ * hourly; 24x worker-time saving). See
+ * docs/sessions/2026-05-19-search-perf-baseline.md for the
+ * before-numbers.
+ *
+ * Output columns: svc, d1_pct..d6_pct, d1_total..d6_total. `d1` is
+ * yesterday, `d6` is 6 days ago. Naming matches the pattern an
+ * operator would say out loud ("look at the last week, day by day").
  */
-export function errorRateDaily7d(): string {
+export function errorRateHistory(): string {
   return `${spansBase()}
     | extend svc=tostring(resource.attributes['service.name']),
              is_error=(tostring(status.code)=="2")
     | summarize total=count(), errs=countif(is_error) by svc, day=bin(_time, 1d)
     | where total >= 100
-    | extend err_rate_pct=100.0*toreal(errs)/toreal(total)
-    | project svc, day, total, errs, err_rate_pct
-    | sort by svc asc, day asc`;
+    | extend day_offset=tolong((toreal(bin(now(), 1d)) - toreal(day)) / 86400.0)
+    | where day_offset between (1 .. 6)
+    | summarize
+        d1_total=sum(iff(day_offset == 1, total, tolong(0))),
+        d1_errs=sum(iff(day_offset == 1, errs, tolong(0))),
+        d2_total=sum(iff(day_offset == 2, total, tolong(0))),
+        d2_errs=sum(iff(day_offset == 2, errs, tolong(0))),
+        d3_total=sum(iff(day_offset == 3, total, tolong(0))),
+        d3_errs=sum(iff(day_offset == 3, errs, tolong(0))),
+        d4_total=sum(iff(day_offset == 4, total, tolong(0))),
+        d4_errs=sum(iff(day_offset == 4, errs, tolong(0))),
+        d5_total=sum(iff(day_offset == 5, total, tolong(0))),
+        d5_errs=sum(iff(day_offset == 5, errs, tolong(0))),
+        d6_total=sum(iff(day_offset == 6, total, tolong(0))),
+        d6_errs=sum(iff(day_offset == 6, errs, tolong(0)))
+      by svc
+    | extend
+        d1_pct=iff(d1_total > 0, round(100.0 * todouble(d1_errs) / todouble(d1_total), 2), 0.0),
+        d2_pct=iff(d2_total > 0, round(100.0 * todouble(d2_errs) / todouble(d2_total), 2), 0.0),
+        d3_pct=iff(d3_total > 0, round(100.0 * todouble(d3_errs) / todouble(d3_total), 2), 0.0),
+        d4_pct=iff(d4_total > 0, round(100.0 * todouble(d4_errs) / todouble(d4_total), 2), 0.0),
+        d5_pct=iff(d5_total > 0, round(100.0 * todouble(d5_errs) / todouble(d5_total), 2), 0.0),
+        d6_pct=iff(d6_total > 0, round(100.0 * todouble(d6_errs) / todouble(d6_total), 2), 0.0)
+    | project svc,
+              d1_pct, d2_pct, d3_pct, d4_pct, d5_pct, d6_pct,
+              d1_total, d2_total, d3_total, d4_total, d5_total, d6_total
+    | sort by svc asc`;
 }
 
 /**
