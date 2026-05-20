@@ -224,36 +224,71 @@ export function traceSpans(traceIds: string[]): string {
  * enabled, so streaming and idle-wait spans don't distort the
  * service percentiles. See api/streamFilter.ts.
  */
+/**
+ * Branch-B subquery: filtered error counts per service, computed by
+ * scanning ONLY is_error=true spans through the trace-origin +
+ * has-error-child joins. Result joins back to branch A on svc.
+ *
+ * Why split: the joins inside `errorClassificationJoins()` scan all
+ * spans in the right side. Applied to the full span set (branch A),
+ * the work was triple — one primary scan plus the two inside the
+ * leftouter subqueries. On the previous-window query (-2h to -1h,
+ * ~200K spans) the triple-scan was hitting Cribl's resource ceiling
+ * and the search was failing with `"Unexpected 'reset' signal"` on
+ * every run. Restricting the joins to the error subset (typically
+ * <5% of spans) gets the same answer with a fraction of the work.
+ */
+function filteredErrorsBranch(svcFilter: string): string {
+  return `${spansBase()}
+    | extend svc=tostring(resource.attributes['service.name']),
+             is_error=(tostring(status.code)=="2"),
+             span_kind=tostring(kind),
+             http_status=toint(attributes['http.response.status_code']),
+             grpc_status=toint(attributes['rpc.grpc.status_code']),
+             sid=tostring(span_id)
+    ${svcFilter}
+    | where is_error
+    ${errorClassificationJoins()}
+    | extend counts_as_error = not(${DEFAULT_FILTER_KQL})
+    | where counts_as_error
+    | summarize filtered_errors=count() by svc`;
+}
+
 export function serviceSummary(service?: string): string {
   const svcFilter = service
     ? `| where svc=="${service.replace(/"/g, '\\"')}"`
     : '';
-  // `errors` counts only spans that the default filter rules would
-  // KEEP — propagation and user-trace caller-faults are excluded so
-  // the error_rate this metric feeds (alert evaluator → auto:error_rate
-  // alerts) agrees with what the Home panel shows. See HEURISTICS.md
-  // for the cross-layer consistency principle.
+  // Two branches. Branch A counts requests + percentiles + raw
+  // errors without ANY joins (fast). Branch B computes the
+  // filter-rule-honoring error count by running the joins only
+  // on is_error=true spans (small subset). Final left-outer
+  // merge on svc; services with no filtered errors get 0.
+  //
+  // `errors` counts only spans that the default filter rules
+  // would KEEP — propagation and user-trace caller-faults are
+  // excluded so the error_rate this metric feeds (alert
+  // evaluator → auto:error_rate alerts) agrees with what the
+  // Home panel shows. See HEURISTICS.md.
   return `${spansBase()}
     | extend svc=tostring(resource.attributes['service.name']),
             dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
-            is_error=(tostring(status.code)=="2"),
-            span_kind=tostring(kind),
-            http_status=toint(attributes['http.response.status_code']),
-            grpc_status=toint(attributes['rpc.grpc.status_code']),
-            sid=tostring(span_id)
+            is_error=(tostring(status.code)=="2")
     ${svcFilter}
     ${streamFilterSpanKqlClause()}
-    ${errorClassificationJoins()}
-    | extend counts_as_error = is_error and not(${DEFAULT_FILTER_KQL})
     | summarize requests=count(),
-                errors=countif(counts_as_error),
                 raw_errors=countif(is_error),
                 p50_us=percentile(dur_us, 50),
                 p95_us=percentile(dur_us, 95),
                 p99_us=percentile(dur_us, 99),
                 last_seen=max(_time)
       by svc
-    | extend error_rate=toreal(errors)/toreal(requests)
+    | join kind=leftouter (
+        ${filteredErrorsBranch(svcFilter)}
+      ) on svc
+    | extend errors=coalesce(filtered_errors, tolong(0))
+    | extend error_rate=iff(requests > 0, toreal(errors)/toreal(requests), 0.0)
+    | project svc, requests, errors, raw_errors,
+              p50_us, p95_us, p99_us, last_seen, error_rate
     | sort by requests desc`;
 }
 
@@ -264,27 +299,30 @@ export function serviceSummary(service?: string): string {
  * so the alert evaluator can join against it without a pivot.
  */
 export function prevWindowSummary(): string {
-  // Mirrors serviceSummary's filter logic so the previous-window
-  // error_rate the alert evaluator joins to is on the same scale
-  // as the current window. Without this, an alert would trigger
-  // on the *change* from raw error rate to filtered error rate
-  // the first time the new metric definition rolls in.
+  // Same branch-split pattern as serviceSummary (see comment there
+  // for the reasoning). The triple-scan version of this query was
+  // failing on every scheduled run on staging — `"Unexpected
+  // 'reset' signal"` from Cribl's lakehouse pipeline, almost
+  // certainly because -2h to -1h is a wider span set than -1h to
+  // now and the joins hit a resource ceiling. Limiting the joins
+  // to is_error=true spans gets the same numbers with a fraction
+  // of the work; validated via MCP at ~3.5s vs the failing
+  // 60+ s monolithic.
   return `${spansBase()}
     | extend svc=tostring(resource.attributes['service.name']),
             dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
-            is_error=(tostring(status.code)=="2"),
-            span_kind=tostring(kind),
-            http_status=toint(attributes['http.response.status_code']),
-            grpc_status=toint(attributes['rpc.grpc.status_code']),
-            sid=tostring(span_id)
+            is_error=(tostring(status.code)=="2")
     ${streamFilterSpanKqlClause()}
-    ${errorClassificationJoins()}
-    | extend counts_as_error = is_error and not(${DEFAULT_FILTER_KQL})
     | summarize prev_req=count(),
-                prev_err=countif(counts_as_error),
+                prev_raw_err=countif(is_error),
                 prev_p95_us=percentile(dur_us, 95)
       by svc
+    | join kind=leftouter (
+        ${filteredErrorsBranch('')}
+      ) on svc
+    | extend prev_err=coalesce(filtered_errors, tolong(0))
     | extend prev_err_rate=iff(prev_req > 0, toreal(prev_err)/toreal(prev_req), 0.0)
+    | project svc, prev_req, prev_err, prev_raw_err, prev_p95_us, prev_err_rate
     | export mode=overwrite
              description="Cribl APM - previous window service summary"
              to lookup criblapm_alert_prev`;
@@ -790,10 +828,11 @@ export function errorRateHistory(): string {
  * Output schema: root-style with one row per (svc, attr_name):
  *   svc, attr_name, n_spans_with_key, last_seen
  *
- * Filter at the lookup level: rows with `n_spans_with_key >= 10`
- * stay (a name has to appear on ≥10 spans in the window to count
- * as "present"). This filters one-off trace attributes that aren't
- * structural.
+ * Filter at the lookup level: rows with `n_spans_with_key >= 5`
+ * stay (a name has to appear on ≥5 spans in the window to count
+ * as "present"). At a 500-span sample with ~15 services, that's a
+ * lenient enough threshold to keep all real attribute names while
+ * filtering one-off trace attributes.
  *
  * Bag-keys is the only reliable way to enumerate attribute names
  * dynamically in Cribl KQL — `foldkeys` output is opaque,
@@ -815,7 +854,7 @@ export function attrCatalog(sampleSpans: number = 5000): string {
     | summarize n_spans_with_key=count(),
                 last_seen=max(_time)
         by svc, attr_name
-    | where n_spans_with_key >= 10
+    | where n_spans_with_key >= 5
     | project svc, attr_name, n_spans_with_key, last_seen`;
 }
 

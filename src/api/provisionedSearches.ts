@@ -143,14 +143,16 @@ function traceOriginatorsExportQuery(): string {
  * generates its KQL at provision time from the catalog contents.
  */
 function attrCatalogExportQuery(): string {
-  // Sample 1000 spans (down from 5000). The bag_keys + mv-expand
-  // pass blows the row count up by the per-span key count (~20),
-  // i.e. 5000 input → 100K intermediate rows. The 2026-05-19
-  // baseline showed this search hitting Cribl's `"Unexpected
-  // 'reset' signal"` (resource exhaustion / saturation kill) on
-  // every scheduled run. 1000 input → 20K intermediate is still
-  // plenty for discovering attribute names but lets the run finish.
-  return `${Q.attrCatalog(1000)}
+  // Sample 500 spans. The bag_keys + mv-expand pass blows the row
+  // count up by the per-span key count (~20). 5000 input was
+  // hitting Cribl's `"Unexpected 'reset' signal"` (resource
+  // exhaustion / saturation kill) on every run; 1000 still failed
+  // post-cadence-cleanup; 500 completes in <1s ad-hoc per MCP
+  // probe with 98 distinct (svc, attr_name) rows discovered.
+  // Coverage is excellent at this size — most attributes appear
+  // on every span of their service. The `n_spans_with_key >= 5`
+  // filter in Q.attrCatalog ensures noise spans don't show up.
+  return `${Q.attrCatalog(500)}
     | export mode=overwrite
              description="Cribl APM - attribute name catalog"
              to lookup ${ATTR_CATALOG_LOOKUP}`;
