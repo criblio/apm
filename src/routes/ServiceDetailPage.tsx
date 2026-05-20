@@ -9,6 +9,7 @@ import MetricsCard, { type MetricsCardRow } from '../components/MetricsCard';
 import {
   listServiceSummaries,
   getServiceTimeSeries,
+  getServiceStatusCodeMix,
   listOperationSummaries,
   listPodUptime,
   type PodUptime,
@@ -30,11 +31,14 @@ import type { InvestigationSeed } from '../api/agentContext';
 import type {
   ServiceSummary,
   ServiceBucket,
+  StatusCodeClass,
+  StatusCodeMixBucket,
   OperationSummary,
   InstanceSummary,
   TraceBrief,
   DependencyEdge,
 } from '../api/types';
+import { STATUS_CODE_CLASSES } from '../api/types';
 import s from './ServiceDetailPage.module.css';
 
 const DEFAULT_RANGE = '-1h';
@@ -238,6 +242,7 @@ export default function ServiceDetailPage() {
   const [summary, setSummary] = useState<ServiceSummary | null>(null);
   const [prevSummary, setPrevSummary] = useState<ServiceSummary | null>(null);
   const [buckets, setBuckets] = useState<ServiceBucket[]>([]);
+  const [statusMix, setStatusMix] = useState<StatusCodeMixBucket[]>([]);
   const [operations, setOperations] = useState<OperationSummary[]>([]);
   const [podUptimes, setPodUptimes] = useState<PodUptime[]>([]);
   const [opSort, setOpSort] = useState<{
@@ -293,6 +298,18 @@ export default function ServiceDetailPage() {
     listServiceSummaries(prev.earliest, prev.latest, serviceName)
       .then((all) => setPrevSummary(all.find((x) => x.service === serviceName) ?? null))
       .catch(() => setPrevSummary(null));
+
+    // Status-code mix runs unconditionally — it's not cached in
+    // $vt_results today and the cache-fast-path below returns early,
+    // so it has to fire before the cache branch. Cheap (one
+    // summarize over the same span set, projected to a status class).
+    // Powers the Status mix chart that breaks the flat error rate
+    // apart into 503 (capacity) vs 504 (upstream timeout) vs 500
+    // (upstream bug). See
+    // docs/sessions/2026-05-20-smooth-climb-misdiagnosis.md.
+    getServiceStatusCodeMix(binSeconds, serviceName, range, 'now')
+      .then((rows) => setStatusMix(rows))
+      .catch(() => setStatusMix([]));
 
     // Cache-fast path: when the user is on the default -1h range
     // with the stream filter enabled, read all five ServiceDetail
@@ -754,6 +771,41 @@ export default function ServiceDetailPage() {
     },
   ];
 
+  // Pivot the long-format status-mix rows (one per bucket × class)
+  // into one line per status class. Order and colors are stable so the
+  // legend reads consistently across services and time ranges.
+  // Classes with no observations are omitted so a service with only
+  // 503s shows a single line, not seven empty ones.
+  const statusMixSeries: LineSeries[] = useMemo(() => {
+    const colors: Record<StatusCodeClass, string> = {
+      '503': '#ef4444',      // red — capacity / no healthy upstream
+      '504': '#3b82f6',      // blue — upstream timeout
+      '502': '#a855f7',      // purple — bad gateway
+      '500': '#9f1239',      // dark red — upstream bug
+      other_5xx: '#737373',  // gray — uncommon 5xx
+      '4xx': '#eab308',      // yellow — client error
+      grpc_err: '#10b981',   // green — gRPC non-OK
+    };
+    const byClass = new Map<StatusCodeClass, Array<{ t: number; v: number }>>();
+    for (const b of statusMix) {
+      const arr = byClass.get(b.statusClass) ?? [];
+      arr.push({ t: b.bucketMs, v: b.count });
+      byClass.set(b.statusClass, arr);
+    }
+    const result: LineSeries[] = [];
+    for (const cls of STATUS_CODE_CLASSES) {
+      const data = byClass.get(cls);
+      if (!data || data.length === 0) continue;
+      result.push({
+        name: cls,
+        color: colors[cls],
+        data: [...data].sort((a, b) => a.t - b.t),
+        format: (v) => v.toFixed(0),
+      });
+    }
+    return result;
+  }, [statusMix]);
+
   // Sort the operations table according to the user's click state.
   // Default (requests desc) preserves the prior behavior — the
   // sortable headers just *extend* the existing table with new orderings,
@@ -1000,6 +1052,23 @@ export default function ServiceDetailPage() {
           series={durSeries}
           yFormat={fmtUsAxis}
           emptyMessage={loadingBuckets ? 'Loading…' : 'No data'}
+        />
+      </div>
+
+      {/* Status-code mix — surfaces 503 (capacity) vs 504 (upstream
+          timeout) vs 500 (upstream bug) instead of flattening every
+          5xx into one rate. See
+          docs/sessions/2026-05-20-smooth-climb-misdiagnosis.md for
+          the incident that motivated this. Lives on its own full-
+          width row because up to 7 lines + legend doesn't fit in the
+          .charts 3-column grid. */}
+      <div className={s.chartRow}>
+        <LineChart
+          title="Status mix"
+          subtitle="HTTP status classes (errors per minute)"
+          series={statusMixSeries}
+          yFormat={(v) => (v >= 1 ? v.toFixed(0) : v.toFixed(1))}
+          emptyMessage={loadingBuckets ? 'Loading…' : 'No errors'}
         />
       </div>
 

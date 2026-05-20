@@ -161,6 +161,16 @@
   }
 }
 
+/* Single full-width chart row — used for the Status mix chart that
+   needs more horizontal space for up to 7 lines + legend than the
+   3-column .charts grid gives. */
+.chartRow {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--cds-space-lg);
+  margin-top: var(--cds-space-lg);
+}
+
 /* -------- Metric-backed cards row: protocol / runtime / infra -------- */
 
 .metricCards {

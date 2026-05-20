@@ -13,6 +13,8 @@ import type {
   DependencyEdge,
   ServiceSummary,
   ServiceBucket,
+  StatusCodeClass,
+  StatusCodeMixBucket,
   OperationSummary,
   InstanceSummary,
   OperationAnomaly,
@@ -211,6 +213,33 @@ export async function getServiceTimeSeries(
     p95Us: toNum(r.p95_us),
     p99Us: toNum(r.p99_us),
   }));
+}
+
+/**
+ * Fetch per-(status-class) error counts bucketed by minute for one
+ * service. Powers the Service Detail status-mix chart. Returns one
+ * row per (bucket, statusClass); the UI pivots into separate line
+ * series per class.
+ */
+export async function getServiceStatusCodeMix(
+  binSeconds: number,
+  service: string,
+  earliest = '-1h',
+  latest = 'now',
+): Promise<StatusCodeMixBucket[]> {
+  const rows = await runQuery(
+    Q.serviceStatusCodeMix(binSeconds, service),
+    earliest,
+    latest,
+    10000,
+  );
+  return rows
+    .map((r) => ({
+      bucketMs: toNum(r.bucket) * 1000,
+      statusClass: String(r.status_class ?? '') as StatusCodeClass,
+      count: toNum(r.n),
+    }))
+    .filter((b) => Number.isFinite(b.bucketMs) && b.bucketMs > 0 && b.statusClass);
 }
 
 /**

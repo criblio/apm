@@ -506,6 +506,49 @@ export function serviceTimeSeries(binSeconds: number, service?: string): string 
 }
 
 /**
+ * Per-minute HTTP status-code mix for one service. Powers the Service
+ * Detail "Status mix" chart that breaks the flat "errors" total apart
+ * into 503 (capacity), 504 (upstream timeout), 500 (upstream bug),
+ * and the surrounding 4xx / 502 / other_5xx classes.
+ *
+ * Why this exists: in the 2026-05-20 misdiagnosis, a 503-dominant mix
+ * (envoy "no healthy upstream") was the actual evidence that the
+ * frontend was capacity-bound, but the existing Errors chart flattened
+ * everything into one rate. See docs/sessions/2026-05-20-smooth-climb-misdiagnosis.md.
+ *
+ * Coalesces `http.response.status_code` (modern semconv) and
+ * `http.status_code` (legacy) — the demo's stock spans use the legacy
+ * field for envoy / next.js while newer SDKs use the modern one.
+ * gRPC failures fold into a `grpc_err` bucket so non-HTTP services
+ * still produce a useful mix.
+ */
+export function serviceStatusCodeMix(binSeconds: number, service: string): string {
+  const s = service.replace(/"/g, '\\"');
+  // dur_us is computed for streamFilterSpanKqlClause(); without it
+  // the injected `| where dur_us < ...` filters every row out.
+  return `${spansBase()}
+    | extend svc=tostring(resource.attributes['service.name']),
+             dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
+             http_status=coalesce(toint(attributes['http.response.status_code']),
+                                  toint(attributes['http.status_code'])),
+             grpc_status=toint(attributes['rpc.grpc.status_code'])
+    | where svc=="${s}"
+    ${streamFilterSpanKqlClause()}
+    | extend status_class=case(
+        http_status == 503, "503",
+        http_status == 504, "504",
+        http_status == 502, "502",
+        http_status == 500, "500",
+        http_status >= 500 and http_status < 600, "other_5xx",
+        http_status >= 400 and http_status < 500, "4xx",
+        isnotnull(grpc_status) and grpc_status != 0, "grpc_err",
+        "ok")
+    | where status_class != "ok"
+    | summarize n=count() by status_class, bucket=bin(_time, ${binSeconds}s)
+    | sort by bucket asc, status_class asc`;
+}
+
+/**
  * Top operations for a service, sorted by volume. Each row includes counts,
  * error rate, and percentile latencies — the core table on Service detail.
  */

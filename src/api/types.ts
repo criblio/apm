@@ -116,6 +116,40 @@ export interface ServiceBucket {
   p99Us: number;
 }
 
+/**
+ * HTTP status classes used by the Service Detail status-mix chart.
+ * The set covers the 5xx subtypes whose semantics differ for
+ * diagnosis (503 = capacity / no healthy upstream, 504 = upstream
+ * timeout, 500 = upstream bug, 502 = bad gateway, other_5xx = the
+ * uncommon rest), 4xx as a single class, and a grpc_err catch-all
+ * for non-HTTP failures.
+ */
+export type StatusCodeClass =
+  | '503'
+  | '504'
+  | '502'
+  | '500'
+  | 'other_5xx'
+  | '4xx'
+  | 'grpc_err';
+
+export const STATUS_CODE_CLASSES: readonly StatusCodeClass[] = [
+  '503',
+  '504',
+  '502',
+  '500',
+  'other_5xx',
+  '4xx',
+  'grpc_err',
+] as const;
+
+/** One time bucket of per-(status-class) error counts for one service. */
+export interface StatusCodeMixBucket {
+  bucketMs: number; // epoch ms at bucket start
+  statusClass: StatusCodeClass;
+  count: number;
+}
+
 /** Per-operation rollup inside a service. */
 export interface OperationSummary {
   operation: string;
