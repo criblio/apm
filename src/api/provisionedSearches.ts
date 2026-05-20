@@ -90,7 +90,7 @@ export const SEED_LOOKUPS: SeedLookup[] = [
   },
   {
     name: ATTR_CATALOG_LOOKUP,
-    seedQuery: `dataset="otel" | limit 1 | project svc="__init__", attr_name="__init__", n_spans_with_key=0, last_seen=0 | export mode=overwrite description="Cribl APM - attr catalog init" to lookup ${ATTR_CATALOG_LOOKUP}`,
+    seedQuery: `dataset="otel" | limit 1 | project svc="__init__", attr_name="__init__", n_spans_with_key=0 | export mode=overwrite description="Cribl APM - attr catalog init" to lookup ${ATTR_CATALOG_LOOKUP}`,
   },
   {
     name: ERROR_RATE_HISTORY_LOOKUP,
@@ -142,17 +142,32 @@ function traceOriginatorsExportQuery(): string {
  * Cardinality (dcount per (svc, attr_name)) is a follow-up that
  * generates its KQL at provision time from the catalog contents.
  */
-function attrCatalogExportQuery(): string {
+function attrCatalogComputeQuery(): string {
   // Sample 500 spans. The bag_keys + mv-expand pass blows the row
-  // count up by the per-span key count (~20). 5000 input was
-  // hitting Cribl's `"Unexpected 'reset' signal"` (resource
-  // exhaustion / saturation kill) on every run; 1000 still failed
-  // post-cadence-cleanup; 500 completes in <1s ad-hoc per MCP
-  // probe with 98 distinct (svc, attr_name) rows discovered.
-  // Coverage is excellent at this size — most attributes appear
-  // on every span of their service. The `n_spans_with_key >= 5`
-  // filter in Q.attrCatalog ensures noise spans don't show up.
-  return `${Q.attrCatalog(500)}
+  // count up by the per-span key count (~20). 5000 input was hitting
+  // Cribl's `"Unexpected 'reset' signal"` on every run; 1000 still
+  // failed; 500 alone wasn't enough either.
+  //
+  // Root cause turned out to be a Cribl planner bug: `mv-expand`
+  // anywhere upstream of `| export to lookup` consistently fails the
+  // `func:store` write stage, regardless of row count, lookup
+  // schema, or whether mv-expand-output ever reaches the export.
+  // We confirmed via MCP that ad-hoc queries with the same shape
+  // succeed without the export, and ad-hoc queries without
+  // mv-expand succeed WITH the export — only the combination fails.
+  //
+  // Workaround: split into two scheduled searches. This one runs
+  // the mv-expand and lets its output land in $vt_results
+  // (the standard scheduled-search cache). The companion
+  // criblapm__attr_catalog_export search below reads $vt_results
+  // and writes the lookup with no mv-expand in its pipeline.
+  return Q.attrCatalog(500);
+}
+
+function attrCatalogExportQuery(): string {
+  return `dataset="$vt_results"
+    | where jobName == "criblapm__attr_catalog"
+    | project svc, attr_name, n_spans_with_key
     | export mode=overwrite
              description="Cribl APM - attribute name catalog"
              to lookup ${ATTR_CATALOG_LOOKUP}`;
@@ -382,18 +397,38 @@ export function getProvisioningPlan(): ProvisionedSearch[] {
       schedule: { ...hourly, cronSchedule: '11 * * * *' },
     },
     // ── Attribute-name catalog (leak detection foundation) ──
+    //
+    // Two-step pipeline because `mv-expand` upstream of `| export
+    // to lookup` triggers a Cribl planner bug (see comments in
+    // attrCatalogComputeQuery). Step 1 computes the catalog and
+    // lets the result land in $vt_results. Step 2, scheduled 2
+    // minutes later, reads $vt_results and writes the lookup with
+    // no mv-expand in the export pipeline.
     {
       id: 'criblapm__attr_catalog',
-      name: 'Cribl APM - attribute name catalog',
+      name: 'Cribl APM - attribute name catalog compute',
       description:
-        'Cribl APM: enumerates the attribute names observed on spans per service via bag_keys + mv-expand on a recent sample. Output is the foundation for the cardinality / leak-fingerprint pipeline. See HEURISTICS.md §"Cardinality detection".',
-      query: attrCatalogExportQuery(),
+        'Cribl APM: enumerates the attribute names observed on spans per service via bag_keys + mv-expand on a recent sample. Result lands in $vt_results; companion criblapm__attr_catalog_export writes the lookup.',
+      query: attrCatalogComputeQuery(),
       earliest: '-5m',
       latest: 'now',
       sampleRate: 1,
       // Hourly is enough — attribute names don't change minute to
       // minute, and the bag_keys+mv-expand pass is per-row expensive.
       schedule: { ...hourly },
+    },
+    {
+      id: 'criblapm__attr_catalog_export',
+      name: 'Cribl APM - attribute name catalog export',
+      description:
+        'Cribl APM: reads the latest criblapm__attr_catalog run from $vt_results and writes the criblapm_attr_catalog lookup. Split from the compute step to work around the mv-expand → export-to-lookup planner bug.',
+      query: attrCatalogExportQuery(),
+      earliest: '-10m',
+      latest: 'now',
+      sampleRate: 1,
+      // Runs 2 minutes after the compute step so its $vt_results
+      // are written.
+      schedule: { ...hourly, cronSchedule: '2 * * * *' },
     },
     // ── 6-day per-service error-rate history (drift) ─────────
     {

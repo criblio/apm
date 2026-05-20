@@ -840,8 +840,16 @@ export function errorRateHistory(): string {
  * (regex size limit), and dynamic indexing `attributes[col]` is
  * not supported. See HEURISTICS.md §1 for the rationale.
  *
- * Cadence: 6h (attribute names change slowly). Window: 5m sample —
- * bag_keys + mv-expand is heavy per row; keep the input set tiny.
+ * Cadence: hourly (attribute names change slowly). Window: 5m
+ * sample — bag_keys + mv-expand is heavy per row; keep the input
+ * set tiny.
+ *
+ * The export-to-lookup is *not* tacked onto this query — Cribl's
+ * planner consistently fails the `func:store` write stage when
+ * mv-expand is anywhere upstream of `| export to lookup`. The
+ * scheduled search runs this query, the result lands in
+ * $vt_results, and a companion search reads $vt_results and
+ * writes the lookup. See provisionedSearches.ts §attr-catalog.
  */
 export function attrCatalog(sampleSpans: number = 5000): string {
   return `${spansBase()}
@@ -851,11 +859,9 @@ export function attrCatalog(sampleSpans: number = 5000): string {
     | mv-expand attr_name=ks
     | extend attr_name=tostring(attr_name)
     | where isnotempty(attr_name)
-    | summarize n_spans_with_key=count(),
-                last_seen=max(_time)
-        by svc, attr_name
+    | summarize n_spans_with_key=count() by svc, attr_name
     | where n_spans_with_key >= 5
-    | project svc, attr_name, n_spans_with_key, last_seen`;
+    | project svc, attr_name, n_spans_with_key`;
 }
 
 export function traceOriginators(): string {
