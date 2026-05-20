@@ -75,21 +75,40 @@ waterfall to the user. Don't just list the trace_id as text — render it.
 
 ### Field access rules (CRITICAL — Cribl KQL dialect)
 
-**Dotted field names must be bracket-quoted.** Fields like \`rpc.method\`,
-\`service.name\`, \`k8s.pod.name\` are NOT valid as bare identifiers in
-Cribl KQL. You MUST wrap them in bracket-quotes:
+Two distinct cases. **Most OTel field access is case A** (nested
+object lookup); the bracket-quoting only applies to case B
+(top-level dotted column, rare in spans).
 
-- CORRECT:   \`["rpc.method"]\`, \`["service.name"]\`, \`["k8s.pod.name"]\`
-- WRONG:     \`rpc.method\`, \`service.name\` (KQL parser will reject)
+**Case A — nested object access (common).** When the leaf you want
+sits inside a parent object, use plain dot syntax for the object
+reference and bracket-quote ONLY the leaf if it contains dots.
+Examples (each is the correct form):
 
-This rule applies EVERYWHERE you reference a dotted field: in \`where\`
-clauses, \`extend\` expressions, \`project\` lists, \`summarize by\` keys,
-and \`sort by\` fields.
+- \`tostring(status.code)\`     — \`status\` is a nested object, \`code\` is the leaf
+- \`tostring(status.message)\`  — same pattern
+- \`tostring(resource.attributes['service.name'])\` — leaf has a dot, so bracket-quote it
+- \`tostring(attributes['rpc.grpc.status_code'])\` — same
 
-The one exception: when reaching into a nested object, you can use
-regular dot syntax for the object name, then bracket-quote the leaf
-key — e.g. \`resource.attributes['service.name']\` is valid because
-\`resource.attributes\` is a nested object.
+DO NOT bracket-quote the whole path when accessing a nested
+field. \`tostring(['status.code'])\` and
+\`tostring(['status.message'])\` evaluate to NULL — there is no
+top-level column literally named "status.code". The parser
+accepts the syntax but returns no data, which makes
+\`is_error=(tostring(['status.code'])=="2")\` always FALSE and
+any \`where is_error\` filter returns zero rows. This is the
+single most common bug in agent-generated queries against this
+dataset.
+
+**Case B — top-level dotted column (rare in spans, common in
+metrics).** When a record actually has a top-level field whose
+name contains dots, bracket-quote the whole thing:
+
+- \`tostring(['service.name'])\` — only in the metrics shape (\`datatype == "generic_metrics"\`), where resource attributes are flattened to the top level
+- \`tostring(['host.name'])\`    — same
+
+**Rule of thumb:** for span data, only ever bracket-quote LEAFS
+of \`attributes\` or \`resource.attributes\`. Everything else uses
+plain dot syntax.
 
 ### Span field mappings (for trace/span data)
 
@@ -138,6 +157,62 @@ top level rather than nested under \`resource.attributes\`:
 - String comparison: \`tostring(x)=="value"\`
 - Null check: \`isnotnull(field)\`, \`isempty(str)\`
 - Type coercion: \`tostring()\`, \`toint()\`, \`toreal()\`
+
+### Cribl KQL gotchas (the recurring agent-query bugs)
+
+Specific things that **don't work** in Cribl KQL, but look like
+they should:
+
+- \`any(field)\` as an aggregator **DOES NOT EXIST.** Use
+  \`max(field)\` for a representative value, or \`take_any(field)\`
+  (some versions). \`arg_max(value_field, ranking_field)\` if you
+  want one row's worth.
+- \`if(predicate, a, b)\` **DOES NOT EXIST.** Use
+  \`iff(predicate, a, b)\` (two f's).
+- \`bag_values()\` **DOES NOT EXIST.** Use \`bag_keys()\` (which works)
+  and then either reference attribute leaves statically by name
+  (\`attributes['session.id']\`) or accept that you can't pair
+  keys with values dynamically in one query.
+- Dynamic indexing \`attributes[col_name]\` where \`col_name\` is a
+  variable column **IS NOT SUPPORTED.** Only static
+  \`attributes['session.id']\` works.
+- A \`lookup\` table can have multiple rows per key, but
+  \`lookup T on key\` **returns only the FIRST matching row.**
+  Pre-shape lookups as one-row-per-key with pivoted columns if
+  the consumer needs the series.
+- \`leftouter\` joins **silently truncate at scale** when the
+  right side exceeds an implicit row cap — observed at ~10K+
+  spans on staging. Pre-aggregate the right side via
+  \`summarize ... by (key columns)\` to bound it.
+- Multi-day windows (\`-7d\` / \`-10d\`) with hourly bins
+  routinely time out at the 60s search-job ceiling. Use
+  smaller windows in sequence, or daily bins for week-long
+  views.
+
+### Pre-computed data — read these before re-scanning spans
+
+The app maintains a set of scheduled-search lookups and cached
+\`$vt_results\` outputs. Reading them is **always cheaper than
+re-aggregating raw spans** and most of the time has the answer
+the user wants:
+
+| Lookup / cached panel | What it has | Read pattern |
+|---|---|---|
+| \`criblapm_error_rate_history\` lookup | yesterday + 5 prior days of per-service error-rate %, pivoted one row per svc with columns \`d1_pct .. d6_pct\` | \`take 1 \| project svc="X" \| lookup criblapm_error_rate_history on svc\` |
+| \`$vt_results\` of \`criblapm__home_service_summary\` | last 1h per-service requests / errors / error_rate / p50/p95/p99 (5-min cadence) | \`dataset="$vt_results" \| where jobName == "criblapm__home_service_summary"\` |
+| \`$vt_results\` of \`criblapm__sysarch_dependencies\` | parent-service → child-service call counts and edge error rates (5-min cadence). **This is the answer to "what does service X call, and how are those calls failing?"** | \`dataset="$vt_results" \| where jobName == "criblapm__sysarch_dependencies" \| where parent=="X"\` |
+| \`$vt_results\` of \`criblapm__sysarch_messaging_deps\` | kafka / messaging edges | same pattern, \`messaging_deps\` |
+| \`$vt_results\` of \`criblapm__svc_operations\` | per-(svc, op) request count, error rate, p95 (5-min cadence) | filter by \`jobName\` and \`svc\` |
+| \`criblapm_trace_originators\` lookup | per-root-service classification (user / service / unknown) | \`lookup criblapm_trace_originators on root_svc\` |
+| \`criblapm_attr_catalog\` lookup | per-(svc, attr_name) catalog of which attribute names exist on which service | \`lookup criblapm_attr_catalog on svc\` |
+| \`criblapm_op_baselines\` lookup | rolling 24h per-(svc, op) p50/p95/p99 baseline for the anomaly detector | \`lookup criblapm_op_baselines on svc, op\` |
+
+**Default:** start any per-service / per-operation investigation
+by reading the relevant cached panel or lookup. Only fall back
+to a raw \`dataset="${datasetId}"\` scan if (a) the precomputed
+data doesn't have what you need or (b) the question is about
+a specific trace_id / span_id that wouldn't be in the
+aggregate.
 
 ### Timestamp formatting (CRITICAL for human readability)
 
@@ -223,18 +298,28 @@ histograms: \`summarize ... by svc, bin(_time, 60s)\`.
 
 ### Smooth-climb 5xx (leak signature) — check FIRST when errors are climbing
 
-**Prompt-pattern trigger — this section applies when the question
-mentions ANY of:**
+**Prompt-pattern trigger — this section applies ONLY when the
+question describes a TREND over time.** Look for explicit
+language like:
 - "climb", "climbing", "trending up", "monotonic", "gradient"
-- "over the last N days" or "over N weeks"
+- "over the last N days" or "over N weeks" (with N ≥ 2)
 - "X% to Y%" or "from <small> to <large>" framed as a trend
 - "error rate has grown" / "rising error rate"
 
-If you see any of those signals, **RUN THE FOUR LEAK CHECKS BELOW
-BEFORE running any errors-by-operation or errors-by-service query.**
-Investigations that start by "find dominant error signature" land on
-whatever leaf service has the highest current error count — but in
-a leak, that leaf service isn't the cause. It's the symptom.
+**SKIP this section** for prompts that ask about a *current*
+state without trend language, e.g. "the X service has an error
+rate of Y%, investigate the root cause" — that's a steady-state
+question, jump to "Common failure modes" below. The leak
+fingerprint checks are expensive (multiple windowed slope
+queries) and produce wrong answers when the actual question is
+"who's failing right now."
+
+If a clear trend trigger IS present, **RUN THE FOUR LEAK CHECKS
+BELOW BEFORE running any errors-by-operation or errors-by-service
+query.** Investigations that start by "find dominant error
+signature" land on whatever leaf service has the highest current
+error count — but in a leak, that leaf service isn't the cause.
+It's the symptom.
 
 **Do not chase named failure scenarios (paymentFailure, kafkaQueueProblems,
 productCatalogFailure, etc.) when the error pattern is a smooth climb
@@ -394,6 +479,53 @@ immediately with:
 - \`conclusion\`: name the implicated service + recommend
   \`kubectl rollout restart deploy/<service>\` as the verification
   action.
+
+### Quick path — "service X has error rate Y%, find downstream"
+
+This is the most common steady-state question and has a fast
+answer that doesn't require raw-span scans. Two reads, then a
+trace render.
+
+1. **Read the cached dependency edges.** \`criblapm__sysarch_dependencies\`
+   already computed per-edge error rates over the last hour:
+   \`\`\`kql
+   dataset="$vt_results" | where jobName == "criblapm__sysarch_dependencies"
+     | where parent == "<implicated service>"
+     | project parent, child, callCount, errorCount, p95DurUs,
+               edge_err_rate=round(100.0*todouble(errorCount)/todouble(callCount), 2)
+     | sort by errorCount desc
+   \`\`\`
+   The row(s) with high \`edge_err_rate\` name the downstream
+   responsible for the symptom. If the implicated service makes
+   no calls (it's a leaf), this returns empty — that means the
+   service itself is the origin, not propagation.
+
+2. **Read the cached operation breakdown.** \`criblapm__svc_operations\`
+   has per-(svc, op) error rates:
+   \`\`\`kql
+   dataset="$vt_results" | where jobName == "criblapm__svc_operations"
+     | where svc == "<implicated service>"
+     | project svc, name, requests, errors, error_rate, p95_us
+     | sort by errors desc
+     | limit 10
+   \`\`\`
+   This tells you which operations on the service are the worst
+   offenders.
+
+3. **Render one representative trace.** Look up a recent erroring
+   trace for the worst (svc, op) pair from step 2, then
+   \`render_trace\`. The waterfall shows the propagation path
+   visually.
+
+That's the whole flow. **STOP and call \`present_investigation_summary\`
+after step 3** — findings = the dependency edge row(s) + the top
+erroring operation row + the rendered trace. Conclusion = name
+the downstream service from step 1 (or the operation from step
+2 if there's no downstream call).
+
+DO NOT compose a custom \`parent_span_id\`-self-join over raw
+spans for this. The cached dependency panel already did exactly
+that work; recomputing is slow and adds nothing.
 
 ### Common failure modes to check (in priority order)
 
