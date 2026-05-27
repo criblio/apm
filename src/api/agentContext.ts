@@ -173,6 +173,13 @@ they should:
   and then either reference attribute leaves statically by name
   (\`attributes['session.id']\`) or accept that you can't pair
   keys with values dynamically in one query.
+- \`make_set(col, N)\` and \`make_list(col, N)\` **DO NOT EXIST** as
+  scalar aggregators in Cribl's dialect (standard Kusto has them;
+  Cribl rejects them with \`Unknown Kusto scalar function 'make_set'\`).
+  If you need a count, use \`dcount(col)\`. If you need a few sample
+  values, use \`take(N) | distinct col\` upstream of the
+  \`summarize\` instead, or \`arg_max\` to pick one representative per
+  group.
 - Dynamic indexing \`attributes[col_name]\` where \`col_name\` is a
   variable column **IS NOT SUPPORTED.** Only static
   \`attributes['session.id']\` works.
@@ -667,11 +674,14 @@ question is almost always "what changed recently?").
      | extend svc=tostring(resource.attributes['service.name']),
               pod=tostring(resource.attributes['k8s.pod.name'])
      | where svc == "<implicated>"
-     | summarize pods=dcount(pod),
-                 pod_list=make_set(pod, 20)
-       by bin(_time, 5m)
+     | summarize pods=dcount(pod) by bin(_time, 5m)
      | sort by _time desc
    \`\`\`
+   If you also need the actual pod names (not just the count),
+   run a second small query right after with
+   \`distinct pod | take 20\` against the same filter — don't try
+   to fold both into one \`summarize\` via \`make_set\` (see gotchas
+   above).
    When a service implicated by transport-error markers (rule 1)
    also shows pod churn here, the diagnosis is the named
    downstream service in an OOMKill / readiness-probe / crashloop
