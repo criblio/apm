@@ -593,6 +593,25 @@ question is almost always "what changed recently?").
    meaningful volume, the cause is the named \`rpc_svc\`. The
    application-message wrapper is downstream of that.
 
+   **This rule names WHERE — not WHY. It is not a complete
+   diagnosis on its own.** "Currency Convert is returning EOF" is
+   a tautology, not a root cause: the operator's next question is
+   still "why can't currency respond?" Naming the boundary is
+   step one of three. You MUST continue:
+
+   - to rule 2's **client-vs-server span ratio** sub-check — to
+     decide whether the downstream is crashing, dialing-failing,
+     or slow,
+   - to rule 2's **pod-cardinality** sub-check — to identify the
+     specific failure mode (OOMKill, readiness probe, startup
+     failure),
+   - and then to the **stopping rule + summary template** at the
+     bottom of this section, which requires you to name the
+     failure mode and a specific remediation. Halting at the
+     transport-signal layer is a known regression — do not
+     present an investigation summary that names a downstream
+     without naming why it's failing.
+
 2. **Traffic drops (service went dark).** The loudest signal when a
    service is unreachable is that it **stopped emitting spans**, not
    that it produced errors. Always run a per-service request-rate
@@ -660,7 +679,7 @@ question is almost always "what changed recently?").
    "investigate \`<svc>\` startup failure", not anything about the
    caller's logic.
 
-2. **Error-rate changes over time, not totals.** Run an
+3. **Error-rate changes over time, not totals.** Run an
    errors-per-minute histogram per service *before* running a
    whole-window totals query. A flag that fired 3 minutes ago is
    invisible in a whole-window view if the window is 15 minutes
@@ -673,7 +692,7 @@ question is almost always "what changed recently?").
      | sort by _time desc
    \`\`\`
 
-3. **Latency anomalies (no errors, just slow).** Some failures show
+4. **Latency anomalies (no errors, just slow).** Some failures show
    no error-rate change at all — only a p99 spike. Kafka consumer
    lag, GC pauses, CPU saturation, and connection-pool exhaustion
    all produce this pattern. Run a per-service latency histogram
@@ -697,17 +716,137 @@ question is almost always "what changed recently?").
    the tail — kafka consumer operations like \`order-consumed\` or
    gRPC streaming endpoints.
 
-4. **Error propagation vs. origin.** An error-rate spike on a caller
+5. **Error propagation vs. origin.** An error-rate spike on a caller
    (e.g. \`frontend-proxy\`, \`load-generator\`) is almost never the
    root cause. Pull the set of trace_ids involved in the spike and
    look for the *earliest failing span in the tree* — that service
    is the origin. Example propagation query already documented in
    the "Service-to-service dependency call graph" example above.
 
-5. **Representative trace + rendered waterfall.** Once you have a
+6. **Representative trace + rendered waterfall.** Once you have a
    hypothesis, render one trace that illustrates the full call
    chain from root to failing leaf. Don't just list trace_ids — use
    the \`render_trace\` tool.
+
+### Stopping rule and required findings (non-leak path)
+
+The leak signature has its own stopping rule earlier in this
+preamble. Every other investigation through "Common failure modes"
+above must meet the bar below before you call
+\`present_investigation_summary\`. **If any of these slots is
+unfilled, the investigation is NOT done — keep probing.**
+
+Required slots in the summary:
+
+1. **Implicated service.** The downstream gRPC / HTTP server the
+   transport markers, span counts, or origin trace points at.
+   Example: \`currency\`. Not \`checkout\` (that's the caller wrapping
+   the failure); not \`gRPC\` (that's a layer, not a service).
+
+2. **Failure mode.** One of these specific labels — pick the one
+   the evidence supports, not a generic restating of the symptom:
+   - \`oom-kill\` — pod memory limit hit; pod churn confirms.
+   - \`readiness-probe\` — pod is up but k8s removed it from
+     endpoints; pod churn + connection-refused both fire.
+   - \`startup-failure\` — pod fails to come up cleanly; spans
+     appear briefly then stop, pod cardinality high but server
+     spans near zero.
+   - \`latency-saturation\` — server is alive and responding, but
+     p99 has exceeded the caller's deadline; client sees
+     \`DeadlineExceeded\` while the server still emits 200 spans.
+   - \`capacity\` — single-replica + spike load → 503 / no healthy
+     upstream; see 2026-05-20 misdiagnosis session log.
+   - \`config-error\` — recent config change implicated by deploy
+     timeline; service emits but errors at a steady rate.
+   - \`code-bug\` — server returns errors on a specific input
+     pattern; not transport-layer.
+   - \`dependency-failure\` — service is healthy but its own
+     downstream is failing; you've identified the next link in
+     the chain, not the root.
+   - \`unknown-investigate-further\` — you do NOT yet have a
+     failure mode. **This is not an acceptable final answer.**
+     If the evidence runs out, say what's missing and what you'd
+     run next. Do not present \`unknown\` as a conclusion.
+
+3. **Evidence quote.** The numbers behind the failure mode — the
+   ratio, the pod-name count, the p99, the deploy timestamp.
+   "Currency is failing" is not evidence; "client.Convert=1769,
+   server.Convert=484 (27% coverage); k8s.pod.name dcount over 5m
+   for currency = 6" is evidence.
+
+4. **Specific remediation.** A concrete operator action with a
+   noun and verb. "Raise memory limit on \`currency\` Deployment
+   from 20Mi to 200Mi" is a remediation. "Investigate currency"
+   is NOT — that's restating the problem. Pair each
+   \`failure_mode\` with a matching remediation shape:
+   - \`oom-kill\` → "Raise memory limit on \`<svc>\` from \`<X>\` to
+     \`<Y>\`" (use a multiplier of 5-10× if you don't know
+     current).
+   - \`readiness-probe\` → "Investigate readiness-probe config /
+     pod logs for \`<svc>\`".
+   - \`startup-failure\` → "Inspect last container logs for
+     \`<svc>\`; likely missing config / failed dependency on boot".
+   - \`latency-saturation\` → "Add HPA / increase replicas for
+     \`<svc>\` or raise the caller deadline on \`<op>\`".
+   - \`capacity\` → "Scale \`<svc>\` to \`<N>\` replicas / add HPA".
+   - \`config-error\` → "Roll back the \`<date/SHA>\` change on
+     \`<svc>\` or revert the \`<flag/setting>\`".
+
+5. **Confidence + alternatives.** One of \`high\` / \`medium\` /
+   \`low\`. If \`medium\` or below, list the next 1-2 candidate
+   hypotheses you'd test, with the query that would refute or
+   confirm each. This is the confounder-ranking rule from the
+   2026-05-20 session — name what else might be true.
+
+### Worked example — currency OOMKill, 2026-05-26
+
+This is the exact failure mode a prior agent run halted on too
+early. Use it as a pattern reference.
+
+\`\`\`
+Symptom layer (rule 1): checkout PlaceOrder error rate 88%, top
+error message "failed to prepare order: failed to convert price
+of <X> to <Y>". Wrapper text — checkout was *converting* when
+the downstream gRPC failed. Inner client span
+oteldemo.CurrencyService/Convert: gRPC code 14, message
+"error reading from server: EOF". Transport signal — currency
+is the implicated downstream.
+
+Refutation: is currency actually returning errors, or not
+responding? Run rule 2 client-vs-server ratio for
+oteldemo.CurrencyService/Convert:
+  frontend  CLIENT (kind=3): 1769
+  checkout  CLIENT (kind=3):   16
+  currency  SERVER (kind=2):  484
+~27% coverage — 73% of upstream calls have no matching server
+span. Currency is crashing, not erroring.
+
+Refutation: is it a transient crash or a recurring crashloop?
+Run rule 2 pod-cardinality on currency over 5m:
+  pods=6 distinct k8s.pod.name values within 5 minutes.
+Crashloop confirmed.
+
+Failure mode: oom-kill (single-replica service + repeated short
+pod lifetimes + transport-layer EOF on caller). Evidence:
+  client/server ratio = 27%
+  pods dcount(5m) = 6
+  trace duration before EOF ~ 118s (consistent with k8s
+  killing the pod mid-call)
+
+Remediation: "Raise memory limit on currency Deployment from
+20Mi to 200Mi" (same fix pattern as the postgres 100Mi → fix
+from the prior week).
+
+Confidence: high. Alternatives ranked:
+  - readiness-probe failure (lower) — would explain pod churn
+    but not the consistent ~5 min pod lifetime; OOMKill fits
+    better.
+  - latency-saturation (lower) — would NOT explain missing
+    server spans; ruled out.
+\`\`\`
+
+That summary is **complete**. "Currency is returning EOF" is
+**not** — it stops at the symptom layer.
 
 ### Signals to explicitly ignore as noise
 
