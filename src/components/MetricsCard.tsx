@@ -223,16 +223,48 @@ export default function MetricsCard({
   }
 
   // A row is "present" if it has a finite value OR a non-empty series.
-  // If nothing lands for any row, hide the card entirely so empty
-  // sections don't clutter Service Detail.
+  // Two empty states exist: (1) none of the configured rows resolved
+  // to a metric the service emits (catalog miss), (2) rows resolved
+  // but data is all empty (service emits the metric family but had
+  // no observations in-window).
+  //
+  // The card shell renders in both cases — previously the card
+  // hid itself entirely, which collapsed the parent .metricCards
+  // 3-col grid into 1 or 2 cols mid-page and gave the Service Detail
+  // page a jagged look. Empty-state copy distinguishes the two
+  // causes so the operator can act on each.
   const presentRows = rowData.filter(
     (r) =>
       (typeof r.value === 'number' && Number.isFinite(r.value)) ||
       r.series.length > 0,
   );
 
-  if (resolvedRows.length === 0) return null;
-  if (!rowData.some((r) => r.loading) && presentRows.length === 0) return null;
+  if (resolvedRows.length === 0) {
+    return (
+      <div className={s.card}>
+        <div className={s.header}>
+          <div className={s.title}>{title}</div>
+          {subtitle && <div className={s.subtitle}>{subtitle}</div>}
+        </div>
+        <div className={s.emptyState}>
+          Not instrumented for this service.
+        </div>
+      </div>
+    );
+  }
+  if (!rowData.some((r) => r.loading) && presentRows.length === 0) {
+    return (
+      <div className={s.card}>
+        <div className={s.header}>
+          <div className={s.title}>{title}</div>
+          {subtitle && <div className={s.subtitle}>{subtitle}</div>}
+        </div>
+        <div className={s.emptyState}>
+          No data in this range.
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={s.card}>
