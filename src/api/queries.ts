@@ -543,7 +543,6 @@ export function serviceStatusCodeMix(binSeconds: number, service: string): strin
         http_status >= 400 and http_status < 500, "4xx",
         isnotnull(grpc_status) and grpc_status != 0, "grpc_err",
         "ok")
-    | where status_class != "ok"
     | summarize n=count() by status_class, bucket=bin(_time, ${binSeconds}s)
     | sort by bucket asc, status_class asc`;
 }

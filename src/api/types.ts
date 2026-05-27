@@ -125,6 +125,7 @@ export interface ServiceBucket {
  * for non-HTTP failures.
  */
 export type StatusCodeClass =
+  | 'ok'
   | '503'
   | '504'
   | '502'
@@ -133,13 +134,19 @@ export type StatusCodeClass =
   | '4xx'
   | 'grpc_err';
 
+/**
+ * Order is stack order (bottom-to-top in the stacked column chart):
+ * `ok` is the baseline so error classes stack visibly on top with
+ * the total height showing absolute request volume.
+ */
 export const STATUS_CODE_CLASSES: readonly StatusCodeClass[] = [
+  'ok',
+  '4xx',
+  '500',
+  '502',
   '503',
   '504',
-  '502',
-  '500',
   'other_5xx',
-  '4xx',
   'grpc_err',
 ] as const;
 

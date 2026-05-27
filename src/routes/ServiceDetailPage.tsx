@@ -3,6 +3,9 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import TimeRangePicker from '../components/TimeRangePicker';
 import { binSecondsFor } from '../components/timeRanges';
 import LineChart, { type LineSeries } from '../components/LineChart';
+import StackedColumnChart, {
+  type StackedSeries,
+} from '../components/StackedColumnChart';
 import TraceBriefList from '../components/TraceBriefList';
 import StatusBanner from '../components/StatusBanner';
 import MetricsCard, { type MetricsCardRow } from '../components/MetricsCard';
@@ -772,18 +775,22 @@ export default function ServiceDetailPage() {
   ];
 
   // Pivot the long-format status-mix rows (one per bucket × class)
-  // into one line per status class. Order and colors are stable so the
-  // legend reads consistently across services and time ranges.
-  // Classes with no observations are omitted so a service with only
-  // 503s shows a single line, not seven empty ones.
-  const statusMixSeries: LineSeries[] = useMemo(() => {
+  // into one stacked-column series per status class. Series order
+  // follows STATUS_CODE_CLASSES — that defines bottom-to-top stack
+  // order (ok at bottom in slate as the volume baseline, errors
+  // stacked on top in saturated colors so a mix shift is obvious
+  // at a glance). Classes with no observations get dropped from the
+  // legend so a service with only 503s + ok shows two entries, not
+  // eight.
+  const statusMixSeries: StackedSeries[] = useMemo(() => {
     const colors: Record<StatusCodeClass, string> = {
+      ok: '#cbd5e1',         // slate-300 — neutral baseline; errors pop against it
+      '4xx': '#eab308',      // yellow — client error
+      '500': '#9f1239',      // dark red — upstream bug
+      '502': '#a855f7',      // purple — bad gateway
       '503': '#ef4444',      // red — capacity / no healthy upstream
       '504': '#3b82f6',      // blue — upstream timeout
-      '502': '#a855f7',      // purple — bad gateway
-      '500': '#9f1239',      // dark red — upstream bug
       other_5xx: '#737373',  // gray — uncommon 5xx
-      '4xx': '#eab308',      // yellow — client error
       grpc_err: '#10b981',   // green — gRPC non-OK
     };
     const byClass = new Map<StatusCodeClass, Array<{ t: number; v: number }>>();
@@ -792,7 +799,7 @@ export default function ServiceDetailPage() {
       arr.push({ t: b.bucketMs, v: b.count });
       byClass.set(b.statusClass, arr);
     }
-    const result: LineSeries[] = [];
+    const result: StackedSeries[] = [];
     for (const cls of STATUS_CODE_CLASSES) {
       const data = byClass.get(cls);
       if (!data || data.length === 0) continue;
@@ -1064,20 +1071,20 @@ export default function ServiceDetailPage() {
             emptyMessage={loadingBuckets ? 'Loading…' : 'No data'}
           />
         </div>
-        {/* Status-code mix — surfaces 503 (capacity) vs 504
-            (upstream timeout) vs 500 (upstream bug) instead of
-            flattening every 5xx into one rate. See
-            docs/sessions/2026-05-20-smooth-climb-misdiagnosis.md
-            for the incident that motivated this. Full-width
-            because up to 7 lines + legend doesn't fit in the
-            .charts 3-column grid. */}
+        {/* Status-code mix — stacked column chart with ok as the
+            baseline (slate) and 4xx / 5xx classes stacked on top
+            in distinct colors. Total column height = absolute
+            request volume; segment heights = per-class counts.
+            See docs/sessions/2026-05-20-smooth-climb-misdiagnosis.md
+            for the diagnostic intent. Full-width because the
+            legend doesn't fit alongside the RED row's 3-col grid. */}
         <div className={s.chartRow}>
-          <LineChart
+          <StackedColumnChart
             title="Status mix"
-            subtitle="HTTP status classes (errors per minute)"
+            subtitle="HTTP status classes per minute (ok baseline + errors stacked above)"
             series={statusMixSeries}
             yFormat={(v) => (v >= 1 ? v.toFixed(0) : v.toFixed(1))}
-            emptyMessage={loadingBuckets ? 'Loading…' : 'No errors'}
+            emptyMessage={loadingBuckets ? 'Loading…' : 'No requests'}
           />
         </div>
       </section>
