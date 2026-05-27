@@ -163,6 +163,44 @@
   font-weight: var(--cds-font-weight-semibold);
 }
 
+/* GFM tables rendered by renderAssistantMarkdown. The investigator
+   leans on tables for diagnostic breakdowns (per-op error counts,
+   client-vs-server ratios, status-code mix) — they need to read
+   cleanly inside both the rolling message stream and the
+   findings/conclusion panels. */
+.assistantTable {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0 0 var(--cds-space-sm) 0;
+  font-size: var(--cds-font-size-sm);
+  font-variant-numeric: tabular-nums;
+  border: 1px solid var(--cds-color-border-subtle);
+  border-radius: var(--cds-radius-sm);
+  overflow: hidden;
+}
+.assistantTable thead th {
+  text-align: left;
+  padding: var(--cds-space-xs) var(--cds-space-sm);
+  font-size: var(--cds-font-size-xs);
+  font-weight: var(--cds-font-weight-semibold);
+  color: var(--cds-color-fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  background: var(--cds-color-bg-subtle);
+  border-bottom: 1px solid var(--cds-color-border-subtle);
+}
+.assistantTable tbody td {
+  padding: var(--cds-space-xs) var(--cds-space-sm);
+  border-bottom: 1px solid var(--cds-color-border-subtle);
+  vertical-align: top;
+}
+.assistantTable tbody tr:last-child td {
+  border-bottom: none;
+}
+.assistantTable tbody tr:hover {
+  background: var(--cds-color-bg-subtle);
+}
+
 /* Tool call approval card --------------------------------------- */
 
 .toolCall {
