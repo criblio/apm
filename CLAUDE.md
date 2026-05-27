@@ -145,6 +145,63 @@ npm run provision          # reconcile
 npm run provision -- --dry # dry-run (show plan without applying)
 ```
 
+### Cutting a release
+
+Releases are triggered by pushing a `vX.Y.Z` tag — the `.github/
+workflows/release.yml` workflow runs `npm ci`, `npm run lint`,
+`npm run package`, then creates a GitHub Release with the
+`apm-X.Y.Z.tgz` pack attached. **A lint failure on the tagged
+commit means no GitHub Release gets published**, and recovering
+requires either force-retagging or bumping to a patch release.
+Catch the failure locally before tagging.
+
+**Required pre-tag checks** — run these on the commit you're about
+to tag, in this order, in a clean working tree:
+
+```bash
+npm run lint          # must pass (0 errors) — what the workflow gates on
+npm test              # unit tests
+npx tsc --noEmit      # type-check
+npm run package       # full build + tgz produced
+```
+
+If any step fails, do not tag. Fix on master first.
+
+**Tagging steps**:
+
+1. Confirm CI is green on the commit you intend to tag — open
+   `gh run list --branch master --limit 3` and verify the most
+   recent `CI` run on that commit is `success`. If CI hasn't run
+   yet (you pushed seconds ago), wait for it.
+2. Bump `package.json` `version` to the target `X.Y.Z`.
+3. Commit as `chore: release X.Y.Z` with a body that lists the
+   PRs / threads landing in the release. House style: one bullet
+   per coherent feature thread, mention the retro/regular PR
+   number, one-sentence summary.
+4. Annotated tag the commit: `git tag -a vX.Y.Z -m "vX.Y.Z"`.
+5. `git push origin master vX.Y.Z`.
+6. Confirm the release workflow succeeded:
+   `gh run list --workflow=Release --limit 1` and `gh release
+   view vX.Y.Z`.
+
+**Pack version vs tag version**: the workflow's first step
+verifies `vX.Y.Z` tag matches `package.json` version. They must
+match exactly. The pack filename `apm-X.Y.Z.tgz` is derived from
+`package.json` so this is usually automatic, but if the version
+was bumped in a separate commit from the tag, double-check before
+pushing.
+
+**If a release workflow fails after tag push**:
+- Smallest possible fix: commit the fix on master, force-update
+  the tag (`git tag -fa vX.Y.Z && git push origin vX.Y.Z --force`),
+  re-run the workflow. Only safe within minutes of the original
+  tag push — once the broken tag is consumed by downstream tooling
+  or other developers fetched it, force-retag is destructive.
+- Safer fallback: leave the broken tag as-is, fix on master, and
+  cut a patch release (`X.Y.(Z+1)`).
+- Either way, the lesson is to catch the failure pre-tag, not
+  post-tag. Run the four checks above.
+
 ### Running scenario tests
 
 Run scenario specs **one at a time, sequentially** — never in
