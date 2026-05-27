@@ -289,6 +289,53 @@ designed carefully and implemented incrementally — start with the
 mapping config UI + one query builder, validate the abstraction,
 then roll out to all queries.
 
+### 12. Background-failure / synthetic-noise filtering
+
+Real production traffic has a *baseline* of "errors" that aren't
+real problems. The OTel demo's load-generator deliberately fires
+fault-injection requests (`DEADBEEF99`, `NOTAPRODUCT`, `%00`,
+intentional 4xx) so the demo can exercise error-handling paths.
+Real workloads have the equivalent: bots probing wrong URLs, users
+hitting deleted products, expired session cookies, scrapers, etc.
+The OTel instrumentation marks all of those as `status=ERROR` —
+the trace shape can't tell them apart from "the order service is
+on fire."
+
+The Investigator currently chases all errors equally. When it
+correctly identifies a real root cause (currency OOMKill in the
+2026-05-27 incident), the *remaining* span-error rate after the
+fix is still high because of the synthetic baseline, and the agent
+can't conclude "we're done."
+
+The hard problem: there's no clean, reliable heuristic.
+
+- **Trace-origin classification** (already shipped) helps when the
+  originator is identifiable (load-generator → `user`,
+  cron-job → `service`), but doesn't distinguish "real user
+  looking for a deleted product" from "real user encountering a
+  bug." Both have the same trace origin.
+- **Error-message regex** (drop traces with `DEADBEEF99` etc.) is
+  brittle and demo-specific; doesn't generalize to real workloads
+  where bad inputs aren't predictable strings.
+- **Rate-based baselining** — if (svc, op, status_class) has been
+  at 5% error rate for weeks, drop it from "current errors" —
+  risks suppressing slow regressions.
+- **Customer-specific tagging** — let operators mark
+  (service, operation, status) tuples as "expected noise" via
+  Settings. Reliable but high-maintenance and not auto-detected.
+
+What we'd actually want is a *learned* "baseline-noise" signal:
+identify the (svc, op, status, message-fingerprint) tuples that
+have been a steady-state minority of every window for the last
+N days, and treat them as expected when they appear in the
+current window. That's a real piece of research, not a preamble
+tweak.
+
+Filed as a roadmap item rather than shipped: it's blocking a
+cleaner "investigation is done" stopping rule but the design
+space is large enough that we need to think through approach
+before committing to one.
+
 ### Blocked on Cribl
 
 - **Metrics: `_metric_name` in wide-column format** — Cribl's
