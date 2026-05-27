@@ -536,7 +536,64 @@ you see — weight signals by **recency** (most recent 1-3 minutes
 beat signals from earlier in the lookback window, because the
 question is almost always "what changed recently?").
 
-1. **Traffic drops (service went dark).** The loudest signal when a
+1. **Error messages: wrapper vs cause.** Application-level error
+   strings almost always wrap a downstream failure in a sentence
+   describing what the *caller* was trying to do. A checkout span
+   with \`status.message = "failed to convert price of <X> to <Y>"\`
+   does NOT mean prices, product IDs, or currency codes are the
+   bug — it means checkout was *converting* when the downstream
+   gRPC call failed. The cause is in the descendant span's status
+   code + message, not in the wrapper.
+
+   Red-flag substrings that indicate a **transport failure** (server
+   died or unreachable), not application logic:
+   - \`EOF\` / \`error reading from server\` — server died mid-call.
+   - \`connection refused\` / \`transport: Error while dialing\` —
+     server pod was down when the call dialed.
+   - \`Unavailable\` / gRPC code \`14\` — load balancer reports no
+     healthy endpoint.
+   - \`DeadlineExceeded\` / gRPC code \`4\` — server too slow to
+     respond before the client deadline.
+   - **Empty \`status.message\` on a CLIENT span with
+     \`status.code == "2"\`** — server never produced a response.
+     This is the most common form because the gRPC client never
+     received a status payload. Treat as transport failure.
+
+   When you see these, blame the named **server** — the downstream
+   gRPC service from \`attributes['rpc.service']\` /
+   \`attributes['rpc.method']\` — not the upstream service whose
+   message you're reading. Product IDs, user IDs, currency codes,
+   or any other format-string nouns inside the wrapper are
+   accidental — they are NOT a diagnostic pattern. Do NOT report
+   "errors clustered on product X to currency Y" as the root
+   cause when the underlying span error is transport-level.
+
+   Example query that separates the two layers cleanly:
+   \`\`\`kql
+   dataset="${datasetId}" | where isnotnull(end_time_unix_nano)
+     | extend svc=tostring(resource.attributes['service.name']),
+              op=tostring(name),
+              is_error=(tostring(status.code)=="2"),
+              msg=tostring(status.message),
+              kind=tostring(kind),
+              rpc_svc=tostring(attributes['rpc.service']),
+              rpc_meth=tostring(attributes['rpc.method'])
+     | where is_error
+     | extend transport_signal=case(
+         msg contains "EOF", "EOF",
+         msg contains "connection refused", "conn-refused",
+         msg contains "Unavailable", "Unavailable",
+         msg contains "DeadlineExceeded", "Deadline",
+         kind == "3" and isempty(msg), "silent-client-error",
+         "application")
+     | summarize n=count() by op, transport_signal, rpc_svc, rpc_meth
+     | sort by n desc
+   \`\`\`
+   If any \`transport_signal\` other than \`application\` shows
+   meaningful volume, the cause is the named \`rpc_svc\`. The
+   application-message wrapper is downstream of that.
+
+2. **Traffic drops (service went dark).** The loudest signal when a
    service is unreachable is that it **stopped emitting spans**, not
    that it produced errors. Always run a per-service request-rate
    query comparing the most recent minutes against the earlier part
@@ -551,6 +608,57 @@ question is almost always "what changed recently?").
      | summarize cnt=count() by svc, bin(_time, 60s)
      | sort by svc, _time
    \`\`\`
+
+   **Sub-check (telemetry absence is not exoneration): client-vs-
+   server span ratio.** A crashlooping pod may emit *some* spans
+   before each death — enough to clear the "≥50% rate drop"
+   threshold but not enough to cover upstream demand. Compare the
+   CLIENT-span count for a downstream operation (caller side,
+   \`kind == "3"\`) against the SERVER-span count on the downstream
+   (\`kind == "2"\`). Healthy services run ~1:1; crashlooping
+   services run 3:1 or worse:
+   \`\`\`kql
+   dataset="${datasetId}" | where isnotnull(end_time_unix_nano)
+     | extend svc=tostring(resource.attributes['service.name']),
+              op=tostring(name),
+              k=tostring(kind)
+     | where op == "<downstream.Service/Method>"
+     | summarize n=count() by svc, k
+     | sort by n desc
+   \`\`\`
+   Read the result as: total client spans (all callers, \`k=3\`)
+   versus total server spans (the downstream, \`k=2\`). If clients
+   show 1700 and the server shows 480, the server crashed during
+   ~72% of calls — even though the server's own error rate looks
+   fine, because dead pods don't emit error spans. **Absent
+   downstream telemetry is suspicious, not exonerating**: when
+   the upstream's wrapper text says a downstream failed but the
+   downstream's per-op error rate is 0%, that almost always means
+   the downstream crashed before it could record the error.
+
+   **Sub-check: pod churn (crashloop proxy).** The k8s
+   \`restart_count\` resource attribute is not reliably exported by
+   the demo SDKs, so use the cardinality of \`k8s.pod.name\` per
+   service over a short window as a proxy. A single-replica
+   service should show \`pods=1\` over 5 minutes. Multiple distinct
+   pod names within 5 minutes means pods are dying and being
+   replaced — usually OOMKill or readiness-probe failure:
+   \`\`\`kql
+   dataset="${datasetId}" | where isnotnull(end_time_unix_nano)
+     | extend svc=tostring(resource.attributes['service.name']),
+              pod=tostring(resource.attributes['k8s.pod.name'])
+     | where svc == "<implicated>"
+     | summarize pods=dcount(pod),
+                 pod_list=make_set(pod, 20)
+       by bin(_time, 5m)
+     | sort by _time desc
+   \`\`\`
+   When a service implicated by transport-error markers (rule 1)
+   also shows pod churn here, the diagnosis is the named
+   downstream service in an OOMKill / readiness-probe / crashloop
+   state. Recommend "raise memory limits on \`<svc>\`" or
+   "investigate \`<svc>\` startup failure", not anything about the
+   caller's logic.
 
 2. **Error-rate changes over time, not totals.** Run an
    errors-per-minute histogram per service *before* running a
