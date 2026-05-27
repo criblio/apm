@@ -205,9 +205,9 @@ the user wants:
 
 | Lookup / cached panel | What it has | Read pattern |
 |---|---|---|
-| \`criblapm_error_rate_history\` lookup | yesterday + 5 prior days of per-service error-rate %, pivoted one row per svc with columns \`d1_pct .. d6_pct\` | \`take 1 \| project svc="X" \| lookup criblapm_error_rate_history on svc\` |
-| \`$vt_results\` of \`criblapm__home_service_summary\` | last 1h per-service requests / errors / error_rate / p50/p95/p99 (5-min cadence) | \`dataset="$vt_results" \| where jobName == "criblapm__home_service_summary"\` |
-| \`$vt_results\` of \`criblapm__sysarch_dependencies\` | parent-service → child-service call counts and edge error rates (5-min cadence). **This is the answer to "what does service X call, and how are those calls failing?"** | \`dataset="$vt_results" \| where jobName == "criblapm__sysarch_dependencies" \| where parent=="X"\` |
+| \`criblapm_error_rate_history\` lookup | yesterday + 5 prior days of per-service error-rate %, pivoted one row per svc with columns \`d1_pct .. d6_pct\` | \`take 1 | project svc="X" | lookup criblapm_error_rate_history on svc\` |
+| \`$vt_results\` of \`criblapm__home_service_summary\` | last 1h per-service requests / errors / error_rate / p50/p95/p99 (5-min cadence) | \`dataset="$vt_results" | where jobName == "criblapm__home_service_summary"\` |
+| \`$vt_results\` of \`criblapm__sysarch_dependencies\` | parent-service → child-service call counts and edge error rates (5-min cadence). **This is the answer to "what does service X call, and how are those calls failing?"** | \`dataset="$vt_results" | where jobName == "criblapm__sysarch_dependencies" | where parent=="X"\` |
 | \`$vt_results\` of \`criblapm__sysarch_messaging_deps\` | kafka / messaging edges | same pattern, \`messaging_deps\` |
 | \`$vt_results\` of \`criblapm__svc_operations\` | per-(svc, op) request count, error rate, p95 (5-min cadence) | filter by \`jobName\` and \`svc\` |
 | \`criblapm_trace_originators\` lookup | per-root-service classification (user / service / unknown) | \`lookup criblapm_trace_originators on root_svc\` |

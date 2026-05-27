@@ -32,7 +32,9 @@ function record(measurement: PageMeasurement) {
   if (existsSync(OUT)) {
     try {
       existing = JSON.parse(readFileSync(OUT, 'utf8'));
-    } catch {}
+    } catch {
+      // First run — output file doesn't exist yet, start fresh.
+    }
   }
   existing.push(measurement);
   writeFileSync(OUT, JSON.stringify(existing, null, 2));
@@ -79,7 +81,7 @@ test.beforeAll(() => {
 });
 
 test.describe('UI baseline timings', () => {
-  test.beforeEach(({}, testInfo) => {
+  test.beforeEach((_, testInfo) => {
     // Allow each test to run up to MARKER_TIMEOUT_MS + setup time.
     testInfo.setTimeout(MARKER_TIMEOUT_MS + 60_000);
   });
