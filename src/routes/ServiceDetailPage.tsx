@@ -1030,85 +1030,70 @@ export default function ServiceDetailPage() {
 
       {activeTab === 'overview' && (
       <>
-      {/* RED charts */}
-      <div className={s.charts}>
-        <LineChart
-          title="Rate"
-          subtitle="Requests per minute"
-          series={rateSeries}
-          yFormat={(v) => (v >= 1 ? v.toFixed(0) : v.toFixed(1))}
-          emptyMessage={loadingBuckets ? 'Loading…' : 'No data'}
-        />
-        <LineChart
-          title="Errors"
-          subtitle="Error rate (%)"
-          series={errorsSeries}
-          yFormat={(v) => `${v.toFixed(1)}%`}
-          emptyMessage={loadingBuckets ? 'Loading…' : 'No data'}
-        />
-        <LineChart
-          title="Duration"
-          subtitle="Latency p50 / p95 / p99"
-          series={durSeries}
-          yFormat={fmtUsAxis}
-          emptyMessage={loadingBuckets ? 'Loading…' : 'No data'}
-        />
-      </div>
+      {/* ── Health ─────────────────────────────────────────────
+          The standard RED triplet plus a status-code mix chart
+          for diagnosing 5xx subtypes (capacity vs timeout vs
+          upstream bug). */}
+      <section className={s.section}>
+        <div className={s.sectionHeader}>
+          <h2 className={s.sectionTitle}>Health</h2>
+          <span className={s.sectionSubtitle}>
+            Request rate, error rate, latency, and HTTP status mix
+          </span>
+        </div>
+        <div className={s.charts}>
+          <LineChart
+            title="Rate"
+            subtitle="Requests per minute"
+            series={rateSeries}
+            yFormat={(v) => (v >= 1 ? v.toFixed(0) : v.toFixed(1))}
+            emptyMessage={loadingBuckets ? 'Loading…' : 'No data'}
+          />
+          <LineChart
+            title="Errors"
+            subtitle="Error rate (%)"
+            series={errorsSeries}
+            yFormat={(v) => `${v.toFixed(1)}%`}
+            emptyMessage={loadingBuckets ? 'Loading…' : 'No data'}
+          />
+          <LineChart
+            title="Duration"
+            subtitle="Latency p50 / p95 / p99"
+            series={durSeries}
+            yFormat={fmtUsAxis}
+            emptyMessage={loadingBuckets ? 'Loading…' : 'No data'}
+          />
+        </div>
+        {/* Status-code mix — surfaces 503 (capacity) vs 504
+            (upstream timeout) vs 500 (upstream bug) instead of
+            flattening every 5xx into one rate. See
+            docs/sessions/2026-05-20-smooth-climb-misdiagnosis.md
+            for the incident that motivated this. Full-width
+            because up to 7 lines + legend doesn't fit in the
+            .charts 3-column grid. */}
+        <div className={s.chartRow}>
+          <LineChart
+            title="Status mix"
+            subtitle="HTTP status classes (errors per minute)"
+            series={statusMixSeries}
+            yFormat={(v) => (v >= 1 ? v.toFixed(0) : v.toFixed(1))}
+            emptyMessage={loadingBuckets ? 'Loading…' : 'No errors'}
+          />
+        </div>
+      </section>
 
-      {/* Status-code mix — surfaces 503 (capacity) vs 504 (upstream
-          timeout) vs 500 (upstream bug) instead of flattening every
-          5xx into one rate. See
-          docs/sessions/2026-05-20-smooth-climb-misdiagnosis.md for
-          the incident that motivated this. Lives on its own full-
-          width row because up to 7 lines + legend doesn't fit in the
-          .charts 3-column grid. */}
-      <div className={s.chartRow}>
-        <LineChart
-          title="Status mix"
-          subtitle="HTTP status classes (errors per minute)"
-          series={statusMixSeries}
-          yFormat={(v) => (v >= 1 ? v.toFixed(0) : v.toFixed(1))}
-          emptyMessage={loadingBuckets ? 'Loading…' : 'No errors'}
-        />
-      </div>
-
-      {/* Metric-backed cards: dependency latencies, runtime, infra.
-          Each card hides itself entirely when the service has no
-          data for any of its rows, so non-k8s services show two
-          cards, services without instrumented downstream calls
-          show one, and a fully-uninstrumented service shows none. */}
-      <div className={s.metricCards}>
-        <MetricsCard
-          title="Dependency latencies"
-          subtitle="p95 of outgoing calls by protocol"
-          rows={protocolRows}
-          service={serviceName}
-          range={range}
-          availableMetrics={serviceMetricSet}
-          seriesByMetric={cardSeriesByMetric}
-        />
-        <MetricsCard
-          title="Runtime health"
-          subtitle="Process / VM metrics from the instrumentation SDK"
-          rows={runtimeRows}
-          service={serviceName}
-          range={range}
-          availableMetrics={serviceMetricSet}
-          seriesByMetric={cardSeriesByMetric}
-        />
-        <MetricsCard
-          title="Infrastructure"
-          subtitle="Container + pod metrics from the k8s cluster receiver"
-          rows={infraRows}
-          service={serviceName}
-          range={range}
-          availableMetrics={serviceMetricSet}
-          seriesByMetric={cardSeriesByMetric}
-        />
-      </div>
-
-      {/* Lower grid */}
-      <div className={s.grid}>
+      {/* ── Operations ───────────────────────────────────────── */}
+      <section className={s.section}>
+        <div className={s.sectionHeader}>
+          <h2 className={s.sectionTitle}>Operations</h2>
+          {!loadingOps && operations.length > 0 && (
+            <span className={s.sectionSubtitle}>
+              {operations.length} operation{operations.length === 1 ? '' : 's'}
+              {' · '}click a row to search matching traces
+            </span>
+          )}
+        </div>
+        <div className={s.grid}>
         <div className={s.opsCard}>
           <div className={s.cardHeader}>
             <span className={s.cardTitle}>
@@ -1311,18 +1296,23 @@ export default function ServiceDetailPage() {
           </div>
         </div>
       </div>
+      </section>
 
-      {/* Instances section — per-pod RED metrics */}
-      <div className={s.instancesCard}>
+      {/* ── Instances ───────────────────────────────────────── */}
+      <section className={s.section}>
+        <div className={s.sectionHeader}>
+          <h2 className={s.sectionTitle}>Instances</h2>
+          {!loadingInstances && instances.length > 0 && (
+            <span className={s.sectionSubtitle}>
+              {instances.length} pod{instances.length === 1 ? '' : 's'}
+              {' · '}per-pod metrics via service.instance.id
+            </span>
+          )}
+        </div>
+        <div className={s.instancesCard}>
         <div className={s.cardHeader}>
           <span className={s.cardTitle}>
-            Instances{' '}
-            {!loadingInstances && (
-              <span className={s.cardSubtitle}>({instances.length})</span>
-            )}
-          </span>
-          <span className={s.cardSubtitle}>
-            Per-pod metrics via service.instance.id
+            Pods
           </span>
         </div>
         {loadingInstances ? (
@@ -1370,43 +1360,93 @@ export default function ServiceDetailPage() {
           </table>
         )}
       </div>
+      </section>
+
+      {/* ── Infrastructure ────────────────────────────────────
+          Metric-backed cards: dependency latencies, runtime, k8s.
+          MetricsCard always renders its shell now (with a "Not
+          instrumented" empty state if the service lacks the
+          relevant metric family), so the 3-col grid stays 3-col
+          even for services without k8s telemetry. */}
+      <section className={s.section}>
+        <div className={s.sectionHeader}>
+          <h2 className={s.sectionTitle}>Infrastructure</h2>
+          <span className={s.sectionSubtitle}>
+            Dependency latencies, runtime, and platform metrics
+          </span>
+        </div>
+        <div className={s.metricCards}>
+          <MetricsCard
+            title="Dependency latencies"
+            subtitle="p95 of outgoing calls by protocol"
+            rows={protocolRows}
+            service={serviceName}
+            range={range}
+            availableMetrics={serviceMetricSet}
+            seriesByMetric={cardSeriesByMetric}
+          />
+          <MetricsCard
+            title="Runtime health"
+            subtitle="Process / VM metrics from the instrumentation SDK"
+            rows={runtimeRows}
+            service={serviceName}
+            range={range}
+            availableMetrics={serviceMetricSet}
+            seriesByMetric={cardSeriesByMetric}
+          />
+          <MetricsCard
+            title="Infrastructure"
+            subtitle="Container + pod metrics from the k8s cluster receiver"
+            rows={infraRows}
+            service={serviceName}
+            range={range}
+            availableMetrics={serviceMetricSet}
+            seriesByMetric={cardSeriesByMetric}
+          />
+        </div>
+      </section>
 
       </>
       )}
 
       {alertHistory.length > 0 && (
-        <div className={s.opsCard}>
-          <div className={s.cardHeader}>
-            <span className={s.cardTitle}>Alert History</span>
+        <section className={s.section}>
+          <div className={s.sectionHeader}>
+            <h2 className={s.sectionTitle}>Alert history</h2>
+            <span className={s.sectionSubtitle}>
+              Last {alertHistory.length} state transition{alertHistory.length === 1 ? '' : 's'}
+            </span>
           </div>
-          <table className={s.opsTable}>
-            <thead>
-              <tr>
-                <th>Time</th>
-                <th>Event</th>
-                <th>Signal</th>
-                <th>Detail</th>
-              </tr>
-            </thead>
-            <tbody>
-              {alertHistory.map((h, i) => {
-                const colors = ALERT_STATUS_COLORS[h.eventType] ?? { bg: 'rgba(16,185,129,0.12)', fg: '#059669' };
-                return (
-                  <tr key={i}>
-                    <td>{new Date(h.time).toLocaleString()}</td>
-                    <td>
-                      <span style={{ padding: '2px 6px', borderRadius: '4px', fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', background: colors.bg, color: colors.fg }}>
-                        {h.eventType}
-                      </span>
-                    </td>
-                    <td>{h.signalType}</td>
-                    <td>{h.detail}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+          <div className={s.opsCard}>
+            <table className={s.opsTable}>
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Event</th>
+                  <th>Signal</th>
+                  <th>Detail</th>
+                </tr>
+              </thead>
+              <tbody>
+                {alertHistory.map((h, i) => {
+                  const colors = ALERT_STATUS_COLORS[h.eventType] ?? { bg: 'rgba(16,185,129,0.12)', fg: '#059669' };
+                  return (
+                    <tr key={i}>
+                      <td>{new Date(h.time).toLocaleString()}</td>
+                      <td>
+                        <span style={{ padding: '2px 6px', borderRadius: '4px', fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', background: colors.bg, color: colors.fg }}>
+                          {h.eventType}
+                        </span>
+                      </td>
+                      <td>{h.signalType}</td>
+                      <td>{h.detail}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
       )}
     </div>
   );

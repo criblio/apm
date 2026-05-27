@@ -95,3 +95,15 @@
   0% { background-position: 200% 0; }
   100% { background-position: -200% 0; }
 }
+
+/* Empty state used when the service has no rows for this card's
+   metric family (e.g., a non-k8s service hits the Infrastructure
+   card with no platform metrics). The card shell still renders so
+   the Infrastructure section's 3-col grid doesn't reflow. */
+.emptyState {
+  padding: var(--cds-space-lg);
+  text-align: center;
+  color: var(--cds-color-fg-subtle);
+  font-style: italic;
+  font-size: var(--cds-font-size-sm);
+}

@@ -1,7 +1,9 @@
 .page {
   display: flex;
   flex-direction: column;
-  gap: var(--cds-space-lg);
+  /* Larger gap than the in-section gap so sections read as distinct
+     "chapters" rather than a flat stack of cards. */
+  gap: var(--cds-space-xl);
 }
 
 .crumbs {
@@ -148,7 +150,41 @@
   gap: var(--cds-space-md);
 }
 
-/* -------- Charts row -------- */
+/* -------- Sections (named groups under h2 headings) --------
+ *
+ * Each section wraps a content cluster (Health, Operations,
+ * Dependencies, Instances, Infrastructure, Alerts) with a small
+ * heading row + the cards inside it. The page's top-level gap
+ * (set on .page) gives breathing room between sections; inside a
+ * section the header sits one md-step above its cards.
+ */
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cds-space-md);
+}
+
+.sectionHeader {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--cds-space-md);
+}
+
+.sectionTitle {
+  font-size: var(--cds-font-size-lg);
+  font-weight: var(--cds-font-weight-semibold);
+  color: var(--cds-color-fg);
+  margin: 0;
+}
+
+.sectionSubtitle {
+  font-size: var(--cds-font-size-sm);
+  color: var(--cds-color-fg-muted);
+  text-align: right;
+}
+
+/* -------- Charts grid -------- */
 
 .charts {
   display: grid;
@@ -163,21 +199,23 @@
 
 /* Single full-width chart row — used for the Status mix chart that
    needs more horizontal space for up to 7 lines + legend than the
-   3-column .charts grid gives. */
+   3-column .charts grid gives. Sits inside .section under Health. */
 .chartRow {
   display: grid;
   grid-template-columns: 1fr;
   gap: var(--cds-space-lg);
-  margin-top: var(--cds-space-lg);
 }
 
-/* -------- Metric-backed cards row: protocol / runtime / infra -------- */
-
+/* -------- Metric-backed cards row: protocol / runtime / infra --------
+ *
+ * Always 3 columns. MetricsCard always renders its shell now (even
+ * when the service has no data for it), so the row no longer
+ * collapses from 3 to 1 or 2 cols mid-page.
+ */
 .metricCards {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: var(--cds-space-lg);
-  margin-top: var(--cds-space-lg);
   align-items: start;
 }
 @media (max-width: 1300px) {
@@ -191,8 +229,13 @@
   }
 }
 
-/* -------- Lower grid: ops table + errors + deps -------- */
-
+/* -------- Operations + Dependencies 2-col layout --------
+ *
+ * Used inside the "Operations" section: operations table at 2/3
+ * width, dependency summary at 1/3. (Dependencies has its own
+ * "Upstream / Downstream" two-list shape that compresses well into
+ * the narrower column.)
+ */
 .grid {
   display: grid;
   grid-template-columns: 2fr 1fr;
