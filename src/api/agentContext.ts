@@ -575,6 +575,27 @@ question is almost always "what changed recently?").
    "errors clustered on product X to currency Y" as the root
    cause when the underlying span error is transport-level.
 
+   **Capacity-vs-crashloop disambiguation.** Both patterns can
+   produce slow client-side responses and a climbing client error
+   rate. The client error message tells you which:
+
+   - **Crashing** servers DIE mid-call — clients see \`EOF\`,
+     \`connection refused\`, \`transport: Error while dialing\`,
+     or empty \`status.message\` on a CLIENT span.
+     Capacity-saturated services don't disconnect mid-response.
+   - **Capacity-saturated** servers RESPOND, just slowly —
+     clients see \`DeadlineExceeded\` (gRPC code 4),
+     \`Unavailable: no healthy upstream\` (envoy 503 when the load
+     balancer marks endpoints unhealthy), or rising p99 latency
+     on server-side spans. The server still emits a status payload.
+
+   **When you see \`EOF\` or \`connection refused\` it is a crash,
+   not capacity — regardless of what pod cardinality says.** A
+   single pod can crashloop in place (see rule 2's pod-cardinality
+   sub-check for why dcount(pod) = 1 does NOT rule out OOMKill on
+   a Deployment). Do not flip to a capacity diagnosis because pod
+   churn was absent.
+
    Example query that separates the two layers cleanly:
    \`\`\`kql
    dataset="${datasetId}" | where isnotnull(end_time_unix_nano)
@@ -609,15 +630,22 @@ question is almost always "what changed recently?").
    - to rule 2's **client-vs-server span ratio** sub-check — to
      decide whether the downstream is crashing, dialing-failing,
      or slow,
-   - to rule 2's **pod-cardinality** sub-check — to identify the
-     specific failure mode (OOMKill, readiness probe, startup
-     failure),
+   - to rule 2's **pod-cardinality AND span-emission-gap**
+     sub-checks together — to distinguish between-pod replacement
+     (high pod cardinality) from in-place container restart (pod
+     cardinality 1 + repeating span-emission gaps). Either pattern
+     points at OOMKill / readiness probe / startup failure; the
+     absence of pod churn alone is NOT exoneration,
    - and then to the **stopping rule + summary template** at the
      bottom of this section, which requires you to name the
      failure mode and a specific remediation. Halting at the
      transport-signal layer is a known regression — do not
      present an investigation summary that names a downstream
-     without naming why it's failing.
+     without naming why it's failing. Diagnosing "capacity" on
+     the basis of \`dcount(pod) == 1\` while transport markers say
+     EOF / connection-refused is a second known regression —
+     don't make that flip; see rule 1's capacity-vs-crashloop
+     disambiguation.
 
 2. **Traffic drops (service went dark).** The loudest signal when a
    service is unreachable is that it **stopped emitting spans**, not
@@ -662,13 +690,18 @@ question is almost always "what changed recently?").
    downstream's per-op error rate is 0%, that almost always means
    the downstream crashed before it could record the error.
 
-   **Sub-check: pod churn (crashloop proxy).** The k8s
-   \`restart_count\` resource attribute is not reliably exported by
-   the demo SDKs, so use the cardinality of \`k8s.pod.name\` per
-   service over a short window as a proxy. A single-replica
-   service should show \`pods=1\` over 5 minutes. Multiple distinct
-   pod names within 5 minutes means pods are dying and being
-   replaced — usually OOMKill or readiness-probe failure:
+   **Sub-check: pod churn (when pods get fully replaced).**
+   The k8s \`restart_count\` resource attribute is not reliably
+   exported by the demo SDKs. Pod-name cardinality catches
+   pod-level replacements: Job-style pods, evicted pods, node
+   failures, \`restartPolicy: Never\`. **It does NOT catch the
+   most common OOMKill case** — a Kubernetes Deployment with the
+   default \`restartPolicy: Always\` restarts the *container* in
+   place: same pod, same name, same UID, only the container's
+   internal restart counter ticks. A service can be OOMKill-
+   crashlooping every 5 minutes for weeks with \`dcount(pod) == 1\`.
+   So: high cardinality CONFIRMS pod-level replacement; low
+   cardinality DOES NOT rule out container-level crashloop.
    \`\`\`kql
    dataset="${datasetId}" | where isnotnull(end_time_unix_nano)
      | extend svc=tostring(resource.attributes['service.name']),
@@ -682,12 +715,41 @@ question is almost always "what changed recently?").
    \`distinct pod | take 20\` against the same filter — don't try
    to fold both into one \`summarize\` via \`make_set\` (see gotchas
    above).
+
+   **Sub-check: span-emission gaps (catches in-place container
+   restart).** When a container restarts in place, the service
+   can't emit spans during the boot window — typically 5-60s
+   depending on language runtime. Plot per-pod span count by
+   minute and look for short, repeating gaps. Steady-state
+   services show non-zero spans every minute. A crashlooping
+   container shows blocks of non-zero minutes separated by
+   1-3 minute zero blocks at a repeating cadence (every ~5 min
+   for the OOMKill pattern):
+   \`\`\`kql
+   dataset="${datasetId}" | where isnotnull(end_time_unix_nano)
+     | extend svc=tostring(resource.attributes['service.name']),
+              pod=tostring(resource.attributes['k8s.pod.name'])
+     | where svc == "<implicated>"
+     | summarize spans=count() by pod, bin(_time, 60s)
+     | sort by pod asc, _time asc
+   \`\`\`
+   Read the result row by row in time order. Repeating
+   start-stop blocks (live, live, live, live, GAP, live, live,
+   live, live, GAP) at a consistent period is the kubelet
+   restart pattern on OOMKill or readiness-probe failure. Pair
+   this with the transport markers from rule 1: when the caller
+   sees EOF / connection-refused and the implicated pod has
+   periodic span-emission gaps, the diagnosis is container-level
+   crashloop even though \`dcount(pod) == 1\`.
+
    When a service implicated by transport-error markers (rule 1)
-   also shows pod churn here, the diagnosis is the named
-   downstream service in an OOMKill / readiness-probe / crashloop
-   state. Recommend "raise memory limits on \`<svc>\`" or
-   "investigate \`<svc>\` startup failure", not anything about the
-   caller's logic.
+   also shows EITHER pod churn (between-pod replacement) OR
+   span-emission gaps (in-place container restart), the diagnosis
+   is the named downstream in an OOMKill / readiness-probe /
+   startup-failure state. Recommend "raise memory limits on
+   \`<svc>\`" or "investigate \`<svc>\` startup failure" — not
+   anything about the caller's logic, and not "scale replicas"
+   alone (that absorbs symptoms without fixing the per-pod cause).
 
 3. **Error-rate changes over time, not totals.** Run an
    errors-per-minute histogram per service *before* running a
@@ -755,7 +817,16 @@ Required slots in the summary:
 
 2. **Failure mode.** One of these specific labels — pick the one
    the evidence supports, not a generic restating of the symptom:
-   - \`oom-kill\` — pod memory limit hit; pod churn confirms.
+   - \`oom-kill\` — container memory limit hit. The DEFAULT
+     Kubernetes Deployment restarts the container in place on
+     OOMKill, so the pod stays alive (same name, same UID) and
+     \`dcount(pod) == 1\` is normal — do not interpret it as
+     ruling OOMKill out. Confirmation comes from transport
+     markers on the caller (EOF, connection refused, empty
+     status.message) PLUS one of: span-emission gaps in the
+     server's pod at a repeating cadence (in-place restart),
+     OR pod-name churn (between-pod replacement, only happens
+     for Jobs, evictions, restartPolicy:Never, or node failures).
    - \`readiness-probe\` — pod is up but k8s removed it from
      endpoints; pod churn + connection-refused both fire.
    - \`startup-failure\` — pod fails to come up cleanly; spans
@@ -814,49 +885,77 @@ This is the exact failure mode a prior agent run halted on too
 early. Use it as a pattern reference.
 
 \`\`\`
-Symptom layer (rule 1): checkout PlaceOrder error rate 88%, top
-error message "failed to prepare order: failed to convert price
-of <X> to <Y>". Wrapper text — checkout was *converting* when
-the downstream gRPC failed. Inner client span
+Symptom layer (rule 1): checkout PlaceOrder error rate ~90%,
+top error message "failed to prepare order: failed to convert
+price of <X> to <Y>". Wrapper text — checkout was *converting*
+when the downstream gRPC failed. Inner client span
 oteldemo.CurrencyService/Convert: gRPC code 14, message
-"error reading from server: EOF". Transport signal — currency
-is the implicated downstream.
+"error reading from server: EOF" (plus a "connection refused"
+sibling). Transport signal — currency is the implicated
+downstream.
+
+Rule 1 capacity-vs-crashloop disambiguation: client messages
+are EOF and connection-refused, NOT DeadlineExceeded or
+Unavailable-no-healthy-upstream. That is a crash signature,
+not capacity. Hold that conclusion through the next checks
+even if pod cardinality looks quiet.
 
 Refutation: is currency actually returning errors, or not
 responding? Run rule 2 client-vs-server ratio for
 oteldemo.CurrencyService/Convert:
-  frontend  CLIENT (kind=3): 1769
+  frontend  CLIENT (kind=3): 3899
   checkout  CLIENT (kind=3):   16
-  currency  SERVER (kind=2):  484
-~27% coverage — 73% of upstream calls have no matching server
-span. Currency is crashing, not erroring.
+  currency  SERVER (kind=2): 1035
+~26% coverage — about 74% of upstream calls have no matching
+server span. Currency is crashing, not erroring.
 
-Refutation: is it a transient crash or a recurring crashloop?
-Run rule 2 pod-cardinality on currency over 5m:
-  pods=6 distinct k8s.pod.name values within 5 minutes.
-Crashloop confirmed.
+Rule 2 pod-cardinality on currency over 5m:
+  dcount(pod) = 1 — same pod name throughout the hour.
+**This does NOT rule out OOMKill.** A Deployment with the
+default restartPolicy:Always restarts the container in place;
+pod name doesn't change. Continue to the span-emission-gap
+sub-check.
 
-Failure mode: oom-kill (single-replica service + repeated short
-pod lifetimes + transport-layer EOF on caller). Evidence:
-  client/server ratio = 27%
-  pods dcount(5m) = 6
-  trace duration before EOF ~ 118s (consistent with k8s
-  killing the pod mid-call)
+Rule 2 span-emission gaps on the currency pod (per-minute
+span count):
+  spans non-zero from 04:06–04:10, then 04:11–04:12 zero,
+  04:13–04:17 non-zero, 04:18–04:19 zero, 04:20–04:24 non-zero…
+A ~1-2 minute gap every ~5 minutes for the entire hour.
+That is the kubelet restart cadence — container is dying and
+being restarted in place.
+
+Failure mode: oom-kill (in-place container restart pattern +
+transport-layer EOF/connection-refused on caller). Evidence:
+  client/server ratio = 26%
+  dcount(pod) = 1 (in-place restart, not pod replacement)
+  span-emission gaps at ~5min cadence (container restart
+    cycle)
+  trace duration before EOF ~118s on the representative trace
+    (caller queuing while container is dead)
 
 Remediation: "Raise memory limit on currency Deployment from
 20Mi to 200Mi" (same fix pattern as the postgres 100Mi → fix
-from the prior week).
+from the prior week). NOT "scale replicas" alone — that
+absorbs symptoms but every replica will still OOMKill on the
+same cadence.
 
 Confidence: high. Alternatives ranked:
-  - readiness-probe failure (lower) — would explain pod churn
-    but not the consistent ~5 min pod lifetime; OOMKill fits
-    better.
-  - latency-saturation (lower) — would NOT explain missing
-    server spans; ruled out.
+  - readiness-probe failure (lower) — would produce similar
+    span-emission gaps, but readiness failures don't produce
+    EOF mid-call; they produce Unavailable from the LB before
+    the call reaches the pod. EOF is post-handshake.
+  - capacity-saturation (ruled out) — would produce
+    DeadlineExceeded with server spans completing slowly, not
+    EOF with missing server spans.
+  - dependency-failure (ruled out) — currency has no
+    significant downstreams in the topology.
 \`\`\`
 
 That summary is **complete**. "Currency is returning EOF" is
-**not** — it stops at the symptom layer.
+**not** — it stops at the symptom layer. "Currency is
+capacity-saturated because pod count is 1" is also **not** —
+that's the 2026-05-27 known regression; the EOF marker
+overrides pod-count.
 
 ### Signals to explicitly ignore as noise
 
