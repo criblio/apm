@@ -647,6 +647,82 @@ question is almost always "what changed recently?").
    meaningful volume, the cause is the named \`rpc_svc\`. The
    application-message wrapper is downstream of that.
 
+   **L7 proxy attribution illusion.** When the service emitting
+   the transport markers is itself an L7 proxy (envoy, nginx,
+   traefik, ALB / GCLB / cloud load balancer), the "blame the
+   named upstream" rule above is **incomplete**. Envoy's
+   \`response_flags\` attribute carries upstream-blame semantics
+   that look like downstream failures but can equally indicate
+   the proxy itself ran out of resources:
+
+   | Flag | Envoy meaning | Can ALSO mean (proxy-side) |
+   |---|---|---|
+   | \`UT\` | upstream request timeout | proxy CPU saturation, proxy GC pause, worker pool full |
+   | \`UC\` | upstream connection terminated | proxy OOM unable to allocate sockets, fd-limit hit |
+   | \`UR\` | upstream remote reset | proxy dropped connection from its own side |
+   | \`UH\` | no healthy upstream hosts | proxy fd exhaustion + healthcheck-write failure |
+   | \`UF\` | upstream connection failure | proxy can't open new sockets |
+
+   All five flags get *attributed to the upstream cluster* in the
+   span. Following the attribution naively walks you "deeper into
+   the upstream" when the actual problem is in the proxy that
+   emitted the flag.
+
+   **The disambiguation probe**: pull the NAMED UPSTREAM'S OWN
+   server spans (kind=2 on the service envoy thinks is failing).
+   If the upstream's server spans are healthy — normal p95
+   latency for the operation type, near-zero server-side error
+   rate, span volume that tracks the proxy's request rate — then
+   **the upstream is fine and the proxy is the broken layer**.
+   \`\`\`kql
+   dataset="${datasetId}" | where isnotnull(end_time_unix_nano)
+     | extend svc=tostring(resource.attributes['service.name']),
+              kind=tostring(kind),
+              is_error=(tostring(status.code)=="2"),
+              dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
+              op=tostring(name),
+              resp_flags=tostring(attributes['response_flags'])
+     | where svc == "<named upstream>" and kind == "2"
+     | summarize requests=count(),
+                 errors=countif(is_error),
+                 p50_ms=percentile(dur_us, 50)/1000.0,
+                 p95_ms=percentile(dur_us, 95)/1000.0,
+                 max_ms=max(dur_us)/1000.0
+       by op
+     | extend err_pct=round(100.0*errors/requests, 2)
+     | sort by requests desc
+   \`\`\`
+   Compare to the proxy's reported request volume. If the proxy
+   says it sent 3000 requests with 2000 UT/UC errors but the
+   upstream's own server spans show 3000 requests at normal p95
+   with 0% errors — the upstream is doing its job, the proxy is
+   shedding connections before they ever get there.
+
+   **When the disambiguation says "proxy is the cause":**
+
+   - The failure mode is \`proxy-resource-exhaustion\` (a flavor of
+     OOMKill, fd-exhaustion, or CPU saturation that lives ON THE
+     PROXY, not on the named upstream).
+   - Use rule 2's existing sub-checks against THE PROXY'S service
+     name (not the upstream): client-vs-server ratio, span-
+     emission-gap probe, pod cardinality, log scan.
+   - The remediation is on the proxy: raise its memory / fd / CPU
+     limits, scale its replicas, tune worker thread pool, NOT on
+     the upstream. Do not recommend changes to the upstream's
+     code or scale; it isn't the problem.
+   - Counter-pattern to flag: "envoy says upstream X is slow, so
+     let's investigate upstream X." That cascading inference is
+     the exact regression we're trying to prevent — envoy's
+     attribution is one *suspect*, not a verdict.
+
+   This rule applies to ANY L7 proxy emitting transport-blame
+   flags toward an apparently-healthy upstream. Service-name
+   heuristics that suggest you're looking at a proxy:
+   \`frontend-proxy\`, \`*-gateway\`, \`*-ingress\`, \`envoy-*\`,
+   \`*-lb\`, \`nginx*\`. When the proxy's spans carry a
+   \`response_flags\` attribute at all (envoy-specific), assume
+   this rule applies.
+
    **This rule names WHERE — not WHY. It is not a complete
    diagnosis on its own.** "Currency Convert is returning EOF" is
    a tautology, not a root cause: the operator's next question is
@@ -873,6 +949,17 @@ Required slots in the summary:
    - \`dependency-failure\` — service is healthy but its own
      downstream is failing; you've identified the next link in
      the chain, not the root.
+   - \`proxy-resource-exhaustion\` — an L7 PROXY (envoy / nginx /
+     ALB / etc.) is emitting upstream-blame flags (UT, UC, UR,
+     UH, UF) toward a named upstream, but the named upstream's
+     own server spans show healthy latency and near-zero error
+     rate. The proxy itself is OOM / fd-exhausted / CPU-saturated
+     / worker-pool-full and shedding connections before they
+     reach the upstream. Remediation lands on the proxy
+     (memory / fd / CPU / replicas), NOT the named upstream.
+     See rule 1's "L7 proxy attribution illusion" disambiguation
+     — this failure mode is specifically there to break the
+     "envoy blames upstream → investigate upstream" regression.
    - \`unknown-investigate-further\` — you do NOT yet have a
      failure mode. **This is not an acceptable final answer.**
      If the evidence runs out, say what's missing and what you'd
@@ -901,6 +988,12 @@ Required slots in the summary:
    - \`capacity\` → "Scale \`<svc>\` to \`<N>\` replicas / add HPA".
    - \`config-error\` → "Roll back the \`<date/SHA>\` change on
      \`<svc>\` or revert the \`<flag/setting>\`".
+   - \`proxy-resource-exhaustion\` → "Raise memory / fd limits on
+     \`<proxy>\` from \`<X>\` to \`<Y>\`" or "Scale \`<proxy>\` to
+     \`<N>\` replicas" or "Tune \`<proxy>\` worker thread pool".
+     Remediation MUST name the proxy (e.g. \`frontend-proxy\`,
+     \`*-gateway\`), NOT the named upstream that envoy's
+     attribution pointed at.
 
 5. **Confidence + alternatives.** One of \`high\` / \`medium\` /
    \`low\`. If \`medium\` or below, list the next 1-2 candidate
@@ -1042,6 +1135,62 @@ If you find yourself about to conclude \`capacity\` or
 zero, stop. Run the span-emission-gap probe. Reread rule 1's
 capacity-vs-crashloop disambiguation. The right answer is in
 the crash family.
+
+### Counterexample — labeled WRONG answer (L7 proxy attribution illusion)
+
+A second regression class, distinct from the OOMKill capacity-flip
+above. The pattern: a long-running chronic 5xx baseline at the
+\`frontend-proxy\` (envoy) where the proxy itself was memory-
+constrained, but the failures presented as upstream-cluster
+errors (UT, UC on cluster \`frontend\`). The Investigator chased
+the upstream service through multiple rounds because envoy's
+attribution pointed there.
+
+\`\`\`
+WRONG conclusion shape:
+
+  Evidence the agent gathered:
+    frontend-proxy emits ~20% errors at cluster boundary
+                  attributes['response_flags'] in (UT, UC)
+                  rpc.service / upstream cluster = "frontend"
+    frontend (the BFF) server spans: handlers run in <62ms,
+                  near-zero error rate at the application layer
+
+  Wrong reasoning (the regression):
+    "The proxy is reporting UT/UC on the frontend cluster.
+     Frontend must be slow or unreachable. Conclusion:
+     latency-saturation on frontend BFF.
+     Recommend: scale BFF replicas / raise BFF deadlines."
+
+  Why this is wrong:
+  1. The BFF's own server spans show healthy latency
+     (<62ms median, ~normal). A truly slow upstream would
+     have inflated server-side p95 to match the proxy's
+     reported wait.
+  2. The BFF's own error rate is near zero. A truly failing
+     upstream would have BFF server errors matching the
+     proxy's reported error volume.
+  3. UT/UC on envoy can be proxy-side as much as upstream-
+     side: proxy OOM unable to allocate sockets emits UC;
+     proxy CPU/worker saturation emits UT.
+  4. The proxy itself is memory-constrained — it sheds
+     connections before they reach the BFF. The
+     attribution is a side-effect, not a verdict.
+
+  Correct conclusion:
+    Failure mode = proxy-resource-exhaustion (envoy / L7 proxy
+    layer).
+    Remediation = Raise frontend-proxy memory limit (or
+    fd-limit / replicas, depending on the resource that's
+    constrained). DO NOT touch the BFF; it is innocent.
+\`\`\`
+
+If envoy emits \`UT\` / \`UC\` / \`UR\` / \`UH\` / \`UF\` against a
+named upstream and that upstream's own server spans look fine,
+**the proxy is the failing layer**. Following envoy's
+attribution down into a healthy upstream is the cascading-
+inference regression — apply rule 1's L7 proxy attribution
+illusion disambiguation instead.
 
 ### Signals to explicitly ignore as noise
 
