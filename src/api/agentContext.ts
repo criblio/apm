@@ -66,12 +66,38 @@ the \`render_trace\` tool with the \`traceId\` so the UI can show the full
 waterfall to the user. Don't just list the trace_id as text — render it.
 
 ### Dataset
+
 - ID: \`${datasetId}\`
-- Content: OpenTelemetry traces, logs, and metrics from an OTel Collector
-- Records are **pre-parsed JSON** — every field is a structured column
-- Span filter: \`dataset="${datasetId}" | where isnotnull(end_time_unix_nano)\`
-- Metric filter: \`dataset="${datasetId}" | where datatype == "generic_metrics"\`
-- Log filter: \`dataset="${datasetId}" | where isnotnull(body)\`
+- Content: OpenTelemetry telemetry from an OTel Collector — **four**
+  record types in one dataset, distinguishable by which fields are
+  populated. Do not assume "the otel dataset" means "spans only";
+  many root causes show up in logs or metrics before spans tell
+  you anything.
+
+| Record type | Identifier | Filter |
+|---|---|---|
+| **Spans** | \`span_id\` + \`end_time_unix_nano\` | \`where isnotnull(end_time_unix_nano)\` |
+| **Metrics** (wide-column) | \`_metric_type\` present; no \`span_id\` | \`where isnotnull(_metric_type)\` |
+| **Logs** (pure) | \`severity_number\` + \`body\`; no \`span_id\` | \`where isnotnull(severity_number) and isnotnull(body) and isnull(span_id)\` |
+| **Span events** | \`span_id\` + \`body\` + \`severity_number\` | \`where isnotnull(span_id) and isnotnull(body)\` |
+
+All four share \`resource.attributes['service.name']\` so you can
+join across record types on service identity. Records are
+**pre-parsed JSON** — every field is a structured column, no
+regex on \`_raw\` needed.
+
+**When to query each type:**
+- Latency / error rate / call-graph questions → spans.
+- "How is metric X trending?" / resource utilization → metrics.
+- "What did service X actually say while it was failing?" → logs.
+- "What happened inside this specific span?" (DB call, kafka commit,
+  exception breadcrumb) → span events.
+
+**Log-silence is a signal too.** A service that's processing
+requests (server spans appear) but emitting suspiciously low log
+volume relative to that request rate may have its logger
+back-pressured by its own SDK. See "Common failure modes" rule on
+log-volume vs request-volume comparison.
 
 ### Field access rules (CRITICAL — Cribl KQL dialect)
 
@@ -146,6 +172,44 @@ top level rather than nested under \`resource.attributes\`:
 | Service name | \`tostring(['service.name'])\`  (top-level, bracket-quoted) |
 | Host name | \`tostring(['host.name'])\` |
 | K8s pod | \`tostring(['k8s.pod.name'])\` |
+
+### Log field mappings (for log records + span events with body)
+
+Logs share the nested-object shape with spans — resource attributes
+live under \`resource.attributes\`. Pure log records have no
+\`span_id\`; span events have \`span_id\` (they belong to a parent
+span) plus the same body / severity fields.
+
+| Concept | Expression |
+|---|---|
+| Service name | \`tostring(resource.attributes['service.name'])\` |
+| Severity (numeric) | \`severity_number\` (1=TRACE … 9=INFO … 13=WARN … 17=ERROR … 21=FATAL) |
+| Severity (text) | \`tostring(severity_text)\` (e.g. \`"INFO"\`, \`"WARN"\`, \`"ERROR"\`) |
+| Message body | \`tostring(body)\` (the actual log line; sometimes structured JSON) |
+| Trace correlation | \`trace_id\`, \`span_id\` (present on span events; null on pure logs) |
+| Log attributes | \`attributes\` (varies by SDK; common keys: \`code.namespace\`, \`code.function\`, \`exception.type\`) |
+| K8s pod | \`tostring(resource.attributes['k8s.pod.name'])\` |
+| K8s deployment | \`tostring(resource.attributes['k8s.deployment.name'])\` |
+
+Quick scan for warnings/errors from one service:
+
+\`\`\`kql
+dataset="${datasetId}"
+  | where isnotnull(severity_number) and isnotnull(body)
+  | extend svc=tostring(resource.attributes['service.name']),
+           sev=tostring(severity_text),
+           msg=tostring(body)
+  | where svc == "<service>"
+    and sev in ("WARN", "WARNING", "ERROR", "FATAL")
+  | summarize n=count() by msg
+  | sort by n desc
+  | limit 20
+\`\`\`
+
+Read the top messages by frequency. Repeated occurrences of the
+same stack-trace fragment, GC pause warning, exporter back-pressure
+notice, or downstream-error log are usually the smoking gun the
+trace shape alone can't deliver.
 
 ### KQL dialect (Cribl Search KQL, NOT standard Kusto)
 
@@ -779,6 +843,69 @@ question is almost always "what changed recently?").
    \`<svc>\`" or "investigate \`<svc>\` startup failure" — not
    anything about the caller's logic, and not "scale replicas"
    alone (that absorbs symptoms without fixing the per-pod cause).
+
+   **Sub-check: read the service's own logs.** Spans tell you the
+   shape of the failure; logs often tell you the cause in plain
+   text. The implicated service may be emitting explicit warnings
+   — GC long-pause events, exporter back-pressure notices, panic
+   stack traces, "connection pool exhausted", config-parse errors
+   on boot — that the span layer can't surface. Always pull the
+   implicated service's warnings before declaring a failure mode:
+   \`\`\`kql
+   dataset="${datasetId}"
+     | where isnotnull(severity_number) and isnotnull(body)
+     | extend svc=tostring(resource.attributes['service.name']),
+              sev=tostring(severity_text),
+              msg=tostring(body)
+     | where svc == "<implicated>"
+       and sev in ("WARN", "WARNING", "ERROR", "FATAL")
+     | summarize n=count() by msg
+     | sort by n desc
+     | limit 20
+   \`\`\`
+   Read the top messages by frequency. A repeated WARN about
+   "BatchLogRecordProcessor queue is full" / "OTLP exporter
+   timeout" / "GC pause %ds" / "circuit breaker open" / "config
+   reload failed" is usually the smoking gun the trace shape
+   doesn't deliver. If the top message is application-level
+   nonsense, the cause is *probably* in the spans / k8s layer
+   instead — but you've ruled out the cheap log answer.
+
+   **Sub-check: log silence relative to request volume (self-
+   silencing failures).** Some failure modes cause the service's
+   logger ITSELF to stall — the canonical case is the OTel SDK's
+   log exporter back-pressuring on a full queue. The SDK then
+   blocks new log writes, including its own warnings about being
+   blocked. From the outside this looks like "service is handling
+   traffic, no errors logged" — which the agent will read as
+   healthy. **It is not.** Absence of log messages from a busy
+   service is itself a signal.
+
+   Compare per-minute log volume to per-minute span volume from
+   the same service. Healthy services emit logs at a steady rate
+   tracking request volume; logger-stalled services show requests
+   continuing while log emission collapses toward zero:
+   \`\`\`kql
+   dataset="${datasetId}"
+     | where isnotnull(end_time_unix_nano)
+        or (isnotnull(severity_number) and isnotnull(body))
+     | extend svc=tostring(resource.attributes['service.name']),
+              kind=iff(isnotnull(span_id) and isnotnull(end_time_unix_nano),
+                       "span",
+                       iff(isnotnull(severity_number) and isnotnull(body),
+                           "log",
+                           "other"))
+     | where svc == "<implicated>" and kind in ("span", "log")
+     | summarize n=count() by kind, bin(_time, 60s)
+     | sort by _time asc
+   \`\`\`
+   Eyeball the two series side-by-side. If the span line stays
+   roughly constant while the log line drops to near-zero (or to
+   exactly the same low number every minute, suggesting only the
+   most-throttled message is getting through), the service's
+   logger is stalled — the failure mode is at the SDK / exporter
+   layer, not the application. This is the diagnostic you would
+   NEVER reach by querying only spans.
 
 3. **Error-rate changes over time, not totals.** Run an
    errors-per-minute histogram per service *before* running a
