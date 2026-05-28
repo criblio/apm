@@ -85,10 +85,72 @@ type TranscriptEntry = UserEntry | AssistantEntry | ToolCallEntry | ErrorEntry;
 // Minimal markdown rendering
 // ─────────────────────────────────────────────────────────────────
 //
-// The assistant emits markdown-flavored text: headings, inline code,
-// fenced blocks, bold. No need for a full markdown library — we
-// handle the handful of things the agent actually uses and render
-// everything else as paragraphs.
+// The assistant emits markdown-flavored text: inline code, fenced
+// blocks, bold, and (frequently) GFM tables for diagnostic
+// breakdowns. No need for a full markdown library — we handle the
+// handful of things the agent actually uses and render everything
+// else as paragraphs.
+
+interface TableSpec {
+  headers: string[];
+  /** One of 'left' | 'right' | 'center' | undefined per column. */
+  aligns: Array<'left' | 'right' | 'center' | undefined>;
+  rows: string[][];
+}
+
+/**
+ * Detect a GFM-style table at the start of `text` and return both
+ * the parsed shape and the unconsumed remainder. Returns null when
+ * the block doesn't match the GFM table shape (need at least a
+ * header row + a separator row of dashes/colons).
+ */
+function tryParseTable(text: string): { table: TableSpec; rest: string } | null {
+  const lines = text.split('\n');
+  if (lines.length < 2) return null;
+  const headerLine = lines[0].trim();
+  const sepLine = lines[1].trim();
+  if (!headerLine.includes('|') || !sepLine.includes('|')) return null;
+  // The separator row distinguishes a table from a paragraph of
+  // pipe-delimited prose. Cells are only `-`, `:`, and whitespace.
+  const sepCells = splitTableRow(sepLine);
+  if (sepCells.length === 0) return null;
+  for (const cell of sepCells) {
+    if (!/^:?-{1,}:?$/.test(cell.trim())) return null;
+  }
+  const headers = splitTableRow(headerLine);
+  if (headers.length === 0) return null;
+  const aligns: TableSpec['aligns'] = sepCells.map((c) => {
+    const trimmed = c.trim();
+    const left = trimmed.startsWith(':');
+    const right = trimmed.endsWith(':');
+    if (left && right) return 'center';
+    if (right) return 'right';
+    if (left) return 'left';
+    return undefined;
+  });
+  const rows: string[][] = [];
+  let consumed = 2;
+  for (let i = 2; i < lines.length; i++) {
+    const ln = lines[i];
+    if (!ln.trim().includes('|')) break;
+    rows.push(splitTableRow(ln.trim()));
+    consumed = i + 1;
+  }
+  const rest = lines.slice(consumed).join('\n');
+  return { table: { headers, aligns, rows }, rest };
+}
+
+/**
+ * Split a GFM table row on `|`, stripping the leading and trailing
+ * pipe sentinels GFM allows. Each cell keeps its inline content
+ * (whitespace gets trimmed at render time).
+ */
+function splitTableRow(line: string): string[] {
+  let s = line;
+  if (s.startsWith('|')) s = s.slice(1);
+  if (s.endsWith('|')) s = s.slice(0, -1);
+  return s.split('|');
+}
 
 function renderAssistantMarkdown(text: string): React.ReactNode[] {
   if (!text) return [];
@@ -117,11 +179,62 @@ function renderAssistantMarkdown(text: string): React.ReactNode[] {
       continue;
     }
     // Split text into paragraphs by blank lines. Inside each para,
-    // render inline code spans and bold spans.
+    // check for GFM tables first (they're contiguous pipe-delimited
+    // lines with a `|---|---|` separator) and fall through to
+    // inline-rendered paragraphs otherwise.
     const paras = part.body.split(/\n{2,}/);
     for (const para of paras) {
       const trimmed = para.trim();
       if (!trimmed) continue;
+      const parsed = tryParseTable(trimmed);
+      if (parsed) {
+        nodes.push(
+          <table key={`tbl-${nodeKey++}`} className={s.assistantTable}>
+            <thead>
+              <tr>
+                {parsed.table.headers.map((h, i) => (
+                  <th
+                    key={i}
+                    style={
+                      parsed.table.aligns[i]
+                        ? { textAlign: parsed.table.aligns[i] }
+                        : undefined
+                    }
+                  >
+                    {renderInline(h.trim())}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {parsed.table.rows.map((row, r) => (
+                <tr key={r}>
+                  {row.map((cell, c) => (
+                    <td
+                      key={c}
+                      style={
+                        parsed.table.aligns[c]
+                          ? { textAlign: parsed.table.aligns[c] }
+                          : undefined
+                      }
+                    >
+                      {renderInline(cell.trim())}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>,
+        );
+        // tryParseTable returns the unconsumed remainder for tables
+        // that share a paragraph with trailing prose — render that
+        // as a follow-on paragraph so nothing gets dropped.
+        const rest = parsed.rest.trim();
+        if (rest) {
+          nodes.push(<p key={`p-${nodeKey++}`}>{renderInline(rest)}</p>);
+        }
+        continue;
+      }
       nodes.push(<p key={`p-${nodeKey++}`}>{renderInline(trimmed)}</p>);
     }
   }
