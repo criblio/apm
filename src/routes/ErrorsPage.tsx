@@ -4,7 +4,7 @@ import TimeRangePicker from '../components/TimeRangePicker';
 import StatusBanner from '../components/StatusBanner';
 import InvestigateButton from '../components/InvestigateButton';
 import { listErrorClasses } from '../api/search';
-import { listCachedHomePanels } from '../api/panelCache';
+import { listCachedErrorClasses } from '../api/panelCache';
 import { useStreamFilterEnabled } from '../hooks/useStreamFilter';
 import { serviceColor } from '../utils/spans';
 import { useRangeParam } from '../hooks/useRangeParam';
@@ -34,11 +34,17 @@ export default function ErrorsPage() {
     setLoading(true);
     setError(null);
     try {
-      // Cache-fast path on the default range
+      // Cache-fast path on the default range. Reads pre-classified
+      // error spans from criblapm__home_error_spans $vt_results
+      // (populated every 5 min by the scheduled search), applies the
+      // same filter rules client-side, and returns the grouped
+      // classes. Falls through to the live query only when the
+      // cache is unpopulated (fresh install, scheduled search hasn't
+      // fired yet) or returns no rows.
       if (range === '-1h' && streamFilterEnabled) {
-        const cached = await listCachedHomePanels();
-        if (cached.errorClasses && cached.errorClasses.length > 0) {
-          setErrors(cached.errorClasses);
+        const cached = await listCachedErrorClasses();
+        if (cached) {
+          setErrors(cached.classes);
           setLoading(false);
           return;
         }

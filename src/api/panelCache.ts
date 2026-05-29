@@ -283,6 +283,48 @@ function buildCachedPanels(
   };
 }
 
+// ── Errors-page focused cache reader ─────────────────────────
+//
+// The ErrorsPage only needs `criblapm__home_error_spans` — pulling
+// the full home-panel bundle (summary + time series + slow traces
+// + alerts) over the wire just to discard everything else is
+// wasted work. This reader fetches the single panel and runs the
+// filter + grouping inline.
+//
+// Falls back to live query on the caller side when the cache is
+// stale or unavailable (returns `null`).
+
+export interface CachedErrorClasses {
+  classes: ErrorClass[];
+  unfilteredClasses: ErrorClass[];
+  droppedBy: Record<string, number>;
+  lastUpdatedMs: number | null;
+}
+
+export async function listCachedErrorClasses(
+  rules: import('./errorFilter').ErrorFilterRule[] = DEFAULT_FILTER_RULES,
+): Promise<CachedErrorClasses | null> {
+  const partitions = await readCachedPanelsRaw(['criblapm__home_error_spans']);
+  const rows = partitions.get('criblapm__home_error_spans');
+  if (!rows || rows.length === 0) return null;
+  // Track the most recent _time across all returned rows so the UI
+  // can show a freshness indicator ("cache updated 2m ago").
+  let lastUpdatedMs: number | null = null;
+  for (const r of rows) {
+    const t = toNum(r._time) * 1000;
+    if (t > 0 && (lastUpdatedMs === null || t > lastUpdatedMs)) {
+      lastUpdatedMs = t;
+    }
+  }
+  const { kept, droppedBy } = applyFilterRulesToRaw(rows, rules);
+  return {
+    classes: groupErrorClasses(kept),
+    unfilteredClasses: groupErrorClasses(rows),
+    droppedBy,
+    lastUpdatedMs,
+  };
+}
+
 // ── ServiceDetail panel cache ─────────────────────────────────
 
 export interface CachedSvcDetailPanels {

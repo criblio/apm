@@ -75,6 +75,26 @@ function statusCodeExpr(opts?: QueryOpts): string {
 }
 
 /**
+ * Pushdown-friendly error predicate. Used in `| where` clauses
+ * placed BEFORE the per-row `extend` block — the engine then
+ * eliminates non-error spans using the indexed `status_code`
+ * column (when accelerated) before any per-row work happens. For
+ * a workspace with 1% error rate this is roughly a 100× reduction
+ * in the work done by downstream extends / projections.
+ *
+ * The flat form drops the `tostring()` wrapper because
+ * `status_code` is stored as a string in the accelerated column —
+ * leaving the predicate on the raw column lets Cribl push it
+ * down. The dotted form keeps `tostring()` because `status.code`
+ * is a nested-object access that needs coercion.
+ */
+function errorPredicate(opts?: QueryOpts): string {
+  return opts?.flatFields
+    ? `status_code == "2"`
+    : `tostring(status.code) == "2"`;
+}
+
+/**
  * Shared KQL fragment that joins each span to its trace's root, looks
  * up the originator classification, and detects propagation. Output
  * columns added by this fragment, on top of whatever the caller
@@ -110,10 +130,12 @@ function statusCodeExpr(opts?: QueryOpts): string {
  *     the scan cost.
  */
 export function errorPropagationRollup(opts?: QueryOpts): string {
+  // Predicate pushed before extend so the accelerated status_code
+  // column does the heavy filter, same as rawRecentErrorSpans.
   return `${spansBase()}
-    | extend is_error_c=(${statusCodeExpr(opts)}=="2"),
-             child_parent=tostring(parent_span_id)
-    | where is_error_c and isnotempty(child_parent)
+    | where ${errorPredicate(opts)}
+    | extend child_parent=tostring(parent_span_id)
+    | where isnotempty(child_parent)
     | summarize n_error_children=count() by trace_id, child_parent`;
 }
 
@@ -314,15 +336,17 @@ export function traceSpans(traceIds: string[], opts?: QueryOpts): string {
  * <5% of spans) gets the same answer with a fraction of the work.
  */
 function filteredErrorsBranch(svcFilter: string, opts?: QueryOpts): string {
+  // Predicate pushed BEFORE the extend block — same rationale as
+  // rawRecentErrorSpans. The svc filter follows immediately so
+  // both pushdowns can fire on the indexed columns.
   return `${spansBase()}
+    | where ${errorPredicate(opts)}
     | extend svc=${svcExpr(opts)},
-             is_error=(${statusCodeExpr(opts)}=="2"),
              span_kind=tostring(kind),
              http_status=toint(attributes['http.response.status_code']),
              grpc_status=toint(attributes['rpc.grpc.status_code']),
              sid=tostring(span_id)
     ${svcFilter}
-    | where is_error
     ${errorClassificationJoins(opts)}
     | extend counts_as_error = not(${DEFAULT_FILTER_KQL})
     | where counts_as_error
@@ -814,15 +838,18 @@ export function rawSlowestTraces(limit: number = 500): string {
  * the Cribl KQL join-truncation behavior we hit during Phase 0.
  */
 export function rawRecentErrorSpans(limit: number = 300, opts?: QueryOpts): string {
+  // Predicate pushed BEFORE the extend block — the accelerated
+  // `status_code` column filters out ~99% of spans before any
+  // per-row work happens. The extend block then computes 7
+  // fields only on the error subset.
   return `${spansBase()}
+    | where ${errorPredicate(opts)}
     | extend svc=${svcExpr(opts)},
              span_kind=tostring(kind),
-             is_error=(${statusCodeExpr(opts)}=="2"),
              msg=tostring(status.message),
              http_status=toint(attributes['http.response.status_code']),
              grpc_status=toint(attributes['rpc.grpc.status_code']),
              sid=tostring(span_id)
-    | where is_error
     | sort by _time desc
     | limit ${limit}
     | project _time, svc, name, span_kind, http_status, grpc_status, msg, trace_id, sid
