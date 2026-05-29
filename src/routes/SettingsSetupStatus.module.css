@@ -1,0 +1,104 @@
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cds-space-md);
+  padding: var(--cds-space-md) var(--cds-space-lg);
+  background: var(--cds-color-bg);
+  border: 1px solid var(--cds-color-accent);
+  border-left-width: 4px;
+  border-radius: var(--cds-radius-lg);
+  box-shadow: var(--cds-shadow-sm);
+}
+.cardOk {
+  border-color: var(--cds-color-border-subtle);
+  border-left-color: var(--cds-color-success, #10b981);
+}
+
+.header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.title {
+  margin: 0;
+  font-size: var(--cds-font-size-lg);
+  font-weight: var(--cds-font-weight-semibold);
+  color: var(--cds-color-fg);
+}
+.subtitle {
+  margin: 0;
+  font-size: 12px;
+  color: var(--cds-color-fg-muted);
+  line-height: 1.5;
+}
+
+.checks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.check {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: var(--cds-color-bg-subtle);
+  border-radius: var(--cds-radius-sm);
+}
+
+.checkIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  font-size: 13px;
+  font-weight: var(--cds-font-weight-semibold);
+}
+.check_loading .checkIcon {
+  background: var(--cds-color-bg-muted);
+  color: var(--cds-color-fg-subtle);
+}
+.check_ok .checkIcon {
+  background: var(--cds-color-success-subtle, #d1fae5);
+  color: var(--cds-color-success, #047857);
+}
+.check_warn .checkIcon {
+  background: var(--cds-color-accent-subtle);
+  color: var(--cds-color-accent);
+}
+
+.checkBody {
+  min-width: 0;
+}
+.checkLabel {
+  font-size: var(--cds-font-size-sm);
+  font-weight: var(--cds-font-weight-semibold);
+  color: var(--cds-color-fg);
+}
+.checkDetail {
+  font-size: 11px;
+  color: var(--cds-color-fg-muted);
+}
+
+.checkAction {
+  font-size: 11px;
+  font-weight: var(--cds-font-weight-medium);
+  color: var(--cds-color-accent);
+  text-decoration: none;
+  padding: 4px 8px;
+  border: 1px solid var(--cds-color-accent);
+  border-radius: var(--cds-radius-sm);
+  transition: background var(--cds-transition-fast),
+    color var(--cds-transition-fast);
+}
+.checkAction:hover {
+  background: var(--cds-color-accent);
+  color: var(--cds-color-primary-fg);
+}
