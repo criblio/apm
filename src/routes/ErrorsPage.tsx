@@ -30,23 +30,24 @@ function errorKey(ec: ErrorClass): string {
 }
 
 /**
- * Build the Spotlight selection KQL for one error class. Selection =
- * spans on this service+operation with status_code == ERROR; baseline
- * is the rest of the time window. We deliberately don't filter on
- * message in the predicate because messages come from log bodies that
- * the span attributes may not carry — adding the operation+service+
- * error-status triple is enough to surface what's distinct about the
- * failing calls.
+ * Build the Spotlight scope KQL for one error class. The scope
+ * narrows BOTH selection (failing) and baseline (healthy) to spans
+ * on this service+operation, so the differential answers "what's
+ * different about the failing calls vs the successful ones?"
+ * instead of "what's different about this error vs the rest of the
+ * window?" — the latter is dominated by service-identifying
+ * attributes (rpc.method etc.) that don't move when the error fires.
  */
-function spotlightSelectionFor(ec: ErrorClass): string {
+function spotlightScopeFor(ec: ErrorClass): string {
   const svc = ec.service.replace(/"/g, '\\"');
   const op = ec.operation.replace(/"/g, '\\"');
   return (
     `tostring(resource.attributes['service.name'])=="${svc}"` +
-    ` and name=="${op}"` +
-    ` and tostring(status.code)=="2"`
+    ` and name=="${op}"`
   );
 }
+
+const SPOTLIGHT_ERROR_SELECTION = `tostring(status.code)=="2"`;
 
 export default function ErrorsPage() {
   const navigate = useNavigate();
@@ -237,10 +238,11 @@ export default function ErrorsPage() {
                       <tr className={s.spotlightRow}>
                         <td colSpan={6} className={s.spotlightCell}>
                           <SpotlightSection
-                            selectionKql={spotlightSelectionFor(ec)}
+                            scopeKql={spotlightScopeFor(ec)}
+                            selectionKql={SPOTLIGHT_ERROR_SELECTION}
                             earliest={range}
-                            title={`Spotlight — what's distinct about errors on ${ec.service} / ${ec.operation}`}
-                            caption="Compared to the rest of the time window, these attributes have values that show up much more (or much less) in this error class. Click any value to open Search filtered to those spans."
+                            title={`Spotlight — failing vs healthy calls of ${ec.service} / ${ec.operation}`}
+                            caption="Comparing failing calls of this operation to its successful ones. Attributes with asymmetric charts are the ones that changed when this error fired — the most likely root-cause signals. Click any value to open Search filtered to those spans."
                             onPickValue={(attr, value) => pickValue(ec, attr, value)}
                           />
                         </td>

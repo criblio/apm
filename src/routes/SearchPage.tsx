@@ -243,16 +243,17 @@ export default function SearchPage() {
             scopedPredicate,
             lookback,
             'now',
-            20,
-            (attr, rows) => {
-              if (cancelled) return;
-              if (rows.length > 0) setFacetLoading(false);
-              setSpotlightDiff((prev) => {
-                if (rows.length === 0) return prev;
-                const next = new Map(prev);
-                next.set(attr, rows);
-                return next;
-              });
+            {
+              onAttr: (attr, rows) => {
+                if (cancelled) return;
+                if (rows.length > 0) setFacetLoading(false);
+                setSpotlightDiff((prev) => {
+                  if (rows.length === 0) return prev;
+                  const next = new Map(prev);
+                  next.set(attr, rows);
+                  return next;
+                });
+              },
             },
           );
     work

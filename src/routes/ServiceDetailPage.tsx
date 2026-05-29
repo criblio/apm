@@ -1125,10 +1125,16 @@ export default function ServiceDetailPage() {
           </span>
         </div>
         <SpotlightSection
-          selectionKql={`tostring(resource.attributes['service.name'])=="${serviceName.replace(/"/g, '\\"')}" and tostring(status.code)=="2"`}
+          // Scope = THIS service. Selection inside the scope = the
+          // failing spans. Baseline inside the scope = the healthy
+          // ones. The differential surfaces what's actually different
+          // about the errors instead of what makes this service
+          // different from other services.
+          scopeKql={`tostring(resource.attributes['service.name'])=="${serviceName.replace(/"/g, '\\"')}"`}
+          selectionKql={`tostring(status.code)=="2"`}
           earliest={range}
           attributes={SVC_SPOTLIGHT_ATTRS}
-          caption="For each attribute, the colored bar shows the share of values inside this service's failing spans; the gray bar shows the share across the rest of the window. A big gap means that attribute is a strong differentiator."
+          caption="Comparing this service's failing spans to its healthy ones. Asymmetric charts are the strongest signal — they call out attributes whose values shifted when things broke. Click any chart for the per-value breakdown."
           onPickValue={(attr, value) => {
             const params = new URLSearchParams();
             params.set('service', serviceName);
@@ -1282,14 +1288,20 @@ export default function ServiceDetailPage() {
                             }}
                           >
                             <SpotlightSection
-                              selectionKql={
+                              // Scope = this service + this operation.
+                              // Selection within scope = failing calls.
+                              // Baseline = healthy calls of the same
+                              // op. Surfaces what changed when this
+                              // op started failing.
+                              scopeKql={
                                 `tostring(resource.attributes['service.name'])=="${serviceName.replace(/"/g, '\\"')}"` +
                                 ` and name=="${op.operation.replace(/"/g, '\\"')}"`
                               }
+                              selectionKql={`tostring(status.code)=="2"`}
                               earliest={range}
                               attributes={SVC_SPOTLIGHT_ATTRS}
-                              title={`Spotlight — what's distinct about ${op.operation}`}
-                              caption="Compared to the rest of the time window, these attributes have values that show up much more (or much less) in this operation's spans. Click any value to drill into Search."
+                              title={`Spotlight — failing vs healthy calls of ${op.operation}`}
+                              caption="Comparing failing calls of this operation to its healthy ones. Attributes with asymmetric charts are the ones that changed — most likely root-cause signals. Click a chart for the per-value detail."
                               onPickValue={(attr, value) => {
                                 const params = new URLSearchParams();
                                 params.set('service', serviceName);

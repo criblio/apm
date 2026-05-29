@@ -6,9 +6,21 @@ import type { SpotlightBucket } from '../api/types';
 import s from './SpotlightSection.module.css';
 
 interface Props {
-  /** KQL predicate that defines the selection. The rest of the
-   *  lookback window is the baseline. */
+  /** KQL predicate that defines the selection (the "interesting"
+   *  spans — usually the failing ones). */
   selectionKql: string;
+  /**
+   * Optional scope predicate. When set, BOTH the selection and the
+   * baseline are restricted to spans matching it. The differential
+   * compares selection-within-scope vs (scope minus selection), so
+   * embedded surfaces can ask "what's different about errors vs
+   * healthy spans of THIS SERVICE" instead of the broader (and far
+   * less useful) "vs everything else in the window."
+   *
+   * Without a scope, the Traces-page-style "selection vs rest of
+   * window" comparison is used.
+   */
+  scopeKql?: string;
   earliest: string;
   latest?: string;
   /** Override the SpotlightPanel caption with one that matches the
@@ -23,7 +35,7 @@ interface Props {
   onPickValue?: (attr: string, value: string) => void;
   /**
    * Attribute list to probe. Defaults to `SPOTLIGHT_ATTRIBUTES` (the
-   * broad ~22-attr set used by the Traces page rail). Pages that
+   * broad ~27-attr set used by the Traces page rail). Pages that
    * embed this alongside other heavy data fetches (Service Detail,
    * Errors) should pass a curated 6–10 attr subset so the parallel
    * fan-out doesn't compete with the rest of the page for the
@@ -41,6 +53,7 @@ interface Props {
  */
 export default function SpotlightSection({
   selectionKql,
+  scopeKql,
   earliest,
   latest = 'now',
   caption,
@@ -55,13 +68,9 @@ export default function SpotlightSection({
     let cancelled = false;
     setDiff(new Map());
     setLoading(true);
-    getSpotlightDiff(
-      attributes,
-      selectionKql,
-      earliest,
-      latest,
-      20,
-      (attr, rows) => {
+    getSpotlightDiff(attributes, selectionKql, earliest, latest, {
+      scopeKql,
+      onAttr: (attr, rows) => {
         if (cancelled) return;
         if (rows.length > 0) setLoading(false);
         setDiff((prev) => {
@@ -71,7 +80,7 @@ export default function SpotlightSection({
           return next;
         });
       },
-    )
+    })
       .catch(() => {})
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -79,7 +88,7 @@ export default function SpotlightSection({
     return () => {
       cancelled = true;
     };
-  }, [selectionKql, earliest, latest, attributes]);
+  }, [selectionKql, scopeKql, earliest, latest, attributes]);
 
   const handlePick = useCallback(
     (attr: string, value: string) => onPickValue?.(attr, value),

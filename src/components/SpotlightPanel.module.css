@@ -43,10 +43,10 @@
 .cell {
   display: flex;
   flex-direction: column;
-  padding: 6px 8px;
   background: var(--cds-color-bg);
   border: 1px solid var(--cds-color-border-subtle);
   border-radius: var(--cds-radius-sm);
+  overflow: visible;
   transition: border-color var(--cds-transition-fast),
     background var(--cds-transition-fast);
 }
@@ -54,24 +54,33 @@
   border-color: var(--cds-color-border);
 }
 
+/* The clickable surface wrapper covers the header + chart so clicks
+ * anywhere in the cell toggle expansion. The histogram's hover
+ * handlers only update local tooltip state — they don't intercept
+ * clicks. */
+.cellSurface {
+  padding: 6px 8px;
+  cursor: pointer;
+  outline: none;
+  border-radius: var(--cds-radius-sm);
+}
+.cellSurface:hover .attrName,
+.cellSurfaceOpen .attrName {
+  color: var(--cds-color-accent);
+}
+.cellSurface:focus-visible {
+  box-shadow: 0 0 0 2px var(--cds-color-accent-subtle);
+}
+.cellSurfaceOpen {
+  background: var(--cds-color-bg-muted);
+}
+
 .cellHeader {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: 6px;
-  padding: 0;
   margin-bottom: 4px;
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  width: 100%;
-  text-align: left;
-}
-.cellHeader:hover .attrName {
-  color: var(--cds-color-accent);
-}
-.cellHeaderOpen .attrName {
-  color: var(--cds-color-accent);
 }
 
 .attrName {
@@ -94,8 +103,8 @@
 
 .detailList {
   list-style: none;
-  margin: 6px 0 0;
-  padding: 6px 0 0;
+  margin: 0;
+  padding: 6px 8px 8px;
   display: flex;
   flex-direction: column;
   gap: 1px;
