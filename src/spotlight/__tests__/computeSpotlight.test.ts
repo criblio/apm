@@ -23,78 +23,106 @@ describe('computeSpotlight', () => {
     expect(computeSpotlight(diff)).toEqual([]);
   });
 
-  it('drops values seen fewer than minTotal times (noise floor)', () => {
-    // One value seen twice — below the default minTotal=3.
+  it('drops values below the minTotal floor', () => {
     const diff = new Map<string, SpotlightBucket[]>([
       ['rare.attr', [mkBucket('rare.attr', 'just-twice', 1, 1)]],
     ]);
     expect(computeSpotlight(diff)).toEqual([]);
   });
 
-  it('ranks the http.status_code differential we validated on staging', () => {
-    // From PR D's MCP probe: selection = error spans, baseline = healthy.
+  it('computes per-value selection rate (selN / total)', () => {
     const diff = new Map<string, SpotlightBucket[]>([
       [
-        'http.status_code',
+        'pod',
         [
-          mkBucket('http.status_code', '200', 0, 113168),
-          mkBucket('http.status_code', '500', 1308, 262),
-          mkBucket('http.status_code', '504', 90, 0),
-          mkBucket('http.status_code', '404', 123, 186),
+          mkBucket('pod', 'pod-A', 90, 10), // 90% errors
+          mkBucket('pod', 'pod-B', 5, 95),  // 5% errors
         ],
       ],
     ]);
     const result = computeSpotlight(diff);
     expect(result).toHaveLength(1);
-    const attr = result[0];
-    expect(attr.name).toBe('http.status_code');
-    // 500 should be the top over-represented value (huge share in sel,
-    // tiny share in base).
-    expect(attr.rows[0].value).toBe('500');
-    expect(attr.rows[0].diff).toBeGreaterThan(0.5);
-    // 200 should be at the bottom — strongly under-represented.
-    expect(attr.rows[attr.rows.length - 1].value).toBe('200');
-    expect(attr.rows[attr.rows.length - 1].diff).toBeLessThan(-0.5);
+    const a = result[0].rows.find((r) => r.value === 'pod-A')!;
+    const b = result[0].rows.find((r) => r.value === 'pod-B')!;
+    expect(a.selectionRate).toBeCloseTo(0.9);
+    expect(b.selectionRate).toBeCloseTo(0.05);
   });
 
-  it('ranks a strongly skewed attribute above a balanced one', () => {
-    // svc.skewed: A is 100% selection, 0% baseline — huge skew.
-    // svc.balanced: A and B are evenly split in both — no skew.
+  it('sorts rows within an attribute by selectionRate desc', () => {
     const diff = new Map<string, SpotlightBucket[]>([
       [
-        'svc.balanced',
+        'method',
         [
-          mkBucket('svc.balanced', 'A', 500, 500),
-          mkBucket('svc.balanced', 'B', 500, 500),
-        ],
-      ],
-      [
-        'svc.skewed',
-        [
-          mkBucket('svc.skewed', 'A', 1000, 10),
-          mkBucket('svc.skewed', 'B', 0, 990),
+          mkBucket('method', 'GET', 100, 900),    // 10% errors
+          mkBucket('method', 'POST', 900, 100),   // 90% errors
+          mkBucket('method', 'DELETE', 500, 500), // 50% errors
         ],
       ],
     ]);
     const result = computeSpotlight(diff);
-    expect(result[0].name).toBe('svc.skewed');
-    // svc.balanced should be dropped entirely — its top |diff| is 0.
-    expect(result.map((a) => a.name)).not.toContain('svc.balanced');
+    expect(result[0].rows.map((r) => r.value)).toEqual([
+      'POST',
+      'DELETE',
+      'GET',
+    ]);
   });
 
-  it('weights score by log(volume) so tiny-volume outliers do not win', () => {
-    // tiny.attr: rare value appears once in selection. Pure diff is
-    // selShare=1.0, baseShare=0 → diff=1.0 but volume is 3 (just above
-    // floor).
-    // big.attr: dominant value flips at scale — selShare=0.8 vs
-    // baseShare=0.2 → diff=0.6 but volume is 10000.
+  it('ranks high-variance attributes above low-variance ones', () => {
+    // pod.broken: A has 90% error rate, B has 5%. High variance.
+    // pod.uniform: every pod has ~50% error rate. Low variance.
     const diff = new Map<string, SpotlightBucket[]>([
-      ['tiny.attr', [mkBucket('tiny.attr', 'rare', 3, 0)]],
+      [
+        'pod.broken',
+        [
+          mkBucket('pod.broken', 'A', 900, 100),
+          mkBucket('pod.broken', 'B', 50, 950),
+        ],
+      ],
+      [
+        'pod.uniform',
+        [
+          mkBucket('pod.uniform', 'A', 500, 500),
+          mkBucket('pod.uniform', 'B', 510, 490),
+        ],
+      ],
+    ]);
+    const result = computeSpotlight(diff);
+    expect(result[0].name).toBe('pod.broken');
+    // uniform should be filtered out as below minScore.
+    expect(result.map((a) => a.name)).not.toContain('pod.uniform');
+  });
+
+  it('drops uniform attributes via the minScore floor', () => {
+    // Every value has ~50% selection rate — no signal.
+    const diff = new Map<string, SpotlightBucket[]>([
+      [
+        'meh',
+        [
+          mkBucket('meh', 'X', 500, 500),
+          mkBucket('meh', 'Y', 510, 490),
+          mkBucket('meh', 'Z', 495, 505),
+        ],
+      ],
+    ]);
+    expect(computeSpotlight(diff)).toEqual([]);
+  });
+
+  it('weights variance by volume (low-volume noise should not win)', () => {
+    // small.attr has wild rates but tiny volume.
+    // big.attr has a clear partition at high volume.
+    const diff = new Map<string, SpotlightBucket[]>([
+      [
+        'small.attr',
+        [
+          mkBucket('small.attr', 'A', 5, 0),  // 100%, but only 5 spans
+          mkBucket('small.attr', 'B', 0, 5),  // 0%, but only 5 spans
+        ],
+      ],
       [
         'big.attr',
         [
-          mkBucket('big.attr', 'X', 8000, 2000),
-          mkBucket('big.attr', 'Y', 2000, 8000),
+          mkBucket('big.attr', 'A', 800, 200), // 80%
+          mkBucket('big.attr', 'B', 200, 800), // 20%
         ],
       ],
     ]);
@@ -103,12 +131,10 @@ describe('computeSpotlight', () => {
   });
 
   it('caps rows per attribute via maxRowsPerAttr', () => {
-    // Build a mix of over- and under-represented values so the
-    // attribute clears minTopDiff (the cap is what we want to test,
-    // not the threshold).
+    // Need enough variance to clear minScore — mix hot/cold/many lukewarm.
     const buckets: SpotlightBucket[] = [
-      mkBucket('many', 'hot', 1000, 10),
-      mkBucket('many', 'cold', 10, 1000),
+      mkBucket('many', 'hot', 1000, 10),  // ~99%
+      mkBucket('many', 'cold', 10, 1000), // ~1%
     ];
     for (let i = 0; i < 18; i++) {
       buckets.push(mkBucket('many', `mid${i}`, 50, 50));
@@ -118,72 +144,54 @@ describe('computeSpotlight', () => {
     expect(result[0].rows).toHaveLength(5);
   });
 
-  it('sorts rows by diff desc within an attribute', () => {
+  it('exposes overallRate per attribute', () => {
     const diff = new Map<string, SpotlightBucket[]>([
       [
-        'method',
+        'attr',
         [
-          mkBucket('method', 'GET', 100, 900),
-          mkBucket('method', 'POST', 900, 100),
-          mkBucket('method', 'DELETE', 500, 500),
+          mkBucket('attr', 'A', 80, 20),   // 80%
+          mkBucket('attr', 'B', 20, 80),   // 20%
         ],
       ],
     ]);
     const result = computeSpotlight(diff);
-    const values = result[0].rows.map((r) => r.value);
-    expect(values).toEqual(['POST', 'DELETE', 'GET']);
+    expect(result[0].overallRate).toBeCloseTo(0.5);
   });
 
-  it('computes selShare and baseShare correctly', () => {
+  it('passes total counts on each row', () => {
     const diff = new Map<string, SpotlightBucket[]>([
       [
-        'kind',
-        [
-          mkBucket('kind', 'A', 30, 100),
-          mkBucket('kind', 'B', 70, 900),
-        ],
+        'attr',
+        [mkBucket('attr', 'X', 30, 70)],
       ],
     ]);
+    // Need variance to land — pair with a contrasting value.
+    diff.get('attr')!.push(mkBucket('attr', 'Y', 90, 10));
     const result = computeSpotlight(diff);
-    const a = result[0].rows.find((r) => r.value === 'A')!;
-    expect(a.selShare).toBeCloseTo(0.3);
-    expect(a.baseShare).toBeCloseTo(0.1);
-    expect(a.diff).toBeCloseTo(0.2);
+    const x = result[0].rows.find((r) => r.value === 'X')!;
+    expect(x.total).toBe(100);
+    expect(x.selN).toBe(30);
+    expect(x.baseN).toBe(70);
   });
 
-  it('handles selection-only data (baseTotal == 0)', () => {
-    // Edge case: every span IS in the selection (no baseline). Should
-    // not crash. baseShare goes to 0 for everything and diff equals
-    // selShare. minTopDiff filter still applies.
+  it('treats a 100% selection-rate attribute (tautology) as high score', () => {
+    // rpc.grpc.status_code where errors are exactly status=13:
+    // value 0 = 0% errors, value 13 = 100% errors. Maximum variance.
+    // Spotlight should surface it (correctly tautological — still
+    // informative for a user who didn't know about status code yet).
     const diff = new Map<string, SpotlightBucket[]>([
       [
-        'only.sel',
+        'rpc.grpc.status_code',
         [
-          mkBucket('only.sel', 'X', 900, 0),
-          mkBucket('only.sel', 'Y', 100, 0),
+          mkBucket('rpc.grpc.status_code', '0', 0, 905),
+          mkBucket('rpc.grpc.status_code', '13', 144, 0),
         ],
       ],
     ]);
     const result = computeSpotlight(diff);
     expect(result).toHaveLength(1);
-    const top = result[0].rows[0];
-    expect(top.baseShare).toBe(0);
-    expect(top.diff).toBe(top.selShare);
-  });
-
-  it('respects minTopDiff to filter out boring attributes', () => {
-    // Subtle differential — top |diff| is 0.02, below the default 0.05.
-    const diff = new Map<string, SpotlightBucket[]>([
-      [
-        'subtle',
-        [
-          mkBucket('subtle', 'A', 510, 490),
-          mkBucket('subtle', 'B', 490, 510),
-        ],
-      ],
-    ]);
-    expect(computeSpotlight(diff)).toEqual([]);
-    // Lowering the threshold should bring it back.
-    expect(computeSpotlight(diff, { minTopDiff: 0.01 })).toHaveLength(1);
+    expect(result[0].name).toBe('rpc.grpc.status_code');
+    expect(result[0].rows[0].selectionRate).toBe(1);
+    expect(result[0].rows[1].selectionRate).toBe(0);
   });
 });

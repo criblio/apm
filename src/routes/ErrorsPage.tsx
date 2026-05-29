@@ -241,8 +241,9 @@ export default function ErrorsPage() {
                             scopeKql={spotlightScopeFor(ec)}
                             selectionKql={SPOTLIGHT_ERROR_SELECTION}
                             earliest={range}
-                            title={`Spotlight — failing vs healthy calls of ${ec.service} / ${ec.operation}`}
-                            caption="Comparing failing calls of this operation to its successful ones. Attributes with asymmetric charts are the ones that changed when this error fired — the most likely root-cause signals. Click any value to open Search filtered to those spans."
+                            selectionNoun="errors"
+                            title={`Spotlight — error rate per attribute for ${ec.service} / ${ec.operation}`}
+                            caption="For each attribute, what percentage of this operation's calls with that value failed? Values with an unusually high error rate point at the source of the failures. Click Search to see the matching spans."
                             onPickValue={(attr, value) => pickValue(ec, attr, value)}
                           />
                         </td>

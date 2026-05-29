@@ -1,12 +1,24 @@
 /**
  * Spotlight engine — turns raw per-attribute (sel_n, base_n) buckets
- * into a ranked list of "interesting" attributes for the panel.
+ * into a ranked list of attributes whose values have meaningfully
+ * different SELECTION RATES.
  *
- * The shape mirrors Honeycomb's BubbleUp: for each attribute the user
- * could facet by, compute how each value's share inside the selection
- * differs from its share in the baseline. Attributes where one value
- * is strongly over- or under-represented bubble to the top; attributes
- * whose values track the baseline are de-prioritized.
+ * The metric the UI cares about is per-value selection rate —
+ * "of all spans with this value, what fraction are in the selection?"
+ * On Service Detail with selection = error spans, that's the per-
+ * value error rate. On Traces with selection = the user's filter,
+ * it's "what fraction of spans with this value match the filter?"
+ *
+ * Same shape, intuitive interpretation: a bar whose width IS the
+ * rate. The Operations table on Service Detail uses the same metric
+ * for `name` — Spotlight just generalizes it to every attribute the
+ * cluster has data for.
+ *
+ * Attributes are ranked by VARIANCE in selection rate across their
+ * values, weighted by volume. Uniform attributes (every value has
+ * roughly the same rate) tell the user nothing and get filtered out.
+ * High-variance attributes — where some values are mostly in the
+ * selection and others mostly aren't — are the diagnostic signal.
  *
  * Inputs are pure — a Map from `getSpotlightDiff()` — so the engine
  * is unit-testable against fixtures without touching the network.
@@ -14,77 +26,99 @@
 
 import type { SpotlightBucket } from '../api/types';
 
-/** A single value's contribution to the differential. */
+/** One value's contribution: how often does the selection include it? */
 export interface SpotlightValueRow {
   /** The attribute value (e.g. "200", "checkoutservice"). */
   value: string;
-  /** Raw counts in selection / baseline. */
+  /** Spans with this value that ARE in the selection. */
   selN: number;
+  /** Spans with this value that are NOT in the selection. */
   baseN: number;
-  /** Share of the selection that has this value, 0..1. */
-  selShare: number;
-  /** Share of the baseline that has this value, 0..1. */
-  baseShare: number;
-  /** selShare - baseShare. Positive = over-represented in selection. */
-  diff: number;
+  /** selN + baseN. */
+  total: number;
+  /** selN / total, 0..1. The headline metric. */
+  selectionRate: number;
 }
 
-/** A scored attribute group with its top-N value rows. */
+/** A scored attribute group with its rows sorted by selection rate. */
 export interface SpotlightAttribute {
   /** Attribute name (e.g. "http.status_code"). */
   name: string;
-  /** Rows sorted by diff desc (most over-represented first). */
+  /** Rows sorted by selectionRate desc (highest rate first). */
   rows: SpotlightValueRow[];
-  /** Score used to rank attributes against each other. Higher = more
-   *  interesting (a value's share differs strongly between sel and base). */
+  /**
+   * Score for cross-attribute ranking. Higher = more diagnostic
+   * signal. Uses the weighted standard deviation of selection rate
+   * across rows, with row weights = total volume. An attribute where
+   * every value has a similar selection rate gets a low score (the
+   * failure isn't correlated with this attribute); an attribute where
+   * some values are mostly errors and others mostly aren't gets a
+   * high score (this attribute partitions the failure).
+   */
   score: number;
-  /** Total spans in the selection that had ANY value for this attribute. */
+  /** Total spans in the selection across all rows. */
   selTotal: number;
-  /** Total spans in the baseline that had ANY value for this attribute. */
+  /** Total spans in the baseline across all rows. */
   baseTotal: number;
+  /** Average selection rate across rows (volume-weighted). Useful
+   *  for headline copy: "average X% of spans with this attribute
+   *  are in the selection." */
+  overallRate: number;
 }
 
 export interface ComputeOptions {
   /**
    * Minimum total observations (sel + base) for a value to count.
-   * Values seen only once or twice produce noisy shares; we drop them
-   * to avoid promoting one-shot outliers. Default 3.
+   * Values seen only once or twice give noisy rates; we drop them
+   * to avoid promoting one-shot outliers. Default 5.
    */
   minTotal?: number;
   /**
-   * Drop attributes whose top value's |diff| is below this threshold.
-   * Default 0.05 (5 percentage points). Lower = noisier ranking, more
-   * "meh" attributes promoted.
+   * Drop attributes whose score is below this threshold — they're
+   * uniform enough to be noise. Default 0.03 — roughly "at least
+   * one value's rate is 3+ percentage points away from the average
+   * with meaningful volume behind it."
    */
-  minTopDiff?: number;
+  minScore?: number;
   /** Cap rows per attribute in the output. Default 10. */
   maxRowsPerAttr?: number;
 }
 
 const DEFAULTS: Required<ComputeOptions> = {
-  minTotal: 3,
-  minTopDiff: 0.05,
+  minTotal: 5,
+  // With score = stddev * log1p(volume): a 5%-spread at 100 spans
+  // gives ~0.05 * log1p(100) ≈ 0.05 * 4.6 ≈ 0.23. A 30%-spread at
+  // 1000 spans gives ~0.30 * 6.9 ≈ 2.07. Setting the floor at 0.5
+  // requires either a meaningful spread or a meaningful volume —
+  // pure noise stays below.
+  minScore: 0.5,
   maxRowsPerAttr: 10,
 };
 
 /**
- * Score one attribute. The score we use is the max |diff| across its
- * rows, weighted by the log of the value's total volume so a tiny
- * value with a huge relative skew doesn't out-rank a high-volume
- * value with a moderate skew.
+ * Score = max over rows of |row.rate - overall.rate| * log1p(row.total).
  *
- * Equivalent to the L∞ norm of the per-value (volume-weighted) diff
- * vector. Cheap to compute, easy to reason about, and matches how
- * humans scan the panel — "show me the attribute whose biggest bar
- * is biggest."
+ * The L∞ norm of the per-value rate deviation captures "the value
+ * whose rate is furthest from the average," which matches the
+ * question Spotlight is trying to answer: WHICH value is dominating
+ * (or absent from) the selection. The log(volume) factor weights
+ * each row's contribution by its evidence — a 100% rate on 5 spans
+ * is weaker than a 100% rate on 5,000.
+ *
+ * Volume-weighted stddev is mathematically nicer but here it
+ * under-counts the case where one tiny-but-extreme value is the
+ * actual signal among many uniform ones — which is the typical
+ * "one pod is broken" / "rpc.grpc.status_code == 13" scenario.
  */
-function scoreAttribute(rows: SpotlightValueRow[]): number {
+function scoreAttribute(
+  rows: readonly SpotlightValueRow[],
+  overallRate: number,
+): number {
   let best = 0;
   for (const r of rows) {
-    const total = r.selN + r.baseN;
-    if (total <= 0) continue;
-    const weight = Math.log1p(total);
-    const candidate = Math.abs(r.diff) * weight;
+    if (r.total <= 0) continue;
+    const deviation = Math.abs(r.selectionRate - overallRate);
+    const candidate = deviation * Math.log1p(r.total);
     if (candidate > best) best = candidate;
   }
   return best;
@@ -93,67 +127,55 @@ function scoreAttribute(rows: SpotlightValueRow[]): number {
 /**
  * Compute Spotlight rankings from the raw differential buckets.
  *
- * The result is sorted attributes-first by score desc, then within
- * each attribute by diff desc (over-represented values first). Empty
- * attributes — those that pass nothing after `minTotal` / `minTopDiff`
- * filtering — are dropped. Callers can rely on the returned array being
- * already in display order.
+ * Result is sorted attributes-first by score desc, then within each
+ * attribute by selectionRate desc (most-in-selection values first,
+ * so the "100% errors" rows bubble to the top of their card). Empty
+ * or uniform attributes are dropped.
  */
 export function computeSpotlight(
   diff: Map<string, SpotlightBucket[]>,
   opts: ComputeOptions = {},
 ): SpotlightAttribute[] {
-  const { minTotal, minTopDiff, maxRowsPerAttr } = { ...DEFAULTS, ...opts };
+  const { minTotal, minScore, maxRowsPerAttr } = { ...DEFAULTS, ...opts };
 
   const out: SpotlightAttribute[] = [];
 
   for (const [name, buckets] of diff.entries()) {
-    // Compute denominators across all of this attr's values. We treat
-    // "values seen anywhere for this attribute" as the universe so a
-    // value present only in selection still gets a baseline share of 0
-    // (vs the broader span total that would have null/empty values).
     let selTotal = 0;
     let baseTotal = 0;
-    for (const b of buckets) {
-      selTotal += b.selN;
-      baseTotal += b.baseN;
-    }
-    if (selTotal === 0 && baseTotal === 0) continue;
-
     const rows: SpotlightValueRow[] = [];
+
     for (const b of buckets) {
       const total = b.selN + b.baseN;
       if (total < minTotal) continue;
-      const selShare = selTotal > 0 ? b.selN / selTotal : 0;
-      const baseShare = baseTotal > 0 ? b.baseN / baseTotal : 0;
+      selTotal += b.selN;
+      baseTotal += b.baseN;
       rows.push({
         value: b.attrValue,
         selN: b.selN,
         baseN: b.baseN,
-        selShare,
-        baseShare,
-        diff: selShare - baseShare,
+        total,
+        selectionRate: total > 0 ? b.selN / total : 0,
       });
     }
     if (rows.length === 0) continue;
 
-    rows.sort((a, b) => b.diff - a.diff);
+    const grandTotal = selTotal + baseTotal;
+    if (grandTotal === 0) continue;
+    const overallRate = selTotal / grandTotal;
 
-    // Quick prune: if even the top row's |diff| is below threshold,
-    // the whole attribute is uninteresting.
-    const topAbsDiff = Math.max(
-      Math.abs(rows[0].diff),
-      Math.abs(rows[rows.length - 1].diff),
-    );
-    if (topAbsDiff < minTopDiff) continue;
+    const score = scoreAttribute(rows, overallRate);
+    if (score < minScore) continue;
 
-    const capped = rows.slice(0, maxRowsPerAttr);
+    rows.sort((a, b) => b.selectionRate - a.selectionRate);
+
     out.push({
       name,
-      rows: capped,
-      score: scoreAttribute(capped),
+      rows: rows.slice(0, maxRowsPerAttr),
+      score,
       selTotal,
       baseTotal,
+      overallRate,
     });
   }
 

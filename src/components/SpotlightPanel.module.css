@@ -1,19 +1,13 @@
 /*
- * SpotlightPanel — each attribute is one card with:
- *   1. Header row: attribute name + score chip
- *   2. Headline sentence: TL;DR of the strongest single-value
- *      differential, so the user can read the finding without
- *      mentally translating the chart
- *   3. Mini histogram: quick visual scan / hover detail
- *   4. Inline value rows (top 3): the actual values + counts +
- *      percentages, with a per-value "Search" button
- *   5. "Show N more" toggle for the long tail
+ * SpotlightPanel — one attribute per card, one value per row.
  *
- * The values are ALWAYS visible without clicking. The earlier
- * chart-only design hid the substance behind interaction; users said
- * they couldn't read it and didn't know what to do. This layout
- * leads with words and numbers and treats the chart as a scanning
- * aid, not the primary readout.
+ * Each row's bar width IS the selection rate (e.g. error rate) for
+ * that value. High variance across rows = strong signal — the user
+ * sees instantly which values dominate the selection vs which don't.
+ *
+ * Same primitive as the Operations table on Service Detail: a single
+ * percentage per row that says "X% of these are errors." Generalized
+ * to every attribute Spotlight measures.
  */
 
 .panel {
@@ -49,7 +43,7 @@
 .cell {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
   padding: 10px 12px;
   background: var(--cds-color-bg);
   border: 1px solid var(--cds-color-border-subtle);
@@ -70,35 +64,14 @@
   font-weight: var(--cds-font-weight-semibold);
   color: var(--cds-color-fg);
   word-break: break-all;
-  flex: 1 1 auto;
   min-width: 0;
+  flex: 1 1 auto;
 }
-.score {
-  font-family: var(--cds-font-family-mono);
-  font-size: 10px;
-  color: var(--cds-color-fg-subtle);
-  background: var(--cds-color-bg-muted);
-  padding: 1px 6px;
-  border-radius: var(--cds-radius-sm);
-  white-space: nowrap;
+.avg {
+  font-size: 11px;
+  color: var(--cds-color-fg-muted);
   flex-shrink: 0;
-}
-
-.headline {
-  margin: 0;
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--cds-color-fg);
-}
-.headline code {
-  font-family: var(--cds-font-family-mono);
-  background: var(--cds-color-bg-muted);
-  padding: 1px 4px;
-  border-radius: 2px;
-  word-break: break-all;
-}
-.headline strong {
-  color: var(--cds-color-accent);
+  white-space: nowrap;
 }
 
 .valueList {
@@ -107,39 +80,38 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 2px;
 }
 
+/*
+ * Per-value row: [ label  |  bar  |  rate  |  counts  |  Search → ]
+ *
+ * Two-row grid for compact width: row 1 has label / bar / rate / btn,
+ * row 2 spans the counts under everything to keep the bar visible.
+ */
 .valueRow {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(80px, 1fr) 2fr 44px auto;
+  grid-template-rows: auto auto;
+  grid-template-areas:
+    'label bar rate btn'
+    'counts counts counts btn';
   align-items: center;
-  gap: 8px;
+  gap: 4px 8px;
   padding: 6px 8px;
   border-radius: var(--cds-radius-sm);
   background: var(--cds-color-bg-subtle);
 }
-.valueRow.over {
-  border-left: 3px solid var(--cds-color-accent);
-  padding-left: 9px;
+.row_high {
+  background: var(--cds-color-accent-subtle);
 }
-.valueRow.under {
-  border-left: 3px solid var(--cds-color-fg-subtle);
-  padding-left: 9px;
-}
-.valueRow.flat {
-  opacity: 0.7;
+.row_low {
+  background: var(--cds-color-bg-muted);
+  opacity: 0.85;
 }
 
-.valueMain {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-  grid-column: 1 / 2;
-  min-width: 0;
-}
 .valueLabel {
+  grid-area: label;
   font-family: var(--cds-font-family-mono);
   font-size: 12px;
   color: var(--cds-color-fg);
@@ -148,43 +120,59 @@
   text-overflow: ellipsis;
   min-width: 0;
 }
-.valueDiff {
-  font-family: var(--cds-font-family-mono);
-  font-size: 11px;
-  font-weight: var(--cds-font-weight-semibold);
-  white-space: nowrap;
-  flex-shrink: 0;
+
+.rateTrack {
+  grid-area: bar;
+  height: 12px;
+  background: var(--cds-color-bg);
+  border: 1px solid var(--cds-color-border-subtle);
+  border-radius: 6px;
+  overflow: hidden;
+  min-width: 0;
 }
-.over .valueDiff {
+.rateFill {
+  height: 100%;
+  border-radius: 5px 0 0 5px;
+  transition: width var(--cds-transition-fast);
+}
+.rateFill_high {
+  background: var(--cds-color-accent);
+}
+.rateFill_low {
+  background: var(--cds-color-fg-subtle);
+  opacity: 0.6;
+}
+.rateFill_flat {
+  background: var(--cds-color-fg-subtle);
+  opacity: 0.4;
+}
+
+.rateText {
+  grid-area: rate;
+  font-family: var(--cds-font-family-mono);
+  font-size: 12px;
+  font-weight: var(--cds-font-weight-semibold);
+  color: var(--cds-color-fg);
+  text-align: right;
+  white-space: nowrap;
+}
+.row_high .rateText {
   color: var(--cds-color-accent);
 }
-.under .valueDiff {
+.row_low .rateText {
   color: var(--cds-color-fg-muted);
 }
 
-.valueCounts {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
+.counts {
+  grid-area: counts;
   font-size: 10px;
   font-family: var(--cds-font-family-mono);
   color: var(--cds-color-fg-muted);
-  grid-column: 1 / 2;
-}
-.countSel::before {
-  content: '■ ';
-  color: var(--cds-color-accent);
-}
-.countBase::before {
-  content: '■ ';
-  color: var(--cds-color-fg-subtle);
-  opacity: 0.6;
+  white-space: nowrap;
 }
 
 .searchBtn {
-  grid-column: 2 / 3;
-  grid-row: 1 / span 2;
-  align-self: stretch;
+  grid-area: btn;
   padding: 4px 10px;
   font-size: 11px;
   font-weight: var(--cds-font-weight-medium);
@@ -194,6 +182,7 @@
   border-radius: var(--cds-radius-sm);
   cursor: pointer;
   white-space: nowrap;
+  align-self: center;
   transition: background var(--cds-transition-fast),
     color var(--cds-transition-fast);
 }
@@ -202,7 +191,7 @@
   color: var(--cds-color-primary-fg);
 }
 
-.toggleMore {
+.toggle {
   align-self: flex-start;
   padding: 4px 8px;
   font-size: 11px;
@@ -210,38 +199,8 @@
   color: var(--cds-color-accent);
   background: transparent;
   border: none;
-  border-radius: var(--cds-radius-sm);
   cursor: pointer;
 }
-.toggleMore:hover {
+.toggle:hover {
   text-decoration: underline;
-}
-
-.legend {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 6px 8px 0;
-  font-size: 11px;
-  color: var(--cds-color-fg-subtle);
-  line-height: 1.4;
-}
-.legendItem {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-.legendSwatch {
-  display: inline-block;
-  width: 12px;
-  height: 8px;
-  border-radius: 1px;
-  flex-shrink: 0;
-}
-.legendSwatchSel {
-  background: var(--cds-color-accent);
-}
-.legendSwatchBase {
-  background: var(--cds-color-fg-subtle);
-  opacity: 0.45;
 }

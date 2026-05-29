@@ -64,6 +64,15 @@ describe('attrValueDistribution', () => {
     const q = attrValueDistribution('http.status_code', '');
     expect(q).toContain('| project attr_name, attr_value, n');
   });
+
+  it('resolves top-level span columns (name, kind) as bare columns', () => {
+    expect(attrValueDistribution('name', '')).toContain(
+      `attr_value=tostring(name)`,
+    );
+    expect(attrValueDistribution('kind', '')).toContain(
+      `attr_value=tostring(kind)`,
+    );
+  });
 });
 
 describe('spotlightAttrDiff', () => {

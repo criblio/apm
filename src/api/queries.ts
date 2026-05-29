@@ -1262,6 +1262,11 @@ export function dependencies(opts?: QueryOpts): string {
  * this list in sync with the attribute set the UI cares about.
  */
 export const SPOTLIGHT_ATTRIBUTES: readonly string[] = [
+  // Top-level span columns. `name` is the operation — typically the
+  // strongest single differentiator on Service Detail's scope ("which
+  // operation is failing?"). attrValueExpr() handles the bare-column
+  // resolution.
+  'name',
   // Universal OTel — both modern (http.response.status_code) and
   // legacy (http.status_code) semconv paths are kept because the
   // demo's services span SDK versions and use different fields.
@@ -1324,6 +1329,25 @@ export const SPOTLIGHT_ATTRIBUTES: readonly string[] = [
  * countif query; the top-N total is enough for the panel's
  * "78% of these traces have svc=cart" rendering.)
  */
+/**
+ * KQL expression that yields the value of one attribute as a string.
+ *
+ * Resolves three flavors:
+ *   - top-level columns (`name`, `kind`) → bare column
+ *   - resource attributes (`k8s.*`, `service.*`) → resource.attributes['k']
+ *   - everything else → attributes['k']
+ */
+function attrValueExpr(attrName: string): string {
+  const a = attrName.replace(/'/g, "\\'");
+  if (a === 'name' || a === 'kind') {
+    return `tostring(${a})`;
+  }
+  const isResourceAttr = a.startsWith('k8s.') || a.startsWith('service.');
+  return isResourceAttr
+    ? `tostring(resource.attributes['${a}'])`
+    : `tostring(attributes['${a}'])`;
+}
+
 export function attrValueDistribution(
   attrName: string,
   predicateKql: string,
@@ -1331,15 +1355,7 @@ export function attrValueDistribution(
 ): string {
   const a = attrName.replace(/'/g, "\\'");
   const pre = predicateKql ? `| where ${predicateKql}` : '';
-  // Resource attributes (k8s.*, service.*) live under
-  // resource.attributes; span attributes (http.*, rpc.*, etc.)
-  // live under attributes. The list determines which path each
-  // bracket-quoted reference takes. Most SPOTLIGHT_ATTRIBUTES are
-  // span attributes; k8s.* and service.* are the resource ones.
-  const isResourceAttr = a.startsWith('k8s.') || a.startsWith('service.');
-  const valueExpr = isResourceAttr
-    ? `tostring(resource.attributes['${a}'])`
-    : `tostring(attributes['${a}'])`;
+  const valueExpr = attrValueExpr(attrName);
   return `${spansBase()}
     ${pre}
     | extend attr_value=${valueExpr}
@@ -1393,10 +1409,7 @@ export function spotlightAttrDiff(
   scopeKql?: string,
 ): string {
   const a = attrName.replace(/'/g, "\\'");
-  const isResourceAttr = a.startsWith('k8s.') || a.startsWith('service.');
-  const valueExpr = isResourceAttr
-    ? `tostring(resource.attributes['${a}'])`
-    : `tostring(attributes['${a}'])`;
+  const valueExpr = attrValueExpr(attrName);
   const scope = scopeKql && scopeKql.trim() ? scopeKql.trim() : '';
   const scopeWhere = scope ? `| where ${scope}` : '';
   // `not <bool>` is rejected inside countif() by Cribl's KQL

@@ -20,6 +20,9 @@ import SpotlightSection from '../components/SpotlightSection';
  * on a single service.
  */
 const SVC_SPOTLIGHT_ATTRS: readonly string[] = [
+  // Top-level columns — `name` is the span operation, almost always
+  // the strongest signal at this scope ("which operation is failing?").
+  'name',
   'http.response.status_code',
   'http.status_code',
   'http.request.method',
@@ -1126,15 +1129,16 @@ export default function ServiceDetailPage() {
         </div>
         <SpotlightSection
           // Scope = THIS service. Selection inside the scope = the
-          // failing spans. Baseline inside the scope = the healthy
-          // ones. The differential surfaces what's actually different
-          // about the errors instead of what makes this service
-          // different from other services.
+          // failing spans. Spotlight surfaces per-attribute-value
+          // error rate: values whose error rate stands out (high or
+          // low) vs the service average point at WHERE errors are
+          // coming from.
           scopeKql={`tostring(resource.attributes['service.name'])=="${serviceName.replace(/"/g, '\\"')}"`}
           selectionKql={`tostring(status.code)=="2"`}
           earliest={range}
           attributes={SVC_SPOTLIGHT_ATTRS}
-          caption="Comparing this service's failing spans to its healthy ones. Asymmetric charts are the strongest signal — they call out attributes whose values shifted when things broke. Click any chart for the per-value breakdown."
+          selectionNoun="errors"
+          caption="For each attribute, the bar shows what percentage of spans with that value are errors. Attributes are sorted by how much that rate varies across values — uniform attributes get dropped (no signal); values with an unusually high or low error rate are highlighted. Click Search next to a value to drill into its spans."
           onPickValue={(attr, value) => {
             const params = new URLSearchParams();
             params.set('service', serviceName);
@@ -1289,10 +1293,10 @@ export default function ServiceDetailPage() {
                           >
                             <SpotlightSection
                               // Scope = this service + this operation.
-                              // Selection within scope = failing calls.
-                              // Baseline = healthy calls of the same
-                              // op. Surfaces what changed when this
-                              // op started failing.
+                              // Selection = failing calls. Per-attr
+                              // error rate shows which input dimension
+                              // (pod, caller, peer) is correlated with
+                              // the failures.
                               scopeKql={
                                 `tostring(resource.attributes['service.name'])=="${serviceName.replace(/"/g, '\\"')}"` +
                                 ` and name=="${op.operation.replace(/"/g, '\\"')}"`
@@ -1300,8 +1304,9 @@ export default function ServiceDetailPage() {
                               selectionKql={`tostring(status.code)=="2"`}
                               earliest={range}
                               attributes={SVC_SPOTLIGHT_ATTRS}
-                              title={`Spotlight — failing vs healthy calls of ${op.operation}`}
-                              caption="Comparing failing calls of this operation to its healthy ones. Attributes with asymmetric charts are the ones that changed — most likely root-cause signals. Click a chart for the per-value detail."
+                              selectionNoun="errors"
+                              title={`Spotlight — error rate per attribute for ${op.operation}`}
+                              caption="For each attribute, what percentage of this operation's calls with that value failed? Values with an unusually high error rate point at the source of the failures. Click Search to see the matching spans."
                               onPickValue={(attr, value) => {
                                 const params = new URLSearchParams();
                                 params.set('service', serviceName);

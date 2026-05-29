@@ -41,6 +41,13 @@ interface Props {
    * fan-out doesn't compete with the rest of the page for the
    * cluster's concurrent-job slots. */
   attributes?: readonly string[];
+  /**
+   * One-word noun for what's in the selection. e.g. "errors" on
+   * Service Detail (selection = error spans), "matching" on Traces
+   * (selection = user's filter). Used in the UI copy so users see
+   * "98% errors" instead of generic "98% selection".
+   */
+  selectionNoun?: string;
 }
 
 /**
@@ -60,6 +67,7 @@ export default function SpotlightSection({
   title,
   onPickValue,
   attributes = SPOTLIGHT_ATTRIBUTES,
+  selectionNoun,
 }: Props) {
   const [diff, setDiff] = useState<Map<string, SpotlightBucket[]>>(new Map());
   const [loading, setLoading] = useState(false);
@@ -103,6 +111,7 @@ export default function SpotlightSection({
         onPickValue={handlePick}
         loading={loading}
         caption={caption}
+        selectionNoun={selectionNoun}
       />
     </div>
   );

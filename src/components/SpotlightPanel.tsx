@@ -3,9 +3,9 @@ import type { SpotlightBucket } from '../api/types';
 import {
   computeSpotlight,
   type ComputeOptions,
+  type SpotlightAttribute,
   type SpotlightValueRow,
 } from '../spotlight/computeSpotlight';
-import SpotlightHistogram from './SpotlightHistogram';
 import s from './SpotlightPanel.module.css';
 
 interface Props {
@@ -14,64 +14,125 @@ interface Props {
   onPickValue: (attr: string, value: string) => void;
   loading?: boolean;
   options?: ComputeOptions;
+  /**
+   * One-word noun for the selection in this context. Renders as e.g.
+   * "98% errors" instead of generic "selection rate." Defaults to
+   * "matching".
+   */
+  selectionNoun?: string;
   caption?: string;
 }
 
-/**
- * Number of value rows shown inline (without expansion). Small enough
- * to keep cells compact, large enough to surface the actionable values
- * for a typical 2–5 value attribute. The expand toggle reveals the
- * rest.
- */
-const INLINE_ROWS = 3;
+/** Rows shown inline before expansion. */
+const INLINE_ROWS = 4;
 
-function formatPct(n: number): string {
-  if (Math.abs(n) >= 1) return `${(n * 100).toFixed(0)}%`;
-  if (Math.abs(n) >= 0.1) return `${(n * 100).toFixed(1)}%`;
-  return `${(n * 100).toFixed(2)}%`;
+function pct(n: number, digits = 1): string {
+  if (!Number.isFinite(n)) return '—';
+  const v = n * 100;
+  if (Math.abs(v) >= 100) return '100%';
+  if (Math.abs(v) >= 10) return `${v.toFixed(0)}%`;
+  return `${v.toFixed(digits)}%`;
 }
 
-function formatDiff(diff: number): string {
-  const sign = diff >= 0 ? '+' : '';
-  return `${sign}${(diff * 100).toFixed(1)} pp`;
+interface RateBarProps {
+  rate: number;
+  /** Render style — "high" highlights when the rate is meaningfully
+   *  above the attribute's overall average. */
+  highlight: 'high' | 'low' | 'flat';
 }
 
-interface ValueRowProps {
-  attrName: string;
-  row: SpotlightValueRow;
-  onPick: (attr: string, value: string) => void;
-}
-
-function ValueRow({ attrName, row, onPick }: ValueRowProps) {
-  const direction =
-    row.diff > 0.005 ? 'over' : row.diff < -0.005 ? 'under' : 'flat';
+function RateBar({ rate, highlight }: RateBarProps) {
   return (
-    <li className={`${s.valueRow} ${s[direction]}`}>
-      <div className={s.valueMain}>
-        <span className={s.valueLabel} title={row.value}>
-          {row.value}
+    <div className={s.rateTrack} role="presentation">
+      <div
+        className={`${s.rateFill} ${s[`rateFill_${highlight}`]}`}
+        style={{ width: `${Math.min(100, rate * 100)}%` }}
+      />
+    </div>
+  );
+}
+
+interface AttrCardProps {
+  attr: SpotlightAttribute;
+  selectionNoun: string;
+  onPickValue: (attr: string, value: string) => void;
+}
+
+function AttrCard({ attr, selectionNoun, onPickValue }: AttrCardProps) {
+  const [expanded, setExpanded] = useState(false);
+
+  const visibleRows = expanded
+    ? attr.rows
+    : attr.rows.slice(0, INLINE_ROWS);
+  const hidden = attr.rows.length - visibleRows.length;
+  const avg = attr.overallRate;
+
+  function classifyRow(r: SpotlightValueRow): 'high' | 'low' | 'flat' {
+    const delta = r.selectionRate - avg;
+    if (Math.abs(delta) < 0.03) return 'flat';
+    return delta > 0 ? 'high' : 'low';
+  }
+
+  return (
+    <li className={s.cell}>
+      <header className={s.cellHeader}>
+        <span className={s.attrName} title={attr.name}>
+          {attr.name}
         </span>
-        <span className={s.valueDiff}>{formatDiff(row.diff)}</span>
-      </div>
-      <div className={s.valueCounts}>
-        <span className={s.countSel}>
-          sel {row.selN.toLocaleString()} ({formatPct(row.selShare)})
+        <span
+          className={s.avg}
+          title={`Across ${(attr.selTotal + attr.baseTotal).toLocaleString()} spans, ${pct(avg)} are ${selectionNoun}`}
+        >
+          overall {pct(avg)} {selectionNoun}
         </span>
-        <span className={s.countBase}>
-          base {row.baseN.toLocaleString()} ({formatPct(row.baseShare)})
-        </span>
-      </div>
-      <button
-        type="button"
-        className={s.searchBtn}
-        onClick={(e) => {
-          e.stopPropagation();
-          onPick(attrName, row.value);
-        }}
-        title={`Open Search with ${attrName} = ${row.value}`}
-      >
-        Search →
-      </button>
+      </header>
+      <ul className={s.valueList}>
+        {visibleRows.map((row) => {
+          const highlight = classifyRow(row);
+          return (
+            <li
+              key={row.value}
+              className={`${s.valueRow} ${s[`row_${highlight}`]}`}
+            >
+              <span className={s.valueLabel} title={row.value}>
+                {row.value}
+              </span>
+              <RateBar rate={row.selectionRate} highlight={highlight} />
+              <span className={s.rateText}>{pct(row.selectionRate)}</span>
+              <span className={s.counts}>
+                {row.total.toLocaleString()} total · {row.selN.toLocaleString()}{' '}
+                {selectionNoun}
+              </span>
+              <button
+                type="button"
+                className={s.searchBtn}
+                onClick={() => onPickValue(attr.name, row.value)}
+                title={`Open Search filtered to ${attr.name} = ${row.value}`}
+              >
+                Search →
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+      {hidden > 0 && (
+        <button
+          type="button"
+          className={s.toggle}
+          onClick={() => setExpanded(true)}
+        >
+          Show {hidden} more value{hidden === 1 ? '' : 's'}
+        </button>
+      )}
+      {expanded && (
+        <button
+          type="button"
+          className={s.toggle}
+          onClick={() => setExpanded(false)}
+        >
+          Show fewer
+        </button>
+      )}
     </li>
   );
 }
@@ -81,121 +142,48 @@ export default function SpotlightPanel({
   onPickValue,
   loading,
   options,
-  caption = 'Each card is one attribute that differs between your selection and the comparison set. Rows show the values driving the difference — "sel" is the selection’s share of that value, "base" is the comparison’s share. Click Search to open Traces filtered to spans matching that value.',
+  selectionNoun = 'matching',
+  caption,
 }: Props) {
   const ranked = useMemo(
     () => computeSpotlight(diff, options),
     [diff, options],
   );
-  const [openAttr, setOpenAttr] = useState<string | null>(null);
 
   if (loading && ranked.length === 0) {
     return (
       <div className={s.placeholder}>
-        Computing Spotlight — checking each attribute against your
-        selection; results appear as queries return…
+        Computing Spotlight — measuring {selectionNoun} rate for each
+        attribute; results appear as queries return…
       </div>
     );
   }
   if (ranked.length === 0) {
     return (
       <div className={s.placeholder}>
-        Nothing stands out yet. The selection's distribution looks the
-        same as the comparison's — try a different filter, or widen the
-        lookback.
+        No attribute partitions the {selectionNoun} spans from the rest
+        — they're spread evenly. The issue isn't correlated with any
+        single dimension Spotlight knows about. Try widening the
+        lookback, or look for a time-based pattern.
       </div>
     );
   }
 
+  const defaultCaption = `For each attribute, the bar shows what fraction of spans with that value are ${selectionNoun}. Attributes are sorted by how much that rate varies across values — high variance is where the signal is. Click Search next to a value to open Traces filtered to its spans.`;
+
   return (
     <div className={s.panel} aria-label="Spotlight panel">
-      <p className={s.caption}>{caption}</p>
+      <p className={s.caption}>{caption ?? defaultCaption}</p>
       <ul className={s.grid}>
-        {ranked.map((attr) => {
-          const isOpen = openAttr === attr.name;
-          const visibleRows = isOpen
-            ? attr.rows
-            : attr.rows.slice(0, INLINE_ROWS);
-          const hiddenCount = attr.rows.length - visibleRows.length;
-          // TL;DR is the strongest single row — either the top
-          // over-represented or top under-represented value, whichever
-          // has the larger absolute diff. Surfacing the headline as a
-          // sentence makes the cell readable at-a-glance, even when
-          // the only attribute that surfaced is a single sparse one
-          // (which was the user's complaint with the chart-only view).
-          const top = attr.rows[0];
-          const bottom = attr.rows[attr.rows.length - 1];
-          const headlineRow =
-            top && bottom &&
-            Math.abs(top.diff) >= Math.abs(bottom.diff)
-              ? top
-              : bottom ?? top;
-          return (
-            <li key={attr.name} className={s.cell}>
-              <div className={s.cellHeader}>
-                <span className={s.attrName} title={attr.name}>
-                  {attr.name}
-                </span>
-                <span
-                  className={s.score}
-                  title={`Score ${attr.score.toFixed(2)} — higher = stronger differentiator`}
-                >
-                  score {attr.score.toFixed(2)}
-                </span>
-              </div>
-              {headlineRow && (
-                <p className={s.headline}>
-                  {headlineRow.diff >= 0 ? 'Selection over-represents' : 'Selection under-represents'}{' '}
-                  <code>{headlineRow.value}</code> by{' '}
-                  <strong>{formatDiff(headlineRow.diff)}</strong>{' '}
-                  ({headlineRow.selN.toLocaleString()} sel vs{' '}
-                  {headlineRow.baseN.toLocaleString()} base).
-                </p>
-              )}
-              <SpotlightHistogram rows={attr.rows} />
-              <ul className={s.valueList}>
-                {visibleRows.map((row) => (
-                  <ValueRow
-                    key={row.value}
-                    attrName={attr.name}
-                    row={row}
-                    onPick={onPickValue}
-                  />
-                ))}
-              </ul>
-              {!isOpen && hiddenCount > 0 && (
-                <button
-                  type="button"
-                  className={s.toggleMore}
-                  onClick={() => setOpenAttr(attr.name)}
-                >
-                  Show {hiddenCount} more value
-                  {hiddenCount === 1 ? '' : 's'}
-                </button>
-              )}
-              {isOpen && (
-                <button
-                  type="button"
-                  className={s.toggleMore}
-                  onClick={() => setOpenAttr(null)}
-                >
-                  Show fewer
-                </button>
-              )}
-            </li>
-          );
-        })}
+        {ranked.map((attr) => (
+          <AttrCard
+            key={attr.name}
+            attr={attr}
+            selectionNoun={selectionNoun}
+            onPickValue={onPickValue}
+          />
+        ))}
       </ul>
-      <div className={s.legend}>
-        <span className={s.legendItem}>
-          <span className={`${s.legendSwatch} ${s.legendSwatchSel}`} />
-          selection (the spans you're investigating)
-        </span>
-        <span className={s.legendItem}>
-          <span className={`${s.legendSwatch} ${s.legendSwatchBase}`} />
-          baseline (what they're being compared against)
-        </span>
-      </div>
     </div>
   );
 }
