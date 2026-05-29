@@ -1,0 +1,13 @@
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cds-space-sm);
+}
+
+.title {
+  margin: 0;
+  font-size: var(--cds-font-size-sm);
+  font-weight: var(--cds-font-weight-semibold);
+  color: var(--cds-color-fg);
+  letter-spacing: 0.2px;
+}

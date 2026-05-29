@@ -133,6 +133,57 @@
   font-style: italic;
 }
 
+.howto {
+  margin: 0;
+  padding: var(--cds-space-sm) var(--cds-space-md);
+  font-size: var(--cds-font-size-sm);
+  color: var(--cds-color-fg-muted);
+  background: var(--cds-color-accent-subtle);
+  border: 1px solid var(--cds-color-accent);
+  border-radius: var(--cds-radius-md);
+  line-height: 1.5;
+}
+
+.expandCell {
+  width: 24px;
+  padding-right: 0 !important;
+}
+.chevron {
+  display: inline-block;
+  font-size: 9px;
+  color: var(--cds-color-fg-subtle);
+  transition: transform var(--cds-transition-fast),
+    color var(--cds-transition-fast);
+  user-select: none;
+}
+.chevronOpen {
+  transform: rotate(90deg);
+  color: var(--cds-color-accent);
+}
+
+.errorRow {
+  cursor: pointer;
+  transition: background var(--cds-transition-fast);
+}
+.errorRowOpen {
+  background: var(--cds-color-bg-subtle);
+}
+.errorRowOpen td {
+  border-bottom-color: transparent !important;
+}
+
+.spotlightRow {
+  background: var(--cds-color-bg-subtle);
+}
+.spotlightRow:hover {
+  background: var(--cds-color-bg-subtle) !important;
+}
+.spotlightCell {
+  padding: var(--cds-space-md) var(--cds-space-lg) var(--cds-space-lg) !important;
+  background: var(--cds-color-bg-subtle);
+  border-bottom: 1px solid var(--cds-color-border-subtle);
+}
+
 .skeleton { padding: var(--cds-space-lg); }
 .skeletonBar {
   height: 20px;
