@@ -80,19 +80,19 @@ function statusCodeExpr(opts?: QueryOpts): string {
  * heuristic flows to alerts and panel together. See
  * docs/research/error-filter-design.md + HEURISTICS.md.
  */
-function errorClassificationJoins(): string {
+function errorClassificationJoins(opts?: QueryOpts): string {
   return `
     | join kind=leftouter (
         ${spansBase()}
         | where tostring(parent_span_id) == ""
-        | extend root_svc=tostring(resource.attributes['service.name'])
+        | extend root_svc=${svcExpr(opts)}
         | project trace_id, root_svc
         | lookup criblapm_trace_originators on root_svc
       ) on trace_id
     | extend trace_origin=coalesce(type, "unknown")
     | join kind=leftouter (
         ${spansBase()}
-        | extend is_error_c=(tostring(status.code)=="2"),
+        | extend is_error_c=(${statusCodeExpr(opts)}=="2"),
                  child_parent=tostring(parent_span_id)
         | where is_error_c and isnotempty(child_parent)
         | summarize n_error_children=count() by trace_id, child_parent
@@ -135,18 +135,18 @@ function mf(metric: string): string {
 }
 
 /** All distinct service names. */
-export function services(): string {
+export function services(opts?: QueryOpts): string {
   return `${spansBase()}
-    | extend svc=tostring(resource.attributes['service.name'])
+    | extend svc=${svcExpr(opts)}
     | summarize by svc
     | sort by svc asc`;
 }
 
 /** Operations for a given service. */
-export function operations(service: string): string {
+export function operations(service: string, opts?: QueryOpts): string {
   const s = service.replace(/"/g, '\\"');
   return `${spansBase()}
-    | extend svc=tostring(resource.attributes['service.name'])
+    | extend svc=${svcExpr(opts)}
     | where svc=="${s}"
     | summarize by name
     | sort by name asc`;
@@ -159,6 +159,7 @@ export interface FindTracesParams {
   minDurationUs?: number; // microseconds (trace-level)
   maxDurationUs?: number; // microseconds (trace-level)
   limit?: number;
+  opts?: QueryOpts;
 }
 
 /**
@@ -212,7 +213,7 @@ export function findTraces(params: FindTracesParams): string {
   const lim = params.limit ?? 20;
 
   return `${spansBase()}
-    | extend svc=tostring(resource.attributes['service.name'])
+    | extend svc=${svcExpr(params.opts)}
     ${spanWhere}
     | summarize first_seen=min(_time),
                 trace_start_ns=min(start_time_unix_nano),
@@ -228,15 +229,15 @@ export function findTraces(params: FindTracesParams): string {
  * Get all spans for a set of trace IDs. Used both for search result expansion
  * and the single-trace detail view.
  */
-export function traceSpans(traceIds: string[]): string {
+export function traceSpans(traceIds: string[], opts?: QueryOpts): string {
   const inList = traceIds.map((id) => `"${id}"`).join(', ');
   return `${spansBase()}
     | where trace_id in (${inList})
     | project _time, trace_id, span_id, parent_span_id, name, kind,
               start_time_unix_nano, end_time_unix_nano,
               attributes, events, links,
-              status_code=tostring(status.code), status_message=tostring(status.message),
-              service_name=tostring(resource.attributes['service.name']),
+              status_code=${statusCodeExpr(opts)}, status_message=tostring(status.message),
+              service_name=${svcExpr(opts)},
               resource_attributes=resource.attributes
     | sort by start_time_unix_nano asc`;
 }
@@ -271,23 +272,23 @@ export function traceSpans(traceIds: string[]): string {
  * every run. Restricting the joins to the error subset (typically
  * <5% of spans) gets the same answer with a fraction of the work.
  */
-function filteredErrorsBranch(svcFilter: string): string {
+function filteredErrorsBranch(svcFilter: string, opts?: QueryOpts): string {
   return `${spansBase()}
-    | extend svc=tostring(resource.attributes['service.name']),
-             is_error=(tostring(status.code)=="2"),
+    | extend svc=${svcExpr(opts)},
+             is_error=(${statusCodeExpr(opts)}=="2"),
              span_kind=tostring(kind),
              http_status=toint(attributes['http.response.status_code']),
              grpc_status=toint(attributes['rpc.grpc.status_code']),
              sid=tostring(span_id)
     ${svcFilter}
     | where is_error
-    ${errorClassificationJoins()}
+    ${errorClassificationJoins(opts)}
     | extend counts_as_error = not(${DEFAULT_FILTER_KQL})
     | where counts_as_error
     | summarize filtered_errors=count() by svc`;
 }
 
-export function serviceSummary(service?: string): string {
+export function serviceSummary(service?: string, opts?: QueryOpts): string {
   const svcFilter = service
     ? `| where svc=="${service.replace(/"/g, '\\"')}"`
     : '';
@@ -303,9 +304,9 @@ export function serviceSummary(service?: string): string {
   // evaluator → auto:error_rate alerts) agrees with what the
   // Home panel shows. See HEURISTICS.md.
   return `${spansBase()}
-    | extend svc=tostring(resource.attributes['service.name']),
+    | extend svc=${svcExpr(opts)},
             dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
-            is_error=(tostring(status.code)=="2")
+            is_error=(${statusCodeExpr(opts)}=="2")
     ${svcFilter}
     ${streamFilterSpanKqlClause()}
     | summarize requests=count(),
@@ -316,7 +317,7 @@ export function serviceSummary(service?: string): string {
                 last_seen=max(_time)
       by svc
     | join kind=leftouter (
-        ${filteredErrorsBranch(svcFilter)}
+        ${filteredErrorsBranch(svcFilter, opts)}
       ) on svc
     | extend errors=coalesce(filtered_errors, tolong(0))
     | extend error_rate=iff(requests > 0, toreal(errors)/toreal(requests), 0.0)
@@ -559,12 +560,12 @@ export function serviceTimeSeries(
  * gRPC failures fold into a `grpc_err` bucket so non-HTTP services
  * still produce a useful mix.
  */
-export function serviceStatusCodeMix(binSeconds: number, service: string): string {
+export function serviceStatusCodeMix(binSeconds: number, service: string, opts?: QueryOpts): string {
   const s = service.replace(/"/g, '\\"');
   // dur_us is computed for streamFilterSpanKqlClause(); without it
   // the injected `| where dur_us < ...` filters every row out.
   return `${spansBase()}
-    | extend svc=tostring(resource.attributes['service.name']),
+    | extend svc=${svcExpr(opts)},
              dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
              http_status=coalesce(toint(attributes['http.response.status_code']),
                                   toint(attributes['http.status_code'])),
@@ -588,12 +589,12 @@ export function serviceStatusCodeMix(binSeconds: number, service: string): strin
  * Top operations for a service, sorted by volume. Each row includes counts,
  * error rate, and percentile latencies — the core table on Service detail.
  */
-export function serviceOperations(service: string): string {
+export function serviceOperations(service: string, opts?: QueryOpts): string {
   const s = service.replace(/"/g, '\\"');
   return `${spansBase()}
-    | extend svc=tostring(resource.attributes['service.name']),
+    | extend svc=${svcExpr(opts)},
             dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
-            is_error=(tostring(status.code)=="2")
+            is_error=(${statusCodeExpr(opts)}=="2")
     | where svc=="${s}"
     ${streamFilterSpanKqlClause()}
     | summarize requests=count(),
@@ -614,13 +615,13 @@ export function serviceOperations(service: string): string {
  * leak, slow start, noisy-neighbor) are visible instead of diluted
  * into the service-level aggregate.
  */
-export function serviceInstances(service: string): string {
+export function serviceInstances(service: string, opts?: QueryOpts): string {
   const s = service.replace(/"/g, '\\"');
   return `${spansBase()}
-    | extend svc=tostring(resource.attributes['service.name']),
+    | extend svc=${svcExpr(opts)},
             instance_id=tostring(resource.attributes['service.instance.id']),
             dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
-            is_error=(tostring(status.code)=="2")
+            is_error=(${statusCodeExpr(opts)}=="2")
     | where svc=="${s}"
     ${streamFilterSpanKqlClause()}
     | summarize requests=count(),
@@ -690,10 +691,10 @@ export function allOperationsSummary(limit: number = 1000): string {
  * api/streamFilter.ts. Includes `root_op` in the summarize so the
  * stream filter's kafka consumer exemption can reference it.
  */
-export function slowestTraces(service?: string): string {
+export function slowestTraces(service?: string, opts?: QueryOpts): string {
   const svcFilter = service ? `| where svc=="${service.replace(/"/g, '\\"')}"` : '';
   return `${spansBase()}
-    | extend svc=tostring(resource.attributes['service.name']),
+    | extend svc=${svcExpr(opts)},
             parent=tostring(parent_span_id),
             is_root=(parent=="" or isempty(parent)),
             dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0
@@ -771,11 +772,11 @@ export function rawSlowestTraces(limit: number = 500): string {
  * (not per span), bounded by the time window — small enough to dodge
  * the Cribl KQL join-truncation behavior we hit during Phase 0.
  */
-export function rawRecentErrorSpans(limit: number = 300): string {
+export function rawRecentErrorSpans(limit: number = 300, opts?: QueryOpts): string {
   return `${spansBase()}
-    | extend svc=tostring(resource.attributes['service.name']),
+    | extend svc=${svcExpr(opts)},
              span_kind=tostring(kind),
-             is_error=(tostring(status.code)=="2"),
+             is_error=(${statusCodeExpr(opts)}=="2"),
              msg=tostring(status.message),
              http_status=toint(attributes['http.response.status_code']),
              grpc_status=toint(attributes['rpc.grpc.status_code']),
@@ -784,7 +785,7 @@ export function rawRecentErrorSpans(limit: number = 300): string {
     | sort by _time desc
     | limit ${limit}
     | project _time, svc, name, span_kind, http_status, grpc_status, msg, trace_id, sid
-    ${errorClassificationJoins()}
+    ${errorClassificationJoins(opts)}
     | project _time, svc, name, span_kind, http_status, grpc_status,
               msg, trace_id, root_svc, trace_origin, has_error_child`;
 }
@@ -821,12 +822,12 @@ export function rawRecentErrorSpans(limit: number = 300): string {
  *
  * Output: (pod, start_iso, uptime_hours, current_iso).
  */
-export function podUptime(svc?: string): string {
+export function podUptime(svc?: string, opts?: QueryOpts): string {
   const svcFilter = svc
     ? `| where svc == "${svc.replace(/"/g, '\\"')}"`
     : '';
   return `${spansBase()}
-    | extend svc=tostring(resource.attributes['service.name']),
+    | extend svc=${svcExpr(opts)},
              pod=tostring(resource.attributes['k8s.pod.name']),
              start_iso=tostring(resource.attributes['k8s.pod.start_time'])
     | where isnotempty(pod) and isnotempty(start_iso)
@@ -981,11 +982,11 @@ export function traceOriginators(): string {
  * Traces that had at least one error span — "recent errors" panel on
  * Home and Service detail. Optionally scoped to a service.
  */
-export function recentErrorTraces(service?: string): string {
+export function recentErrorTraces(service?: string, opts?: QueryOpts): string {
   const svcFilter = service ? `| where svc=="${service.replace(/"/g, '\\"')}"` : '';
   return `${spansBase()}
-    | extend svc=tostring(resource.attributes['service.name']),
-            is_error=(tostring(status.code)=="2")
+    | extend svc=${svcExpr(opts)},
+            is_error=(${statusCodeExpr(opts)}=="2")
     | where is_error
     ${svcFilter}
     | summarize first_seen=max(_time),
@@ -1105,11 +1106,11 @@ export function traceLogs(traceId: string): string {
  * tens of seconds — so we carry the consumer p95 through as the edge
  * latency metric.
  */
-export function messagingDependencies(): string {
+export function messagingDependencies(opts?: QueryOpts): string {
   return `${spansBase()}
-    | extend svc=tostring(resource.attributes['service.name']),
+    | extend svc=${svcExpr(opts)},
             dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
-            is_error=(tostring(status.code)=="2"),
+            is_error=(${statusCodeExpr(opts)}=="2"),
             msg_op=tostring(attributes['messaging.operation']),
             msg_dest=tostring(attributes['messaging.destination.name']),
             msg_system=tostring(attributes['messaging.system'])
@@ -1132,18 +1133,18 @@ export function messagingDependencies(): string {
  * what makes paymentUnreachable light up the checkout→payment edge
  * instead of just the payment node.
  */
-export function dependencies(): string {
+export function dependencies(opts?: QueryOpts): string {
   return `${spansBase()}
-    | extend svc=tostring(resource.attributes['service.name']),
+    | extend svc=${svcExpr(opts)},
             parent=tostring(parent_span_id),
             dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
-            is_error=(tostring(status.code)=="2")
+            is_error=(${statusCodeExpr(opts)}=="2")
     | where parent != "" and isnotempty(parent)
     ${streamFilterSpanKqlClause()}
     | project trace_id, parent, svc, dur_us, is_error
     | join kind=inner (
         ${spansBase()}
-        | extend psvc=tostring(resource.attributes['service.name']),
+        | extend psvc=${svcExpr(opts)},
                 psid=tostring(span_id)
         | project trace_id, psid, psvc
       ) on trace_id, $left.parent == $right.psid
