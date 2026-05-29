@@ -17,6 +17,7 @@
   font-size: var(--cds-font-size-sm);
   color: var(--cds-color-fg-muted);
   text-align: center;
+  line-height: 1.4;
 }
 
 .caption {

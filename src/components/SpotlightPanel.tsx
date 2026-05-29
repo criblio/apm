@@ -34,21 +34,26 @@ export default function SpotlightPanel({
   onPickValue,
   loading,
   options,
-  caption = 'Attributes whose values are over- or under-represented in your selection vs the rest of the time window.',
+  caption = 'For each attribute, the colored bar shows your selection’s share of values; the gray bar shows the rest of the time window’s share. A big gap means that attribute is a strong differentiator. Click any value to add it as a filter and drill in.',
 }: Props) {
   const ranked = useMemo(
     () => computeSpotlight(diff, options),
     [diff, options],
   );
 
-  if (loading) {
-    return <div className={s.placeholder}>Computing Spotlight…</div>;
+  if (loading && ranked.length === 0) {
+    return (
+      <div className={s.placeholder}>
+        Computing Spotlight — checking each attribute against your
+        selection; results appear as queries return…
+      </div>
+    );
   }
   if (ranked.length === 0) {
     return (
       <div className={s.placeholder}>
-        No strong differentials found. Try widening your selection or
-        lowering the noise threshold.
+        Nothing stands out yet. Your selection looks like the rest of
+        the time window — try a different filter, or widen the lookback.
       </div>
     );
   }
