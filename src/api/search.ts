@@ -16,6 +16,8 @@ import type {
   ServiceBucket,
   StatusCodeClass,
   StatusCodeMixBucket,
+  AttrValueBucket,
+  SpotlightBucket,
   OperationSummary,
   InstanceSummary,
   OperationAnomaly,
@@ -125,6 +127,94 @@ export async function getTrace(
  * If the messaging query returns nothing (no async services) the result
  * is functionally identical to the old RPC-only edge list.
  */
+/**
+ * Per-attribute value distribution for the facet panel. Fires
+ * one query per attribute in parallel — the engine is the same
+ * shape used by Spotlight (see getSpotlightDiff below) so they
+ * share the same constants and rate limits.
+ *
+ * Skips attributes the dataset has no rows for. The result map
+ * is keyed on attribute name; missing entries mean "no values
+ * for this attribute in the matched span set" — the UI renders
+ * those as collapsed rows.
+ */
+export async function getFacetDistribution(
+  attrs: readonly string[],
+  predicateKql: string,
+  earliest = '-1h',
+  latest = 'now',
+  topPerAttr = 20,
+): Promise<Map<string, AttrValueBucket[]>> {
+  const out = new Map<string, AttrValueBucket[]>();
+  const results = await Promise.all(
+    attrs.map((attr) =>
+      runQuery(
+        Q.attrValueDistribution(attr, predicateKql, topPerAttr),
+        earliest,
+        latest,
+        topPerAttr,
+      ).catch(() => [] as Record<string, unknown>[]),
+    ),
+  );
+  for (let i = 0; i < attrs.length; i++) {
+    const rows = results[i];
+    if (!rows || rows.length === 0) continue;
+    out.set(
+      attrs[i],
+      rows.map((r) => ({
+        attrName: String(r.attr_name ?? attrs[i]),
+        attrValue: String(r.attr_value ?? ''),
+        n: toNum(r.n),
+      })),
+    );
+  }
+  return out;
+}
+
+/**
+ * Spotlight differentials, keyed on attribute name. For each
+ * attribute in `attrs`, fires one query that computes
+ * (sel_n, base_n) per value, then returns the top-N values by
+ * total count. UI computes the per-value % share within sel /
+ * base and ranks attributes by max-abs diff.
+ *
+ * Same parallel-query pattern as getFacetDistribution above.
+ * Attributes with no rows are omitted from the result map.
+ */
+export async function getSpotlightDiff(
+  attrs: readonly string[],
+  selectionKql: string,
+  earliest = '-1h',
+  latest = 'now',
+  topPerAttr = 20,
+): Promise<Map<string, SpotlightBucket[]>> {
+  const out = new Map<string, SpotlightBucket[]>();
+  const results = await Promise.all(
+    attrs.map((attr) =>
+      runQuery(
+        Q.spotlightAttrDiff(attr, selectionKql, topPerAttr),
+        earliest,
+        latest,
+        topPerAttr,
+      ).catch(() => [] as Record<string, unknown>[]),
+    ),
+  );
+  for (let i = 0; i < attrs.length; i++) {
+    const rows = results[i];
+    if (!rows || rows.length === 0) continue;
+    out.set(
+      attrs[i],
+      rows.map((r) => ({
+        attrName: String(r.attr_name ?? attrs[i]),
+        attrValue: String(r.attr_value ?? ''),
+        selN: toNum(r.sel_n),
+        baseN: toNum(r.base_n),
+      })),
+    );
+  }
+  return out;
+}
+
 export async function getDependencies(
   earliest = '-1h',
   latest = 'now',

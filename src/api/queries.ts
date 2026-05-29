@@ -1225,6 +1225,163 @@ export function dependencies(opts?: QueryOpts): string {
 }
 
 // ─────────────────────────────────────────────────────────────────
+// Faceted navigation — data layer for the filter builder, facet
+// panel, Spotlight, and value autocomplete on the Search page. See
+// ROADMAP.md item #2 for the user-facing surface; this layer just
+// provides per-attribute value-distribution and selection-vs-
+// baseline-diff queries that the UI components compose.
+// ─────────────────────────────────────────────────────────────────
+
+/**
+ * Attribute names Spotlight + the facet panel will probe by
+ * default. Hand-picked for signal density on the OTel demo and
+ * other typical OTel-instrumented workloads — the kind of
+ * attributes operators actually compose filters around. The
+ * trade-off: any attribute not in this list isn't visible to the
+ * Search-page automatic facet panel until it gets added here.
+ *
+ * Order doesn't matter for correctness — the UI ranks them by
+ * signal strength. It does matter for parallel-query fan-out: the
+ * Spotlight engine fires one query per attribute, so keeping the
+ * list to ~20 keeps cluster-queue pressure reasonable.
+ *
+ * Future work (ROADMAP item #10 follow-up): replace the static
+ * list with a provisioner-generated one that reads
+ * criblapm_attr_catalog at build time. Until then, manually keep
+ * this list in sync with the attribute set the UI cares about.
+ */
+export const SPOTLIGHT_ATTRIBUTES: readonly string[] = [
+  // Universal OTel — both modern (http.response.status_code) and
+  // legacy (http.status_code) semconv paths are kept because the
+  // demo's services span SDK versions and use different fields.
+  // The facet panel client-side dedupes empty entries.
+  'http.request.method',
+  'http.response.status_code',
+  'http.status_code',
+  'http.method',
+  'http.route',
+  'http.target',
+  'http.url',
+  'rpc.system',
+  'rpc.service',
+  'rpc.method',
+  'rpc.grpc.status_code',
+  // Messaging
+  'messaging.system',
+  'messaging.destination.name',
+  'messaging.operation',
+  // DB
+  'db.system',
+  'db.statement',
+  // K8s (resource attrs — different access shape but same idea)
+  'k8s.pod.name',
+  'k8s.deployment.name',
+  // User / session — the high-cardinality leak-fingerprint
+  // attributes; not super useful for filtering but very useful
+  // for Spotlight's "what's over-represented" lens
+  'session.id',
+  'user.id',
+  // OTel-demo-specific common ones — generic enough to keep
+  'app.product.id',
+  'response_flags',
+] as const;
+
+/**
+ * Per-(attribute, value) row count over a filtered span set.
+ * Used by the facet panel: "of the spans matching this filter,
+ * what are the top values of <attr_name>?"
+ *
+ * `predicateKql` is the user's filter expressed as a KQL
+ * predicate clause (e.g., `svc == "checkout" and status_code == "2"`).
+ * The query inserts it directly after the spansBase() filter — so
+ * the caller is responsible for it being a valid pre-extend
+ * expression that references columns the query later projects.
+ *
+ * Returns one row per value: { attr_name, attr_value, n }. The
+ * UI sums n across the returned rows to compute the within-top-N
+ * total and derives % share client-side. (For "exact total
+ * including the long tail," the caller can run a separate
+ * countif query; the top-N total is enough for the panel's
+ * "78% of these traces have svc=cart" rendering.)
+ */
+export function attrValueDistribution(
+  attrName: string,
+  predicateKql: string,
+  limit: number = 20,
+): string {
+  const a = attrName.replace(/'/g, "\\'");
+  const pre = predicateKql ? `| where ${predicateKql}` : '';
+  // Resource attributes (k8s.*, service.*) live under
+  // resource.attributes; span attributes (http.*, rpc.*, etc.)
+  // live under attributes. The list determines which path each
+  // bracket-quoted reference takes. Most SPOTLIGHT_ATTRIBUTES are
+  // span attributes; k8s.* and service.* are the resource ones.
+  const isResourceAttr = a.startsWith('k8s.') || a.startsWith('service.');
+  const valueExpr = isResourceAttr
+    ? `tostring(resource.attributes['${a}'])`
+    : `tostring(attributes['${a}'])`;
+  return `${spansBase()}
+    ${pre}
+    | extend attr_value=${valueExpr}
+    | where isnotempty(attr_value)
+    | summarize n=count() by attr_value
+    | sort by n desc
+    | limit ${limit}
+    | extend attr_name="${a}"
+    | project attr_name, attr_value, n`;
+}
+
+/**
+ * Spotlight differential row: how does the value distribution of
+ * one attribute differ between a SELECTION (typically the user's
+ * current Search filter) and the BASELINE (everything else in
+ * the same time window)?
+ *
+ * `selectionKql` is the predicate that defines the selection
+ * (e.g., `status_code == "2"`). Spans not matching it form the
+ * baseline. The query computes both counts in one pass using
+ * countif, so it's a single scan per attribute regardless of
+ * selection complexity.
+ *
+ * Returns one row per value: { attr_name, attr_value, sel_n,
+ * base_n }. The UI sums sel_n and base_n across the returned
+ * rows to compute sel_total / base_total within the top-N, and
+ * derives the diff as (sel_n/sel_total) - (base_n/base_total).
+ * Ranks attributes by max-abs-diff over their values.
+ *
+ * `top` bounds the number of values returned per attribute —
+ * ranked by total (sel_n + base_n), keeping the most common.
+ */
+export function spotlightAttrDiff(
+  attrName: string,
+  selectionKql: string,
+  top: number = 20,
+): string {
+  const a = attrName.replace(/'/g, "\\'");
+  const isResourceAttr = a.startsWith('k8s.') || a.startsWith('service.');
+  const valueExpr = isResourceAttr
+    ? `tostring(resource.attributes['${a}'])`
+    : `tostring(attributes['${a}'])`;
+  // `not <bool>` is rejected inside countif() by Cribl's KQL
+  // parser — explicit `== true` / `== false` comparisons work.
+  // See https://github.com/criblio/apm DEVELOPMENT.md (or the
+  // Cribl KQL gotchas section in agentContext.ts) for the
+  // accumulating list of dialect quirks.
+  return `${spansBase()}
+    | extend attr_value=${valueExpr},
+             sel_match=${selectionKql || 'true'}
+    | where isnotempty(attr_value)
+    | summarize sel_n=countif(sel_match==true),
+                base_n=countif(sel_match==false)
+      by attr_value
+    | extend total=sel_n+base_n
+    | sort by total desc
+    | limit ${top}
+    | extend attr_name="${a}"
+    | project attr_name, attr_value, sel_n, base_n`;
+}
+
+// ─────────────────────────────────────────────────────────────────
 // Metrics queries — see metricsBase() for the schema overview.
 // ─────────────────────────────────────────────────────────────────
 
