@@ -1,51 +1,58 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import type { SpotlightBucket } from '../api/types';
 import {
   computeSpotlight,
   type ComputeOptions,
 } from '../spotlight/computeSpotlight';
+import SpotlightHistogram from './SpotlightHistogram';
 import s from './SpotlightPanel.module.css';
 
 interface Props {
   /** Raw differential map from getSpotlightDiff. */
   diff: Map<string, SpotlightBucket[]>;
-  /** When the user clicks a value row, surface (attr, value) so the
-   *  parent can append it to the active selection or to filters. */
+  /** When the user clicks a value row in an expanded attribute, surface
+   *  (attr, value) so the parent can append it to the active selection
+   *  or to filters. */
   onPickValue: (attr: string, value: string) => void;
   loading?: boolean;
   /** Tuning knobs forwarded to computeSpotlight. */
   options?: ComputeOptions;
-  /** Optional caption shown above the first attribute. Defaults to a
-   *  short explanation of what Spotlight is showing. */
+  /** Optional caption shown above the first attribute. */
   caption?: string;
 }
 
 /**
- * SpotlightPanel — Honeycomb-BubbleUp-style differential view.
+ * SpotlightPanel — small-multiples differential view.
  *
- * For each attribute in `diff`, computes per-value sel/base shares
- * and visualizes the differential as a pair of side-by-side bars:
- * the SEL bar (left, accent color) shows the value's share inside
- * the user's selection; the BASE bar (right, neutral) shows the
- * baseline. The visual asymmetry IS the signal.
+ * Renders one compact mini-histogram per attribute (selection bars in
+ * accent + baseline bars in muted). The user scans the rail for the
+ * most asymmetric chart — that's the strongest differentiator. Click
+ * an attribute to expand the per-value detail list inline with
+ * click-to-filter actions.
+ *
+ * This replaces the older row-per-value card design which was visually
+ * heavy: a single attribute could eat 20+ lines of UI. Small-multiples
+ * fit ~6× more attributes into the same vertical space and let the
+ * eye do the work it's good at — pattern matching.
  */
 export default function SpotlightPanel({
   diff,
   onPickValue,
   loading,
   options,
-  caption = 'For each attribute, the colored bar shows your selection’s share of values; the gray bar shows the rest of the time window’s share. A big gap means that attribute is a strong differentiator. Click any value to add it as a filter and drill in.',
+  caption = 'Each chart shows one attribute. The colored bars are your selection’s share of each value; the gray bars are the rest of the time window. Asymmetric charts are the strongest differentiators — click any chart to see the per-value detail.',
 }: Props) {
   const ranked = useMemo(
     () => computeSpotlight(diff, options),
     [diff, options],
   );
+  const [openAttr, setOpenAttr] = useState<string | null>(null);
 
   if (loading && ranked.length === 0) {
     return (
       <div className={s.placeholder}>
         Computing Spotlight — checking each attribute against your
-        selection; results appear as queries return…
+        selection; charts appear as queries return…
       </div>
     );
   }
@@ -61,64 +68,84 @@ export default function SpotlightPanel({
   return (
     <div className={s.panel} aria-label="Spotlight panel">
       <p className={s.caption}>{caption}</p>
-      {ranked.map((attr) => (
-        <div key={attr.name} className={s.group}>
-          <div className={s.groupHeader}>
-            <span className={s.attrName}>{attr.name}</span>
-            <span className={s.score} title={`score ${attr.score.toFixed(2)}`}>
-              {attr.score.toFixed(2)}
-            </span>
-          </div>
-          <ul className={s.values}>
-            {attr.rows.map((row) => {
-              const direction =
-                row.diff > 0 ? 'over' : row.diff < 0 ? 'under' : 'flat';
-              return (
-                <li
-                  key={row.value}
-                  className={`${s.valueRow} ${s[direction]}`}
-                  data-testid="spotlight-row"
+      <ul className={s.grid}>
+        {ranked.map((attr) => {
+          const isOpen = openAttr === attr.name;
+          return (
+            <li key={attr.name} className={s.cell}>
+              <button
+                type="button"
+                className={`${s.cellHeader} ${isOpen ? s.cellHeaderOpen : ''}`}
+                onClick={() => setOpenAttr(isOpen ? null : attr.name)}
+                aria-expanded={isOpen}
+                aria-controls={`spot-detail-${attr.name}`}
+                title={
+                  isOpen
+                    ? `Hide values for ${attr.name}`
+                    : `Show values for ${attr.name}`
+                }
+              >
+                <span className={s.attrName}>{attr.name}</span>
+                <span
+                  className={s.score}
+                  title={`Score ${attr.score.toFixed(2)} — higher = stronger differentiator`}
                 >
-                  <button
-                    type="button"
-                    className={s.valueBtn}
-                    onClick={() => onPickValue(attr.name, row.value)}
-                    title={`Add ${attr.name} = ${row.value} to filters`}
-                  >
-                    <span className={s.valueLabel}>{row.value}</span>
-                    <span className={s.diffPct}>
-                      {row.diff >= 0 ? '+' : ''}
-                      {(row.diff * 100).toFixed(1)}%
-                    </span>
-                  </button>
-                  <div className={s.bars} aria-hidden>
-                    <div className={s.barTrack}>
-                      <div
-                        className={s.barSel}
-                        style={{ width: `${(row.selShare * 100).toFixed(1)}%` }}
-                      />
-                    </div>
-                    <div className={s.barTrack}>
-                      <div
-                        className={s.barBase}
-                        style={{ width: `${(row.baseShare * 100).toFixed(1)}%` }}
-                      />
-                    </div>
-                  </div>
-                  <div className={s.counts}>
-                    <span className={s.countSel}>
-                      sel {row.selN.toLocaleString()}
-                    </span>
-                    <span className={s.countBase}>
-                      base {row.baseN.toLocaleString()}
-                    </span>
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-        </div>
-      ))}
+                  {attr.score.toFixed(2)}
+                </span>
+              </button>
+              <SpotlightHistogram rows={attr.rows} />
+              {isOpen && (
+                <ul
+                  id={`spot-detail-${attr.name}`}
+                  className={s.detailList}
+                >
+                  {attr.rows.map((row) => {
+                    const direction =
+                      row.diff > 0 ? 'over' : row.diff < 0 ? 'under' : 'flat';
+                    return (
+                      <li
+                        key={row.value}
+                        className={`${s.detailRow} ${s[direction]}`}
+                      >
+                        <button
+                          type="button"
+                          className={s.detailBtn}
+                          onClick={() => onPickValue(attr.name, row.value)}
+                          title={`Add ${attr.name} = ${row.value} as a filter`}
+                        >
+                          <span className={s.detailValue}>{row.value}</span>
+                          <span className={s.detailPct}>
+                            {row.diff >= 0 ? '+' : ''}
+                            {(row.diff * 100).toFixed(1)}%
+                          </span>
+                          <span className={s.detailCounts}>
+                            <span className={s.detailSel}>
+                              {row.selN.toLocaleString()}
+                            </span>
+                            <span className={s.detailBase}>
+                              {row.baseN.toLocaleString()}
+                            </span>
+                          </span>
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+      <div className={s.legend}>
+        <span className={s.legendItem}>
+          <span className={`${s.legendSwatch} ${s.legendSwatchSel}`} />
+          selection
+        </span>
+        <span className={s.legendItem}>
+          <span className={`${s.legendSwatch} ${s.legendSwatchBase}`} />
+          baseline
+        </span>
+      </div>
     </div>
   );
 }
