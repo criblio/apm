@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import TimeRangePicker from '../components/TimeRangePicker';
 import { binSecondsFor } from '../components/timeRanges';
@@ -9,6 +9,26 @@ import StackedColumnChart, {
 import TraceBriefList from '../components/TraceBriefList';
 import StatusBanner from '../components/StatusBanner';
 import MetricsCard, { type MetricsCardRow } from '../components/MetricsCard';
+import SpotlightSection from '../components/SpotlightSection';
+
+/**
+ * Curated subset of attributes for Service-Detail Spotlight surfaces.
+ * Trimmed from the full SPOTLIGHT_ATTRIBUTES list so the embedded
+ * panels don't compete with the page's many existing parallel
+ * queries for the cluster's concurrent-job slots. These are the
+ * attributes most likely to differentiate failing vs healthy spans
+ * on a single service.
+ */
+const SVC_SPOTLIGHT_ATTRS: readonly string[] = [
+  'http.response.status_code',
+  'http.status_code',
+  'http.request.method',
+  'http.route',
+  'rpc.method',
+  'rpc.grpc.status_code',
+  'k8s.pod.name',
+  'response_flags',
+];
 import {
   listServiceSummaries,
   getServiceTimeSeries,
@@ -247,6 +267,7 @@ export default function ServiceDetailPage() {
   const [buckets, setBuckets] = useState<ServiceBucket[]>([]);
   const [statusMix, setStatusMix] = useState<StatusCodeMixBucket[]>([]);
   const [operations, setOperations] = useState<OperationSummary[]>([]);
+  const [expandedOps, setExpandedOps] = useState<Set<string>>(new Set());
   const [podUptimes, setPodUptimes] = useState<PodUptime[]>([]);
   const [opSort, setOpSort] = useState<{
     key: 'operation' | 'requests' | 'errorRate' | 'p50Us' | 'p95Us' | 'p99Us';
@@ -1089,6 +1110,38 @@ export default function ServiceDetailPage() {
         </div>
       </section>
 
+      {/* ── Service Spotlight ───────────────────────────────────
+       * What's distinct about THIS service's error spans vs the rest
+       * of the time window. Answers "why is this service unhealthy?"
+       * in one glance — surfaces overrepresented operations, k8s pods,
+       * HTTP routes, RPC methods, etc.
+       */}
+      <section className={s.section}>
+        <div className={s.sectionHeader}>
+          <h2 className={s.sectionTitle}>Spotlight</h2>
+          <span className={s.sectionSubtitle}>
+            What stands out about errors on this service compared to
+            the rest of the time window. Click any value to drill in.
+          </span>
+        </div>
+        <SpotlightSection
+          selectionKql={`tostring(resource.attributes['service.name'])=="${serviceName.replace(/"/g, '\\"')}" and tostring(status.code)=="2"`}
+          earliest={range}
+          attributes={SVC_SPOTLIGHT_ATTRS}
+          caption="For each attribute, the colored bar shows the share of values inside this service's failing spans; the gray bar shows the share across the rest of the window. A big gap means that attribute is a strong differentiator."
+          onPickValue={(attr, value) => {
+            const params = new URLSearchParams();
+            params.set('service', serviceName);
+            params.append(
+              'f',
+              [attr, '=', value].map(encodeURIComponent).join(':'),
+            );
+            params.set('lookback', range);
+            navigate(`/traces?${params.toString()}`);
+          }}
+        />
+      </section>
+
       {/* ── Operations ───────────────────────────────────────── */}
       <section className={s.section}>
         <div className={s.sectionHeader}>
@@ -1123,6 +1176,7 @@ export default function ServiceDetailPage() {
             <table className={s.opsTable}>
               <thead>
                 <tr>
+                  <th style={{ width: '24px' }} />
                   <th
                     style={{ cursor: 'pointer' }}
                     onClick={() => toggleOpSort('operation')}
@@ -1167,27 +1221,95 @@ export default function ServiceDetailPage() {
                 </tr>
               </thead>
               <tbody>
-                {sortedOperations.map((op) => (
-                  <tr
-                    key={op.operation}
-                    onClick={() =>
-                      navigate(
-                        `/traces?service=${encodeURIComponent(serviceName)}&operation=${encodeURIComponent(op.operation)}&lookback=${range}`,
-                      )
-                    }
-                  >
-                    <td>
-                      <div className={s.opName}>{op.operation}</div>
-                    </td>
-                    <td className={s.num}>{op.requests.toLocaleString()}</td>
-                    <td className={`${s.num} ${errClass(op.errorRate)}`}>
-                      {op.errorRate === 0 ? '0' : `${(op.errorRate * 100).toFixed(1)}%`}
-                    </td>
-                    <td className={s.num}>{fmtUs(op.p50Us)}</td>
-                    <td className={s.num}>{fmtUs(op.p95Us)}</td>
-                    <td className={s.num}>{fmtUs(op.p99Us)}</td>
-                  </tr>
-                ))}
+                {sortedOperations.map((op) => {
+                  const isOpen = expandedOps.has(op.operation);
+                  return (
+                    <Fragment key={op.operation}>
+                      <tr
+                        onClick={() =>
+                          navigate(
+                            `/traces?service=${encodeURIComponent(serviceName)}&operation=${encodeURIComponent(op.operation)}&lookback=${range}`,
+                          )
+                        }
+                      >
+                        <td
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setExpandedOps((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(op.operation)) next.delete(op.operation);
+                              else next.add(op.operation);
+                              return next;
+                            });
+                          }}
+                          style={{ cursor: 'pointer', textAlign: 'center', color: 'var(--cds-color-fg-subtle)' }}
+                          title={isOpen ? 'Hide Spotlight' : 'Show Spotlight for this operation'}
+                        >
+                          <span
+                            style={{
+                              display: 'inline-block',
+                              fontSize: '9px',
+                              transform: isOpen ? 'rotate(90deg)' : 'rotate(0)',
+                              transition: 'transform 120ms ease',
+                              color: isOpen ? 'var(--cds-color-accent)' : undefined,
+                            }}
+                            aria-label={isOpen ? 'Collapse' : 'Expand'}
+                          >
+                            ▶
+                          </span>
+                        </td>
+                        <td>
+                          <div className={s.opName}>{op.operation}</div>
+                        </td>
+                        <td className={s.num}>{op.requests.toLocaleString()}</td>
+                        <td className={`${s.num} ${errClass(op.errorRate)}`}>
+                          {op.errorRate === 0 ? '0' : `${(op.errorRate * 100).toFixed(1)}%`}
+                        </td>
+                        <td className={s.num}>{fmtUs(op.p50Us)}</td>
+                        <td className={s.num}>{fmtUs(op.p95Us)}</td>
+                        <td className={s.num}>{fmtUs(op.p99Us)}</td>
+                      </tr>
+                      {isOpen && (
+                        <tr
+                          style={{
+                            background: 'var(--cds-color-bg-subtle)',
+                          }}
+                        >
+                          <td
+                            colSpan={7}
+                            style={{
+                              padding: 'var(--cds-space-md) var(--cds-space-lg)',
+                            }}
+                          >
+                            <SpotlightSection
+                              selectionKql={
+                                `tostring(resource.attributes['service.name'])=="${serviceName.replace(/"/g, '\\"')}"` +
+                                ` and name=="${op.operation.replace(/"/g, '\\"')}"`
+                              }
+                              earliest={range}
+                              attributes={SVC_SPOTLIGHT_ATTRS}
+                              title={`Spotlight — what's distinct about ${op.operation}`}
+                              caption="Compared to the rest of the time window, these attributes have values that show up much more (or much less) in this operation's spans. Click any value to drill into Search."
+                              onPickValue={(attr, value) => {
+                                const params = new URLSearchParams();
+                                params.set('service', serviceName);
+                                params.set('operation', op.operation);
+                                params.append(
+                                  'f',
+                                  [attr, '=', value]
+                                    .map(encodeURIComponent)
+                                    .join(':'),
+                                );
+                                params.set('lookback', range);
+                                navigate(`/traces?${params.toString()}`);
+                              }}
+                            />
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
               </tbody>
             </table>
           )}

@@ -21,6 +21,14 @@ interface Props {
    *  something context-specific (e.g., add to filters, drill into a
    *  trace search). Defaults to a no-op. */
   onPickValue?: (attr: string, value: string) => void;
+  /**
+   * Attribute list to probe. Defaults to `SPOTLIGHT_ATTRIBUTES` (the
+   * broad ~22-attr set used by the Traces page rail). Pages that
+   * embed this alongside other heavy data fetches (Service Detail,
+   * Errors) should pass a curated 6–10 attr subset so the parallel
+   * fan-out doesn't compete with the rest of the page for the
+   * cluster's concurrent-job slots. */
+  attributes?: readonly string[];
 }
 
 /**
@@ -38,6 +46,7 @@ export default function SpotlightSection({
   caption,
   title,
   onPickValue,
+  attributes = SPOTLIGHT_ATTRIBUTES,
 }: Props) {
   const [diff, setDiff] = useState<Map<string, SpotlightBucket[]>>(new Map());
   const [loading, setLoading] = useState(false);
@@ -47,7 +56,7 @@ export default function SpotlightSection({
     setDiff(new Map());
     setLoading(true);
     getSpotlightDiff(
-      SPOTLIGHT_ATTRIBUTES,
+      attributes,
       selectionKql,
       earliest,
       latest,
@@ -70,7 +79,7 @@ export default function SpotlightSection({
     return () => {
       cancelled = true;
     };
-  }, [selectionKql, earliest, latest]);
+  }, [selectionKql, earliest, latest, attributes]);
 
   const handlePick = useCallback(
     (attr: string, value: string) => onPickValue?.(attr, value),

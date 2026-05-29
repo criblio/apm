@@ -138,6 +138,34 @@ export async function getTrace(
  * for this attribute in the matched span set" — the UI renders
  * those as collapsed rows.
  */
+/**
+ * Cribl Search has a per-cluster concurrent-job ceiling (the
+ * `Search queue limit reached (max: 20)` error). Pages like Service
+ * Detail already fire ~15 queries of their own, so unconditionally
+ * fanning out 22 Spotlight queries blows past the ceiling and the
+ * tail return 429s. Run with a small concurrency cap so we coexist
+ * with the rest of the page; the streaming UX is unchanged from
+ * the user's POV — attrs still appear one by one, just paced.
+ */
+const SPOTLIGHT_CONCURRENCY = 4;
+
+async function runWithLimit<T>(
+  attrs: readonly string[],
+  limit: number,
+  worker: (attr: string) => Promise<T>,
+): Promise<void> {
+  let next = 0;
+  async function pump(): Promise<void> {
+    while (next < attrs.length) {
+      const i = next++;
+      await worker(attrs[i]);
+    }
+  }
+  await Promise.all(
+    Array.from({ length: Math.min(limit, attrs.length) }, () => pump()),
+  );
+}
+
 export async function getFacetDistribution(
   attrs: readonly string[],
   predicateKql: string,
@@ -148,32 +176,27 @@ export async function getFacetDistribution(
    * Optional per-attribute callback. Called once for each attribute as
    * its query resolves (success or failure → empty list). The UI uses
    * this to stream results into the panel so attributes appear one by
-   * one instead of the user staring at "Loading…" until all ~20
-   * parallel queries settle.
+   * one instead of the user staring at "Loading…" until all parallel
+   * queries settle.
    */
   onAttr?: (attr: string, rows: AttrValueBucket[]) => void,
 ): Promise<Map<string, AttrValueBucket[]>> {
   const out = new Map<string, AttrValueBucket[]>();
-  await Promise.all(
-    attrs.map((attr) =>
-      runQuery(
-        Q.attrValueDistribution(attr, predicateKql, topPerAttr),
-        earliest,
-        latest,
-        topPerAttr,
-      )
-        .catch(() => [] as Record<string, unknown>[])
-        .then((rows) => {
-          const buckets = rows.map((r) => ({
-            attrName: String(r.attr_name ?? attr),
-            attrValue: String(r.attr_value ?? ''),
-            n: toNum(r.n),
-          }));
-          if (buckets.length > 0) out.set(attr, buckets);
-          onAttr?.(attr, buckets);
-        }),
-    ),
-  );
+  await runWithLimit(attrs, SPOTLIGHT_CONCURRENCY, async (attr) => {
+    const rows = await runQuery(
+      Q.attrValueDistribution(attr, predicateKql, topPerAttr),
+      earliest,
+      latest,
+      topPerAttr,
+    ).catch(() => [] as Record<string, unknown>[]);
+    const buckets = rows.map((r) => ({
+      attrName: String(r.attr_name ?? attr),
+      attrValue: String(r.attr_value ?? ''),
+      n: toNum(r.n),
+    }));
+    if (buckets.length > 0) out.set(attr, buckets);
+    onAttr?.(attr, buckets);
+  });
   return out;
 }
 
@@ -197,27 +220,22 @@ export async function getSpotlightDiff(
   onAttr?: (attr: string, rows: SpotlightBucket[]) => void,
 ): Promise<Map<string, SpotlightBucket[]>> {
   const out = new Map<string, SpotlightBucket[]>();
-  await Promise.all(
-    attrs.map((attr) =>
-      runQuery(
-        Q.spotlightAttrDiff(attr, selectionKql, topPerAttr),
-        earliest,
-        latest,
-        topPerAttr,
-      )
-        .catch(() => [] as Record<string, unknown>[])
-        .then((rows) => {
-          const buckets = rows.map((r) => ({
-            attrName: String(r.attr_name ?? attr),
-            attrValue: String(r.attr_value ?? ''),
-            selN: toNum(r.sel_n),
-            baseN: toNum(r.base_n),
-          }));
-          if (buckets.length > 0) out.set(attr, buckets);
-          onAttr?.(attr, buckets);
-        }),
-    ),
-  );
+  await runWithLimit(attrs, SPOTLIGHT_CONCURRENCY, async (attr) => {
+    const rows = await runQuery(
+      Q.spotlightAttrDiff(attr, selectionKql, topPerAttr),
+      earliest,
+      latest,
+      topPerAttr,
+    ).catch(() => [] as Record<string, unknown>[]);
+    const buckets = rows.map((r) => ({
+      attrName: String(r.attr_name ?? attr),
+      attrValue: String(r.attr_value ?? ''),
+      selN: toNum(r.sel_n),
+      baseN: toNum(r.base_n),
+    }));
+    if (buckets.length > 0) out.set(attr, buckets);
+    onAttr?.(attr, buckets);
+  });
   return out;
 }
 
