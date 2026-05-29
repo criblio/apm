@@ -336,6 +336,58 @@ cleaner "investigation is done" stopping rule but the design
 space is large enough that we need to think through approach
 before committing to one.
 
+### 13. Settings page cleanup
+
+The page has grown to 8 sections (~500 lines of JSX) without an
+information-architecture pass. The current order is roughly the
+chronological order each section landed in, not a mental model
+the operator would arrive with. Concrete symptoms:
+
+- **First-time setup actions are buried at the bottom.** The two
+  things a new user MUST do (run the saved-search provisioner,
+  run the dataset-acceleration provisioner) sit below five
+  preference / tuning sections. Most users won't scroll that far
+  on first visit.
+- **No section nav.** A single long scroll. There's no anchor
+  index or sticky sub-nav to jump between "Filtering", "Cadence",
+  "Notifications", etc.
+- **Diagnostic content is mixed with configuration.** The Trace
+  originators section is essentially a read-only audit table —
+  useful for verifying the originator classifier's output, but
+  it's not "settings" in the action-oriented sense the rest of
+  the page is. Most operators won't ever interact with it.
+- **Related sections aren't grouped.** Noise filters (stream
+  filter on/off) and Error filtering rules both shape what shows
+  up as an error, but they're separated by the Dataset selector.
+
+Proposed pass (no scope changes — pure rearrangement + visual
+polish):
+
+1. **Group by purpose**, with section headers framing each group:
+   - **Setup** (first-time install actions): Provisioning,
+     Dataset acceleration.
+   - **Workspace** (frequently adjusted): Dataset selector,
+     Detection cadence, Notification targets.
+   - **Filtering & heuristics** (tune what's shown): Noise
+     filters, Error filtering rules.
+   - **Diagnostics** (read-only audit data): Trace originators,
+     plus any future audit views.
+2. **Add a sticky left-rail or top-bar section nav** so each
+   group is one click away. The current layout makes the page
+   feel longer than it is.
+3. **Collapse the diagnostic section by default.** Most operators
+   never need to look at Trace originators; expanding on demand
+   keeps the page lean.
+4. **Surface "what needs my attention"** at the top — same
+   information the in-app banners surface (unprovisioned saved
+   searches, missing dataset acceleration), but as a "Setup
+   status" card with checkmarks. Replaces the implicit "scroll to
+   bottom and check the panel" workflow.
+
+This is pure UX polish — no new features, no schema work, no
+query changes. One focused PR. Skill required is component
+restructuring + a small amount of CSS work; no API touches.
+
 ### Blocked on Cribl
 
 - **Metrics: `_metric_name` in wide-column format** — Cribl's
