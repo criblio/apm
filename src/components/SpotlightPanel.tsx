@@ -71,29 +71,44 @@ export default function SpotlightPanel({
       <ul className={s.grid}>
         {ranked.map((attr) => {
           const isOpen = openAttr === attr.name;
+          const toggle = () => setOpenAttr(isOpen ? null : attr.name);
           return (
             <li key={attr.name} className={s.cell}>
-              <button
-                type="button"
-                className={`${s.cellHeader} ${isOpen ? s.cellHeaderOpen : ''}`}
-                onClick={() => setOpenAttr(isOpen ? null : attr.name)}
+              {/* The clickable surface is the WHOLE cell (header +
+               * chart), so the user can click anywhere in the cell
+               * to expand. The histogram's hover handlers don't
+               * intercept clicks — they only set local tooltip
+               * state. */}
+              <div
+                className={`${s.cellSurface} ${isOpen ? s.cellSurfaceOpen : ''}`}
+                role="button"
+                tabIndex={0}
                 aria-expanded={isOpen}
                 aria-controls={`spot-detail-${attr.name}`}
+                onClick={toggle}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    toggle();
+                  }
+                }}
                 title={
                   isOpen
                     ? `Hide values for ${attr.name}`
                     : `Show values for ${attr.name}`
                 }
               >
-                <span className={s.attrName}>{attr.name}</span>
-                <span
-                  className={s.score}
-                  title={`Score ${attr.score.toFixed(2)} — higher = stronger differentiator`}
-                >
-                  {attr.score.toFixed(2)}
-                </span>
-              </button>
-              <SpotlightHistogram rows={attr.rows} />
+                <div className={s.cellHeader}>
+                  <span className={s.attrName}>{attr.name}</span>
+                  <span
+                    className={s.score}
+                    title={`Score ${attr.score.toFixed(2)} — higher = stronger differentiator`}
+                  >
+                    {attr.score.toFixed(2)}
+                  </span>
+                </div>
+                <SpotlightHistogram rows={attr.rows} />
+              </div>
               {isOpen && (
                 <ul
                   id={`spot-detail-${attr.name}`}

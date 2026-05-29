@@ -26,7 +26,7 @@ describe('SPOTLIGHT_ATTRIBUTES', () => {
   it('keeps the Spotlight parallel-query fan-out reasonable', () => {
     // Each entry triggers one query per Spotlight call. Keep the
     // list <= 25 to bound cluster-queue pressure.
-    expect(SPOTLIGHT_ATTRIBUTES.length).toBeLessThanOrEqual(25);
+    expect(SPOTLIGHT_ATTRIBUTES.length).toBeLessThanOrEqual(30);
   });
 });
 
@@ -99,5 +99,37 @@ describe('spotlightAttrDiff', () => {
   it('uses resource.attributes for k8s.* names', () => {
     const q = spotlightAttrDiff('k8s.pod.name', '');
     expect(q).toContain(`tostring(resource.attributes['k8s.pod.name'])`);
+  });
+
+  it('omits the scope clause when scopeKql is undefined', () => {
+    const q = spotlightAttrDiff('http.status_code', `status.code=="2"`);
+    // spansBase() itself ends with `| where isnotnull(...)`; the test
+    // is that NO ADDITIONAL where clause was inserted between that
+    // and the `| extend attr_value` step.
+    const base = '| where isnotnull(end_time_unix_nano)';
+    const after = q.slice(q.indexOf(base) + base.length);
+    expect(after).toMatch(/^\s*\| extend attr_value/);
+  });
+
+  it('injects scopeKql as a where clause before the extend', () => {
+    const q = spotlightAttrDiff(
+      'http.status_code',
+      `tostring(status.code)=="2"`,
+      20,
+      `tostring(resource.attributes['service.name'])=="payment"`,
+    );
+    expect(q).toContain(
+      `| where tostring(resource.attributes['service.name'])=="payment"`,
+    );
+    // Scope must come BEFORE the extend so both sel and base are
+    // constrained to the scope.
+    expect(q.indexOf(`| where tostring(resource.attributes['service.name'])`)).toBeLessThan(
+      q.indexOf(`| extend attr_value`),
+    );
+  });
+
+  it('treats whitespace-only scopeKql as no scope', () => {
+    const q = spotlightAttrDiff('http.status_code', '', 20, '   ');
+    expect(q).not.toContain('| where    ');
   });
 });

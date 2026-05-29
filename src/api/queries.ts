@@ -1292,6 +1292,15 @@ export const SPOTLIGHT_ATTRIBUTES: readonly string[] = [
   // for Spotlight's "what's over-represented" lens
   'session.id',
   'user.id',
+  // "Where did this span come from?" attributes — caller identity,
+  // upstream peer, error fingerprints. These often dominate the
+  // Spotlight ranking when the user is investigating why a service
+  // is failing (vs healthy spans of the same service).
+  'peer.service',
+  'net.peer.name',
+  'net.peer.port',
+  'error.type',
+  'exception.type',
   // OTel-demo-specific common ones — generic enough to keep
   'app.product.id',
   'response_flags',
@@ -1367,18 +1376,36 @@ export function spotlightAttrDiff(
   attrName: string,
   selectionKql: string,
   top: number = 20,
+  /**
+   * Optional scope predicate. When set, BOTH the selection and the
+   * baseline are restricted to spans matching this clause. The
+   * differential becomes "what's different about my selection vs the
+   * REST OF THE SCOPE" instead of "vs the rest of the time window".
+   *
+   * Use for embedded surfaces where the parent context (service,
+   * service+operation, etc.) is implicit. Without it, the differential
+   * is dominated by attributes that distinguish the scope itself from
+   * the rest of the workload (e.g., rpc.method=Charge over-represented
+   * because no other service does Charge) rather than by attributes
+   * that distinguish the selection inside the scope (e.g., one pod is
+   * failing while others aren't).
+   */
+  scopeKql?: string,
 ): string {
   const a = attrName.replace(/'/g, "\\'");
   const isResourceAttr = a.startsWith('k8s.') || a.startsWith('service.');
   const valueExpr = isResourceAttr
     ? `tostring(resource.attributes['${a}'])`
     : `tostring(attributes['${a}'])`;
+  const scope = scopeKql && scopeKql.trim() ? scopeKql.trim() : '';
+  const scopeWhere = scope ? `| where ${scope}` : '';
   // `not <bool>` is rejected inside countif() by Cribl's KQL
   // parser — explicit `== true` / `== false` comparisons work.
   // See https://github.com/criblio/apm DEVELOPMENT.md (or the
   // Cribl KQL gotchas section in agentContext.ts) for the
   // accumulating list of dialect quirks.
   return `${spansBase()}
+    ${scopeWhere}
     | extend attr_value=${valueExpr},
              sel_match=${selectionKql || 'true'}
     | where isnotempty(attr_value)

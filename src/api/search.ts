@@ -210,19 +210,37 @@ export async function getFacetDistribution(
  * Same parallel-query pattern as getFacetDistribution above.
  * Attributes with no rows are omitted from the result map.
  */
+export interface SpotlightDiffOptions {
+  /** Cap per attribute. Defaults to 20. */
+  topPerAttr?: number;
+  /**
+   * Optional scope predicate. When set, BOTH selection and baseline
+   * are restricted to spans matching this clause — so the differential
+   * becomes "what's different about my selection vs the REST OF THE
+   * SCOPE" instead of "vs the rest of the time window."
+   *
+   * Use for embedded surfaces (Service Detail, Errors page expansion)
+   * where the parent context is implicit. Without it, attributes that
+   * distinguish the scope ITSELF from other services dominate the
+   * ranking and drown out the signal you actually want.
+   */
+  scopeKql?: string;
+  /** Streaming hook (same shape as getFacetDistribution's). */
+  onAttr?: (attr: string, rows: SpotlightBucket[]) => void;
+}
+
 export async function getSpotlightDiff(
   attrs: readonly string[],
   selectionKql: string,
   earliest = '-1h',
   latest = 'now',
-  topPerAttr = 20,
-  /** Same streaming hook as getFacetDistribution. */
-  onAttr?: (attr: string, rows: SpotlightBucket[]) => void,
+  options: SpotlightDiffOptions = {},
 ): Promise<Map<string, SpotlightBucket[]>> {
+  const { topPerAttr = 20, scopeKql, onAttr } = options;
   const out = new Map<string, SpotlightBucket[]>();
   await runWithLimit(attrs, SPOTLIGHT_CONCURRENCY, async (attr) => {
     const rows = await runQuery(
-      Q.spotlightAttrDiff(attr, selectionKql, topPerAttr),
+      Q.spotlightAttrDiff(attr, selectionKql, topPerAttr, scopeKql),
       earliest,
       latest,
       topPerAttr,

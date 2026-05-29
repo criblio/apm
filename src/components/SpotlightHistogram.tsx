@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { SpotlightValueRow } from '../spotlight/computeSpotlight';
 import s from './SpotlightHistogram.module.css';
 
@@ -12,6 +13,14 @@ interface Props {
   maxBars?: number;
 }
 
+interface HoverState {
+  idx: number;
+  // Pixel position within the chart's bounding box, used to anchor
+  // the tooltip without doing per-event getBoundingClientRect calls.
+  xPct: number;
+  yPct: number;
+}
+
 /**
  * SpotlightHistogram — small-multiple chart for one attribute. Each
  * value gets a pair of vertical bars: SELECTION (accent color) and
@@ -19,30 +28,34 @@ interface Props {
  * most asymmetric skyline" — that's the most differentiating
  * attribute.
  *
- * Pure SVG, no chart lib. Fixed aspect at the component level so a
- * grid of these renders as a true small-multiple matrix.
+ * Hover any bar pair → a tooltip overlays the value name and per-side
+ * counts. Tooltip position tracks the hovered slot so the user can
+ * read each bar without losing context.
+ *
+ * Pure SVG, no chart lib.
  */
 export default function SpotlightHistogram({
   rows,
-  height = 56,
+  height = 64,
   maxBars = 12,
 }: Props) {
+  const [hover, setHover] = useState<HoverState | null>(null);
   const display = rows.slice(0, maxBars);
+
   if (display.length === 0) {
     return <div className={s.empty} style={{ height }} />;
   }
 
-  // Normalize each bar to the max share seen across all values so the
-  // chart fills its vertical space — the asymmetry between sel and
-  // base is what matters, not the absolute share number.
+  // Normalize each bar to the max share across all values so the chart
+  // fills its vertical space — what matters is the asymmetry between
+  // sel and base, not the absolute share number.
   const maxShare = Math.max(
     ...display.map((r) => Math.max(r.selShare, r.baseShare)),
   );
   const denom = maxShare > 0 ? maxShare : 1;
 
-  // SVG view-box geometry. Bars are normalized to a 100-unit canvas
-  // with explicit padding so the stroke-rendered axis baseline never
-  // gets clipped at the edges.
+  // SVG viewBox geometry. 100×100 canvas with padding so the axis
+  // baseline never gets clipped at the edges.
   const W = 100;
   const H = 100;
   const padX = 2;
@@ -50,54 +63,119 @@ export default function SpotlightHistogram({
   const innerW = W - padX * 2;
   const innerH = H - padY * 2;
   const slot = innerW / display.length;
-  // Two bars per slot with a small gap between sel + base, and a
-  // slot-gap between adjacent (value) pairs.
   const barGap = Math.max(0.4, slot * 0.06);
   const slotGap = Math.max(0.6, slot * 0.18);
   const barW = (slot - barGap - slotGap) / 2;
+  const yAxis = H - padY;
+
+  const hovered = hover ? display[hover.idx] : null;
 
   return (
-    <svg
-      className={s.svg}
-      viewBox={`0 0 ${W} ${H}`}
-      preserveAspectRatio="none"
+    <div
+      className={s.container}
       style={{ height }}
-      aria-hidden
+      onMouseLeave={() => setHover(null)}
     >
-      {/* Baseline axis. Subtle visual anchor for "ground". */}
-      <line
-        x1={padX}
-        x2={W - padX}
-        y1={H - padY}
-        y2={H - padY}
-        className={s.axis}
-      />
-      {display.map((r, i) => {
-        const x = padX + i * slot + slotGap / 2;
-        const selH = (r.selShare / denom) * innerH;
-        const baseH = (r.baseShare / denom) * innerH;
-        const yAxis = H - padY;
-        const title = `${r.value} — sel ${r.selN.toLocaleString()} (${(r.selShare * 100).toFixed(1)}%), base ${r.baseN.toLocaleString()} (${(r.baseShare * 100).toFixed(1)}%)`;
-        return (
-          <g key={`${r.value}-${i}`}>
-            <title>{title}</title>
-            <rect
-              className={s.barSel}
-              x={x}
-              y={yAxis - selH}
-              width={barW}
-              height={Math.max(selH, 0.5)}
-            />
-            <rect
-              className={s.barBase}
-              x={x + barW + barGap}
-              y={yAxis - baseH}
-              width={barW}
-              height={Math.max(baseH, 0.5)}
-            />
-          </g>
-        );
-      })}
-    </svg>
+      <svg
+        className={s.svg}
+        viewBox={`0 0 ${W} ${H}`}
+        preserveAspectRatio="none"
+        aria-hidden
+      >
+        <line
+          x1={padX}
+          x2={W - padX}
+          y1={yAxis}
+          y2={yAxis}
+          className={s.axis}
+        />
+        {display.map((r, i) => {
+          const slotX = padX + i * slot + slotGap / 2;
+          const selH = (r.selShare / denom) * innerH;
+          const baseH = (r.baseShare / denom) * innerH;
+          const isHovered = hover?.idx === i;
+          const xCenter = slotX + barW + barGap / 2;
+          return (
+            <g
+              key={`${r.value}-${i}`}
+              className={s.slot}
+              data-hovered={isHovered ? 'true' : undefined}
+              onMouseEnter={() =>
+                setHover({
+                  idx: i,
+                  xPct: (xCenter / W) * 100,
+                  yPct:
+                    ((yAxis - Math.max(selH, baseH)) / H) * 100,
+                })
+              }
+            >
+              {/* Invisible hit region so the entire vertical strip
+                * over the bar pair captures hover, not just the
+                * skinny bars themselves. */}
+              <rect
+                className={s.hit}
+                x={slotX - slotGap / 2}
+                y={padY}
+                width={slot}
+                height={innerH}
+              />
+              <rect
+                className={s.barSel}
+                x={slotX}
+                y={yAxis - selH}
+                width={barW}
+                height={Math.max(selH, 0.5)}
+              />
+              <rect
+                className={s.barBase}
+                x={slotX + barW + barGap}
+                y={yAxis - baseH}
+                width={barW}
+                height={Math.max(baseH, 0.5)}
+              />
+            </g>
+          );
+        })}
+      </svg>
+      {hovered && hover && (
+        <div
+          className={s.tooltip}
+          // Anchor at the hovered slot's horizontal center; the
+          // tooltip pulls itself up via translate so it never covers
+          // the bar it describes.
+          style={{
+            left: `${hover.xPct}%`,
+            bottom: `${100 - hover.yPct + 6}%`,
+          }}
+          role="tooltip"
+        >
+          <div className={s.tooltipValue}>{hovered.value}</div>
+          <div className={s.tooltipRow}>
+            <span className={s.tooltipSel}>
+              sel {hovered.selN.toLocaleString()}
+            </span>
+            <span className={s.tooltipPct}>
+              {(hovered.selShare * 100).toFixed(1)}%
+            </span>
+          </div>
+          <div className={s.tooltipRow}>
+            <span className={s.tooltipBase}>
+              base {hovered.baseN.toLocaleString()}
+            </span>
+            <span className={s.tooltipPct}>
+              {(hovered.baseShare * 100).toFixed(1)}%
+            </span>
+          </div>
+          <div
+            className={`${s.tooltipDiff} ${
+              hovered.diff >= 0 ? s.diffOver : s.diffUnder
+            }`}
+          >
+            {hovered.diff >= 0 ? '+' : ''}
+            {(hovered.diff * 100).toFixed(1)}% vs baseline
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
