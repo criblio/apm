@@ -247,6 +247,13 @@ they should:
 - Dynamic indexing \`attributes[col_name]\` where \`col_name\` is a
   variable column **IS NOT SUPPORTED.** Only static
   \`attributes['session.id']\` works.
+- \`countif(not <bool>)\` and \`countif(! <bool>)\` are **rejected
+  by the parser** with \`mismatched input '(' expecting EOF or ';'\`.
+  Use explicit boolean comparison instead:
+  \`countif(myflag == false)\` works. Affects any inverse-of-flag
+  aggregate inside summarize. \`not(expr)\` with parens works fine
+  outside countif — it's specifically the unparenthesized form
+  inside the aggregator that fails.
 - A \`lookup\` table can have multiple rows per key, but
   \`lookup T on key\` **returns only the FIRST matching row.**
   Pre-shape lookups as one-row-per-key with pivoted columns if

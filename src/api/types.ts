@@ -157,6 +157,39 @@ export interface StatusCodeMixBucket {
   count: number;
 }
 
+/**
+ * Per-attribute facet bucket — one row per (attr_name, attr_value)
+ * within the user's current Search filter. Used by the facet
+ * panel ("of the spans matching this filter, what are the top
+ * values of <attr_name>?") and as the SELECTION half of a
+ * Spotlight comparison.
+ */
+export interface AttrValueBucket {
+  attrName: string;
+  attrValue: string;
+  /** Number of spans matching the predicate with this value. */
+  n: number;
+}
+
+/**
+ * Per-attribute differential bucket — one row per (attr_name,
+ * attr_value) showing both selection count (sel) and baseline
+ * count (base). The UI computes the diff client-side as
+ * (sel/sel_total) - (base/base_total) and ranks attributes by
+ * max(|diff|) over their values. Powers the Spotlight panel,
+ * which surfaces "which attribute values are over-represented
+ * in your selection vs the rest of the data."
+ */
+export interface SpotlightBucket {
+  attrName: string;
+  attrValue: string;
+  /** Spans matching this value AND in the user's selection. */
+  selN: number;
+  /** Spans matching this value but NOT in the selection
+   *  (the baseline — the rest of the time window). */
+  baseN: number;
+}
+
 /** Per-operation rollup inside a service. */
 export interface OperationSummary {
   operation: string;
