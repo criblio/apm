@@ -392,20 +392,20 @@ export default function SearchPage() {
           <button
             type="button"
             role="tab"
-            aria-selected={facetMode === 'facets'}
-            className={`${s.facetTab} ${facetMode === 'facets' ? s.facetTabActive : ''}`}
-            onClick={() => setFacetMode('facets')}
-          >
-            Facets
-          </button>
-          <button
-            type="button"
-            role="tab"
             aria-selected={facetMode === 'spotlight'}
             className={`${s.facetTab} ${facetMode === 'spotlight' ? s.facetTabActive : ''}`}
             onClick={() => setFacetMode('spotlight')}
           >
             Spotlight
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={facetMode === 'facets'}
+            className={`${s.facetTab} ${facetMode === 'facets' ? s.facetTabActive : ''}`}
+            onClick={() => setFacetMode('facets')}
+          >
+            Facets
           </button>
         </div>
         {!hasSignal ? (

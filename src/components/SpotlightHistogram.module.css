@@ -1,0 +1,25 @@
+.svg {
+  width: 100%;
+  display: block;
+}
+
+.empty {
+  width: 100%;
+  background: var(--cds-color-bg-muted);
+  border-radius: var(--cds-radius-sm);
+}
+
+.axis {
+  stroke: var(--cds-color-border);
+  stroke-width: 0.4;
+  vector-effect: non-scaling-stroke;
+}
+
+.barSel {
+  fill: var(--cds-color-accent);
+}
+
+.barBase {
+  fill: var(--cds-color-fg-subtle);
+  opacity: 0.45;
+}
