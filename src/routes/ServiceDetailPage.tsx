@@ -11,27 +11,6 @@ import StatusBanner from '../components/StatusBanner';
 import MetricsCard, { type MetricsCardRow } from '../components/MetricsCard';
 import SpotlightSection from '../components/SpotlightSection';
 
-/**
- * Curated subset of attributes for Service-Detail Spotlight surfaces.
- * Trimmed from the full SPOTLIGHT_ATTRIBUTES list so the embedded
- * panels don't compete with the page's many existing parallel
- * queries for the cluster's concurrent-job slots. These are the
- * attributes most likely to differentiate failing vs healthy spans
- * on a single service.
- */
-const SVC_SPOTLIGHT_ATTRS: readonly string[] = [
-  // Top-level columns — `name` is the span operation, almost always
-  // the strongest signal at this scope ("which operation is failing?").
-  'name',
-  'http.response.status_code',
-  'http.status_code',
-  'http.request.method',
-  'http.route',
-  'rpc.method',
-  'rpc.grpc.status_code',
-  'k8s.pod.name',
-  'response_flags',
-];
 import {
   listServiceSummaries,
   getServiceTimeSeries,
@@ -1136,7 +1115,6 @@ export default function ServiceDetailPage() {
           scopeKql={`tostring(resource.attributes['service.name'])=="${serviceName.replace(/"/g, '\\"')}"`}
           selectionKql={`tostring(status.code)=="2"`}
           earliest={range}
-          attributes={SVC_SPOTLIGHT_ATTRS}
           selectionNoun="errors"
           caption="For each attribute, the bar shows what percentage of spans with that value are errors. Attributes are sorted by how much that rate varies across values — uniform attributes get dropped (no signal); values with an unusually high or low error rate are highlighted. Click Search next to a value to drill into its spans."
           onPickValue={(attr, value) => {
@@ -1303,7 +1281,6 @@ export default function ServiceDetailPage() {
                               }
                               selectionKql={`tostring(status.code)=="2"`}
                               earliest={range}
-                              attributes={SVC_SPOTLIGHT_ATTRS}
                               selectionNoun="errors"
                               title={`Spotlight — error rate per attribute for ${op.operation}`}
                               caption="For each attribute, what percentage of this operation's calls with that value failed? Values with an unusually high error rate point at the source of the failures. Click Search to see the matching spans."
