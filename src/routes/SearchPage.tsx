@@ -115,7 +115,12 @@ export default function SearchPage() {
 
   // Facet/Spotlight rail state. Kept independent of the form so the
   // user can browse facets without firing a search every keystroke.
-  const [facetMode, setFacetMode] = useState<FacetMode>('facets');
+  //
+  // Default to Spotlight: it's the higher-value primitive when the
+  // user is actually debugging ("what's unique about my selection?"),
+  // and Facets is one click away if they want the simpler distribution
+  // view.
+  const [facetMode, setFacetMode] = useState<FacetMode>('spotlight');
   const [facetDist, setFacetDist] = useState<Map<string, AttrValueBucket[]>>(
     new Map(),
   );
@@ -316,6 +321,15 @@ export default function SearchPage() {
     void runSearch(next);
   }
 
+  // Sample-filter chips shown on the empty-state rail. Each clicks
+  // into a pre-built filter row so a brand-new user can see the
+  // panel light up without knowing what attributes to type.
+  function applySampleFilter(rows: FilterRow[]) {
+    const next: SearchFormState = { ...formState, filters: rows };
+    setFormState(next);
+    setSearchParams(toQueryString(next), { replace: false });
+  }
+
   return (
     <div className={s.layout}>
       <aside className={s.sidebar}>
@@ -326,6 +340,10 @@ export default function SearchPage() {
         />
         <section className={s.sidebarSection} aria-label="Filters">
           <h3 className={s.sidebarSectionTitle}>Filters</h3>
+          <p className={s.sidebarSectionHint}>
+            Narrow the spans your search and the side rail will
+            analyze. Suggestions appear as you type.
+          </p>
           <FilterBuilder
             rows={formState.filters}
             onChange={handleFiltersChange}
@@ -349,7 +367,22 @@ export default function SearchPage() {
         {hasSearched && !error && <TraceTable traces={results} />}
         {!hasSearched && !error && (
           <StatusBanner kind="info">
-            Pick a service and click <strong>Find Traces</strong> to begin.
+            <p style={{ margin: 0 }}>
+              <strong>Pick a service or add a filter</strong>, then
+              click <strong>Find Traces</strong> to see matching traces
+              here.
+            </p>
+            <p
+              style={{
+                margin: '6px 0 0',
+                fontSize: '12px',
+                opacity: 0.85,
+              }}
+            >
+              The <strong>Spotlight</strong> rail on the right works
+              independently — it explains what makes your filtered
+              spans unusual without needing the trace list to load.
+            </p>
           </StatusBanner>
         )}
       </main>
@@ -376,8 +409,71 @@ export default function SearchPage() {
           </button>
         </div>
         {!hasSignal ? (
-          <div className={s.facetHint}>
-            Pick a service or add a filter to populate this panel.
+          <div className={s.facetEmpty}>
+            <h4 className={s.facetEmptyTitle}>
+              Start narrowing down to see what stands out
+            </h4>
+            <p className={s.facetEmptyBody}>
+              This rail explains what your search is made of —{' '}
+              <strong>Facets</strong> lists the most common values for
+              each attribute, and <strong>Spotlight</strong> highlights
+              the attributes whose values are over- or under-represented
+              vs the rest of the time window. Both need at least one
+              filter before they can compute anything.
+            </p>
+            <div className={s.facetEmptyExamples}>
+              <span className={s.facetEmptyExamplesLabel}>
+                Try a sample filter:
+              </span>
+              <button
+                type="button"
+                className={s.facetExampleChip}
+                onClick={() =>
+                  applySampleFilter([
+                    newFilterRow({
+                      attr: 'http.response.status_code',
+                      op: '>=',
+                      value: '500',
+                    }),
+                  ])
+                }
+              >
+                HTTP 5xx errors
+              </button>
+              <button
+                type="button"
+                className={s.facetExampleChip}
+                onClick={() =>
+                  applySampleFilter([
+                    newFilterRow({
+                      attr: 'http.request.method',
+                      op: '=',
+                      value: 'POST',
+                    }),
+                  ])
+                }
+              >
+                POST requests
+              </button>
+              <button
+                type="button"
+                className={s.facetExampleChip}
+                onClick={() =>
+                  applySampleFilter([
+                    newFilterRow({
+                      attr: 'rpc.system',
+                      op: '=',
+                      value: 'grpc',
+                    }),
+                  ])
+                }
+              >
+                gRPC calls
+              </button>
+            </div>
+            <p className={s.facetEmptyHint}>
+              Or pick a service in the <strong>Search</strong> sidebar.
+            </p>
           </div>
         ) : facetMode === 'facets' ? (
           <FacetPanel

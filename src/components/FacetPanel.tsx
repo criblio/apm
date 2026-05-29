@@ -41,19 +41,29 @@ export default function FacetPanel({
     return out;
   }, [distribution, hideSingletons]);
 
-  if (loading) {
-    return <div className={s.placeholder}>Loading facets…</div>;
+  if (loading && groups.length === 0) {
+    return (
+      <div className={s.placeholder}>
+        Loading facets — querying each attribute in parallel; values
+        appear as queries return…
+      </div>
+    );
   }
   if (groups.length === 0) {
     return (
       <div className={s.placeholder}>
-        No facet values found for the current filter.
+        No facet values found for the current filter. Try widening
+        the lookback window or removing a constraint.
       </div>
     );
   }
 
   return (
     <div className={s.panel} aria-label="Facet panel">
+      <p className={s.caption}>
+        Top values for each attribute in your selection. Click any
+        value to add it as a filter and narrow further.
+      </p>
       {groups.map((g) => (
         <div key={g.name} className={s.group}>
           <div className={s.groupHeader}>

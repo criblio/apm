@@ -15,6 +15,14 @@
   font-size: var(--cds-font-size-sm);
   color: var(--cds-color-fg-muted);
   text-align: center;
+  line-height: 1.4;
+}
+
+.caption {
+  margin: 0 0 var(--cds-space-xs);
+  font-size: var(--cds-font-size-sm);
+  color: var(--cds-color-fg-muted);
+  line-height: 1.4;
 }
 
 .group {
