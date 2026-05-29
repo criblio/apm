@@ -67,7 +67,7 @@ export default function SearchForm({ state, onSubmit, loading }: Props) {
   return (
     <form className={s.form} onSubmit={handleSubmit}>
       <div className={s.formHeader}>
-        <span className={s.formTitle}>Filters</span>
+        <span className={s.formTitle}>Search</span>
         <span className={s.formHint}>{services.length} services</span>
       </div>
 
@@ -121,18 +121,6 @@ export default function SearchForm({ state, onSubmit, loading }: Props) {
             </option>
           ))}
         </select>
-      </div>
-
-      <div className={s.field}>
-        <label className={s.label}>Tags</label>
-        <input
-          className={s.input}
-          type="text"
-          placeholder="error=true http.status_code=500"
-          value={draft.tags}
-          onChange={(e) => update('tags', e.target.value)}
-          disabled={loading}
-        />
       </div>
 
       {/* Min + Max duration are semantically one filter — pair them
