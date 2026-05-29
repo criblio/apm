@@ -2,11 +2,15 @@
  * Shared types and defaults for the search form. Lives in its own module so
  * SearchForm.tsx can keep `react-refresh/only-export-components` happy.
  */
+import type { FilterRow } from '../spotlight/filterModel';
 
 export interface SearchFormState {
   service: string;
   operation: string;
-  tags: string;
+  /** Typed filter rows from FilterBuilder. */
+  filters: FilterRow[];
+  /** Raw KQL escape hatch from KqlEditor. */
+  kqlPredicate: string;
   minDuration: string;
   maxDuration: string;
   limit: number;
@@ -16,7 +20,8 @@ export interface SearchFormState {
 export const DEFAULT_SEARCH_STATE: SearchFormState = {
   service: '',
   operation: '',
-  tags: '',
+  filters: [],
+  kqlPredicate: '',
   minDuration: '',
   maxDuration: '',
   limit: 20,

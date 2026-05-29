@@ -1,31 +1,118 @@
 /*
- * Search page layout: sidebar of facets on the left, results table
- * filling the remaining width on the right. The sidebar is sticky so
- * filters stay in view while the user scrolls through long result lists.
+ * Search page is a three-column layout post-faceted-nav:
+ *   - left sidebar (280px): SearchForm, FilterBuilder, KqlEditor
+ *   - center: trace results table
+ *   - right facet rail (320px): Facets / Spotlight tabs
  *
- * The filter panel width is intentionally modest (260px) — wider looks
- * heavy on large screens, and the inputs inside fit comfortably at that
- * width given the label hierarchy.
+ * Both rails are sticky so they stay visible while scrolling the
+ * results. On narrower screens we collapse the right rail under the
+ * results — the left sidebar always wins the column war because the
+ * filter controls drive the search.
  */
 
 .layout {
-  display: flex;
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr) 320px;
   gap: var(--cds-space-lg);
   padding: var(--cds-space-lg);
   align-items: flex-start;
 }
 
+@media (max-width: 1400px) {
+  .layout {
+    grid-template-columns: 280px minmax(0, 1fr);
+  }
+  .facetRail {
+    grid-column: 1 / -1;
+    position: static;
+  }
+}
+
 .sidebar {
-  width: 260px;
-  flex: 0 0 260px;
   position: sticky;
   top: var(--cds-space-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--cds-space-md);
+  min-width: 0;
+}
+
+.sidebarSection {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: var(--cds-space-md) var(--cds-space-lg);
+  background: var(--cds-color-bg);
+  border: 1px solid var(--cds-color-border-subtle);
+  border-radius: var(--cds-radius-lg);
+  box-shadow: var(--cds-shadow-sm);
+}
+
+.sidebarSectionTitle {
+  margin: 0 0 4px;
+  padding-bottom: var(--cds-space-xs);
+  font-size: var(--cds-font-size-sm);
+  font-weight: var(--cds-font-weight-semibold);
+  color: var(--cds-color-fg);
+  letter-spacing: 0.2px;
+  border-bottom: 1px solid var(--cds-color-border-subtle);
 }
 
 .results {
-  flex: 1 1 auto;
   min-width: 0;
   display: flex;
   flex-direction: column;
   gap: var(--cds-space-md);
+}
+
+.facetRail {
+  position: sticky;
+  top: var(--cds-space-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--cds-space-sm);
+  min-width: 0;
+  max-height: calc(100vh - var(--cds-space-lg) * 2);
+  overflow-y: auto;
+}
+
+.facetTabs {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--cds-color-bg-muted);
+  border-radius: var(--cds-radius-md);
+}
+.facetTab {
+  flex: 1 1 auto;
+  height: 28px;
+  padding: 0 12px;
+  font-size: var(--cds-font-size-sm);
+  font-weight: var(--cds-font-weight-medium);
+  color: var(--cds-color-fg-muted);
+  background: transparent;
+  border: none;
+  border-radius: var(--cds-radius-sm);
+  cursor: pointer;
+  transition: background var(--cds-transition-fast),
+    color var(--cds-transition-fast);
+}
+.facetTab:hover:not(.facetTabActive) {
+  color: var(--cds-color-fg);
+}
+.facetTabActive {
+  background: var(--cds-color-bg);
+  color: var(--cds-color-fg);
+  box-shadow: var(--cds-shadow-sm);
+}
+
+.facetHint {
+  padding: var(--cds-space-md);
+  font-size: var(--cds-font-size-sm);
+  color: var(--cds-color-fg-muted);
+  text-align: center;
+  background: var(--cds-color-bg);
+  border: 1px dashed var(--cds-color-border-subtle);
+  border-radius: var(--cds-radius-md);
+  line-height: 1.4;
 }

@@ -219,6 +219,10 @@ export interface FindTracesParams {
   service?: string;
   operation?: string;
   tags?: string; // free-form "key=value key2=value2"
+  /** Pre-built KQL predicate composed with the rest of the per-span
+   *  filters via `and`. Used by the typed FilterBuilder and the raw
+   *  KqlEditor escape hatch on SearchPage. */
+  predicateKql?: string;
   minDurationUs?: number; // microseconds (trace-level)
   maxDurationUs?: number; // microseconds (trace-level)
   limit?: number;
@@ -258,6 +262,13 @@ export function findTraces(params: FindTracesParams): string {
       const v = pair.slice(eq + 1).replace(/"/g, '\\"');
       spanFilters.push(`tostring(attributes['${k}'])=="${v}"`);
     }
+  }
+
+  // Pre-built KQL predicate from FilterBuilder + KqlEditor on
+  // SearchPage. Wrapped in parens so any internal `and`/`or` doesn't
+  // bind across the surrounding spanFilters.join().
+  if (params.predicateKql && params.predicateKql.trim()) {
+    spanFilters.push(`(${params.predicateKql.trim()})`);
   }
 
   // Trace-level filters — applied AFTER the summarize. Duration is the

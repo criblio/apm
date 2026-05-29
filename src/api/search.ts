@@ -144,30 +144,36 @@ export async function getFacetDistribution(
   earliest = '-1h',
   latest = 'now',
   topPerAttr = 20,
+  /**
+   * Optional per-attribute callback. Called once for each attribute as
+   * its query resolves (success or failure → empty list). The UI uses
+   * this to stream results into the panel so attributes appear one by
+   * one instead of the user staring at "Loading…" until all ~20
+   * parallel queries settle.
+   */
+  onAttr?: (attr: string, rows: AttrValueBucket[]) => void,
 ): Promise<Map<string, AttrValueBucket[]>> {
   const out = new Map<string, AttrValueBucket[]>();
-  const results = await Promise.all(
+  await Promise.all(
     attrs.map((attr) =>
       runQuery(
         Q.attrValueDistribution(attr, predicateKql, topPerAttr),
         earliest,
         latest,
         topPerAttr,
-      ).catch(() => [] as Record<string, unknown>[]),
+      )
+        .catch(() => [] as Record<string, unknown>[])
+        .then((rows) => {
+          const buckets = rows.map((r) => ({
+            attrName: String(r.attr_name ?? attr),
+            attrValue: String(r.attr_value ?? ''),
+            n: toNum(r.n),
+          }));
+          if (buckets.length > 0) out.set(attr, buckets);
+          onAttr?.(attr, buckets);
+        }),
     ),
   );
-  for (let i = 0; i < attrs.length; i++) {
-    const rows = results[i];
-    if (!rows || rows.length === 0) continue;
-    out.set(
-      attrs[i],
-      rows.map((r) => ({
-        attrName: String(r.attr_name ?? attrs[i]),
-        attrValue: String(r.attr_value ?? ''),
-        n: toNum(r.n),
-      })),
-    );
-  }
   return out;
 }
 
@@ -187,31 +193,31 @@ export async function getSpotlightDiff(
   earliest = '-1h',
   latest = 'now',
   topPerAttr = 20,
+  /** Same streaming hook as getFacetDistribution. */
+  onAttr?: (attr: string, rows: SpotlightBucket[]) => void,
 ): Promise<Map<string, SpotlightBucket[]>> {
   const out = new Map<string, SpotlightBucket[]>();
-  const results = await Promise.all(
+  await Promise.all(
     attrs.map((attr) =>
       runQuery(
         Q.spotlightAttrDiff(attr, selectionKql, topPerAttr),
         earliest,
         latest,
         topPerAttr,
-      ).catch(() => [] as Record<string, unknown>[]),
+      )
+        .catch(() => [] as Record<string, unknown>[])
+        .then((rows) => {
+          const buckets = rows.map((r) => ({
+            attrName: String(r.attr_name ?? attr),
+            attrValue: String(r.attr_value ?? ''),
+            selN: toNum(r.sel_n),
+            baseN: toNum(r.base_n),
+          }));
+          if (buckets.length > 0) out.set(attr, buckets);
+          onAttr?.(attr, buckets);
+        }),
     ),
   );
-  for (let i = 0; i < attrs.length; i++) {
-    const rows = results[i];
-    if (!rows || rows.length === 0) continue;
-    out.set(
-      attrs[i],
-      rows.map((r) => ({
-        attrName: String(r.attr_name ?? attrs[i]),
-        attrValue: String(r.attr_value ?? ''),
-        selN: toNum(r.sel_n),
-        baseN: toNum(r.base_n),
-      })),
-    );
-  }
   return out;
 }
 
