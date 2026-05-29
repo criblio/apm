@@ -3,44 +3,85 @@ import type { SpotlightBucket } from '../api/types';
 import {
   computeSpotlight,
   type ComputeOptions,
+  type SpotlightValueRow,
 } from '../spotlight/computeSpotlight';
 import SpotlightHistogram from './SpotlightHistogram';
 import s from './SpotlightPanel.module.css';
 
 interface Props {
-  /** Raw differential map from getSpotlightDiff. */
   diff: Map<string, SpotlightBucket[]>;
-  /** When the user clicks a value row in an expanded attribute, surface
-   *  (attr, value) so the parent can append it to the active selection
-   *  or to filters. */
+  /** Click handler for the per-value Search button. */
   onPickValue: (attr: string, value: string) => void;
   loading?: boolean;
-  /** Tuning knobs forwarded to computeSpotlight. */
   options?: ComputeOptions;
-  /** Optional caption shown above the first attribute. */
   caption?: string;
 }
 
 /**
- * SpotlightPanel — small-multiples differential view.
- *
- * Renders one compact mini-histogram per attribute (selection bars in
- * accent + baseline bars in muted). The user scans the rail for the
- * most asymmetric chart — that's the strongest differentiator. Click
- * an attribute to expand the per-value detail list inline with
- * click-to-filter actions.
- *
- * This replaces the older row-per-value card design which was visually
- * heavy: a single attribute could eat 20+ lines of UI. Small-multiples
- * fit ~6× more attributes into the same vertical space and let the
- * eye do the work it's good at — pattern matching.
+ * Number of value rows shown inline (without expansion). Small enough
+ * to keep cells compact, large enough to surface the actionable values
+ * for a typical 2–5 value attribute. The expand toggle reveals the
+ * rest.
  */
+const INLINE_ROWS = 3;
+
+function formatPct(n: number): string {
+  if (Math.abs(n) >= 1) return `${(n * 100).toFixed(0)}%`;
+  if (Math.abs(n) >= 0.1) return `${(n * 100).toFixed(1)}%`;
+  return `${(n * 100).toFixed(2)}%`;
+}
+
+function formatDiff(diff: number): string {
+  const sign = diff >= 0 ? '+' : '';
+  return `${sign}${(diff * 100).toFixed(1)} pp`;
+}
+
+interface ValueRowProps {
+  attrName: string;
+  row: SpotlightValueRow;
+  onPick: (attr: string, value: string) => void;
+}
+
+function ValueRow({ attrName, row, onPick }: ValueRowProps) {
+  const direction =
+    row.diff > 0.005 ? 'over' : row.diff < -0.005 ? 'under' : 'flat';
+  return (
+    <li className={`${s.valueRow} ${s[direction]}`}>
+      <div className={s.valueMain}>
+        <span className={s.valueLabel} title={row.value}>
+          {row.value}
+        </span>
+        <span className={s.valueDiff}>{formatDiff(row.diff)}</span>
+      </div>
+      <div className={s.valueCounts}>
+        <span className={s.countSel}>
+          sel {row.selN.toLocaleString()} ({formatPct(row.selShare)})
+        </span>
+        <span className={s.countBase}>
+          base {row.baseN.toLocaleString()} ({formatPct(row.baseShare)})
+        </span>
+      </div>
+      <button
+        type="button"
+        className={s.searchBtn}
+        onClick={(e) => {
+          e.stopPropagation();
+          onPick(attrName, row.value);
+        }}
+        title={`Open Search with ${attrName} = ${row.value}`}
+      >
+        Search →
+      </button>
+    </li>
+  );
+}
+
 export default function SpotlightPanel({
   diff,
   onPickValue,
   loading,
   options,
-  caption = 'Each chart shows one attribute. The colored bars are your selection’s share of each value; the gray bars are the rest of the time window. Asymmetric charts are the strongest differentiators — click any chart to see the per-value detail.',
+  caption = 'Each card is one attribute that differs between your selection and the comparison set. Rows show the values driving the difference — "sel" is the selection’s share of that value, "base" is the comparison’s share. Click Search to open Traces filtered to spans matching that value.',
 }: Props) {
   const ranked = useMemo(
     () => computeSpotlight(diff, options),
@@ -52,15 +93,16 @@ export default function SpotlightPanel({
     return (
       <div className={s.placeholder}>
         Computing Spotlight — checking each attribute against your
-        selection; charts appear as queries return…
+        selection; results appear as queries return…
       </div>
     );
   }
   if (ranked.length === 0) {
     return (
       <div className={s.placeholder}>
-        Nothing stands out yet. Your selection looks like the rest of
-        the time window — try a different filter, or widen the lookback.
+        Nothing stands out yet. The selection's distribution looks the
+        same as the comparison's — try a different filter, or widen the
+        lookback.
       </div>
     );
   }
@@ -71,81 +113,74 @@ export default function SpotlightPanel({
       <ul className={s.grid}>
         {ranked.map((attr) => {
           const isOpen = openAttr === attr.name;
-          const toggle = () => setOpenAttr(isOpen ? null : attr.name);
+          const visibleRows = isOpen
+            ? attr.rows
+            : attr.rows.slice(0, INLINE_ROWS);
+          const hiddenCount = attr.rows.length - visibleRows.length;
+          // TL;DR is the strongest single row — either the top
+          // over-represented or top under-represented value, whichever
+          // has the larger absolute diff. Surfacing the headline as a
+          // sentence makes the cell readable at-a-glance, even when
+          // the only attribute that surfaced is a single sparse one
+          // (which was the user's complaint with the chart-only view).
+          const top = attr.rows[0];
+          const bottom = attr.rows[attr.rows.length - 1];
+          const headlineRow =
+            top && bottom &&
+            Math.abs(top.diff) >= Math.abs(bottom.diff)
+              ? top
+              : bottom ?? top;
           return (
             <li key={attr.name} className={s.cell}>
-              {/* The clickable surface is the WHOLE cell (header +
-               * chart), so the user can click anywhere in the cell
-               * to expand. The histogram's hover handlers don't
-               * intercept clicks — they only set local tooltip
-               * state. */}
-              <div
-                className={`${s.cellSurface} ${isOpen ? s.cellSurfaceOpen : ''}`}
-                role="button"
-                tabIndex={0}
-                aria-expanded={isOpen}
-                aria-controls={`spot-detail-${attr.name}`}
-                onClick={toggle}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    toggle();
-                  }
-                }}
-                title={
-                  isOpen
-                    ? `Hide values for ${attr.name}`
-                    : `Show values for ${attr.name}`
-                }
-              >
-                <div className={s.cellHeader}>
-                  <span className={s.attrName}>{attr.name}</span>
-                  <span
-                    className={s.score}
-                    title={`Score ${attr.score.toFixed(2)} — higher = stronger differentiator`}
-                  >
-                    {attr.score.toFixed(2)}
-                  </span>
-                </div>
-                <SpotlightHistogram rows={attr.rows} />
-              </div>
-              {isOpen && (
-                <ul
-                  id={`spot-detail-${attr.name}`}
-                  className={s.detailList}
+              <div className={s.cellHeader}>
+                <span className={s.attrName} title={attr.name}>
+                  {attr.name}
+                </span>
+                <span
+                  className={s.score}
+                  title={`Score ${attr.score.toFixed(2)} — higher = stronger differentiator`}
                 >
-                  {attr.rows.map((row) => {
-                    const direction =
-                      row.diff > 0 ? 'over' : row.diff < 0 ? 'under' : 'flat';
-                    return (
-                      <li
-                        key={row.value}
-                        className={`${s.detailRow} ${s[direction]}`}
-                      >
-                        <button
-                          type="button"
-                          className={s.detailBtn}
-                          onClick={() => onPickValue(attr.name, row.value)}
-                          title={`Add ${attr.name} = ${row.value} as a filter`}
-                        >
-                          <span className={s.detailValue}>{row.value}</span>
-                          <span className={s.detailPct}>
-                            {row.diff >= 0 ? '+' : ''}
-                            {(row.diff * 100).toFixed(1)}%
-                          </span>
-                          <span className={s.detailCounts}>
-                            <span className={s.detailSel}>
-                              {row.selN.toLocaleString()}
-                            </span>
-                            <span className={s.detailBase}>
-                              {row.baseN.toLocaleString()}
-                            </span>
-                          </span>
-                        </button>
-                      </li>
-                    );
-                  })}
-                </ul>
+                  score {attr.score.toFixed(2)}
+                </span>
+              </div>
+              {headlineRow && (
+                <p className={s.headline}>
+                  {headlineRow.diff >= 0 ? 'Selection over-represents' : 'Selection under-represents'}{' '}
+                  <code>{headlineRow.value}</code> by{' '}
+                  <strong>{formatDiff(headlineRow.diff)}</strong>{' '}
+                  ({headlineRow.selN.toLocaleString()} sel vs{' '}
+                  {headlineRow.baseN.toLocaleString()} base).
+                </p>
+              )}
+              <SpotlightHistogram rows={attr.rows} />
+              <ul className={s.valueList}>
+                {visibleRows.map((row) => (
+                  <ValueRow
+                    key={row.value}
+                    attrName={attr.name}
+                    row={row}
+                    onPick={onPickValue}
+                  />
+                ))}
+              </ul>
+              {!isOpen && hiddenCount > 0 && (
+                <button
+                  type="button"
+                  className={s.toggleMore}
+                  onClick={() => setOpenAttr(attr.name)}
+                >
+                  Show {hiddenCount} more value
+                  {hiddenCount === 1 ? '' : 's'}
+                </button>
+              )}
+              {isOpen && (
+                <button
+                  type="button"
+                  className={s.toggleMore}
+                  onClick={() => setOpenAttr(null)}
+                >
+                  Show fewer
+                </button>
               )}
             </li>
           );
@@ -154,11 +189,11 @@ export default function SpotlightPanel({
       <div className={s.legend}>
         <span className={s.legendItem}>
           <span className={`${s.legendSwatch} ${s.legendSwatchSel}`} />
-          selection
+          selection (the spans you're investigating)
         </span>
         <span className={s.legendItem}>
           <span className={`${s.legendSwatch} ${s.legendSwatchBase}`} />
-          baseline
+          baseline (what they're being compared against)
         </span>
       </div>
     </div>
