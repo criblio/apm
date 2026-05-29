@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from 'react';
 import StatusBanner from '../components/StatusBanner';
 import ProvisioningPanel from '@cribl/app-utils/provisioning-panel';
 import DatasetProvisioningPanel from '../components/DatasetProvisioningPanel';
+import SettingsSetupStatus from './SettingsSetupStatus';
+import SettingsNav, { type NavGroup } from './SettingsNav';
 import { loadAppSettings, saveAppSettings } from '../api/appSettings';
 import { listNotificationTargets, type NotificationTarget } from '../api/notificationTargets';
 import { setCurrentDataset } from '../api/dataset';
@@ -54,6 +56,7 @@ export default function SettingsPage() {
   const [rulesSaving, setRulesSaving] = useState(false);
   const [originators, setOriginators] = useState<TraceOriginatorRow[]>([]);
   const [originatorsLoading, setOriginatorsLoading] = useState(true);
+  const [originatorsOpen, setOriginatorsOpen] = useState(false);
 
   // Load notification targets + saved selection on mount
   useEffect(() => {
@@ -183,6 +186,35 @@ export default function SettingsPage() {
 
   const cadenceInfo = CADENCE_OPTIONS.find((o) => o.value === currentCadence);
 
+  const navGroups: readonly NavGroup[] = [
+    {
+      title: 'Setup',
+      items: [
+        { id: 'provisioning', label: 'Provisioning' },
+        { id: 'dataset-acceleration', label: 'Dataset acceleration' },
+      ],
+    },
+    {
+      title: 'Workspace',
+      items: [
+        { id: 'dataset', label: 'Dataset' },
+        { id: 'cadence', label: 'Detection cadence' },
+        { id: 'notifications', label: 'Notification targets' },
+      ],
+    },
+    {
+      title: 'Filtering & heuristics',
+      items: [
+        { id: 'noise-filters', label: 'Noise filters' },
+        { id: 'error-filtering', label: 'Error filtering' },
+      ],
+    },
+    {
+      title: 'Diagnostics',
+      items: [{ id: 'originators', label: 'Trace originators' }],
+    },
+  ];
+
   return (
     <div className={s.page}>
       <div>
@@ -194,7 +226,65 @@ export default function SettingsPage() {
 
       {error && <StatusBanner kind="error">{error}</StatusBanner>}
 
-      <div className={s.card}>
+      <SettingsSetupStatus />
+
+      <div className={s.layout}>
+        <aside className={s.navCol}>
+          <SettingsNav groups={navGroups} />
+        </aside>
+
+        <div className={s.contentCol}>
+          {/* ── Setup ────────────────────────────────────────── */}
+          <h2 className={s.groupHeading}>Setup</h2>
+          <p className={s.groupHelp}>
+            One-time install actions. Both must succeed before the
+            rest of the app reads cached data instead of running
+            queries live.
+          </p>
+
+          <div id="provisioning" className={s.card}>
+            <ProvisioningPanel
+              config={{
+                prefix: CRIBLAPM_PREFIX,
+                plan: getProvisioningPlan,
+                seedLookups: SEED_LOOKUPS,
+              }}
+              helpText={
+                <>
+                  Cribl APM caches its expensive panel queries (Home catalog,
+                  sparklines, slow trace classes, error classes, dependency graph,
+                  latency baselines) as scheduled Cribl Saved Searches that run
+                  every few minutes. Pages then read the cached rows via{' '}
+                  <code>$vt_results</code> / lookup joins, which is ~10× faster
+                  than running the underlying queries live on every load. Re-run
+                  the preview after changing the <strong>Dataset</strong> or{' '}
+                  <strong>Noise filters</strong> setting so the cached queries
+                  pick up the new values.
+                </>
+              }
+              dangerHelpText={
+                <>
+                  Deletes every <code>criblapm__*</code> saved search from the
+                  workspace. Page loads revert to live queries (slower). Use
+                  before reinstalling the pack or to fully reset state.
+                </>
+              }
+            />
+          </div>
+
+          <div id="dataset-acceleration" className={s.card}>
+            <DatasetProvisioningPanel />
+          </div>
+
+          {/* ── Workspace ────────────────────────────────────── */}
+          <h2 className={s.groupHeading}>Workspace</h2>
+          <p className={s.groupHelp}>
+            Settings the operator adjusts day-to-day — the dataset
+            being read from, how often detection refreshes, and where
+            alerts get delivered.
+          </p>
+
+          <div id="dataset" className={s.card}>
         <h2 className={s.sectionTitle}>Dataset</h2>
         <p className={s.sectionHelp}>
           All Cribl APM queries run against this Cribl Search dataset.
@@ -270,7 +360,87 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      <div className={s.card}>
+      <div id="cadence" className={s.card}>
+        <h2 className={s.sectionTitle}>Detection cadence</h2>
+        <p className={s.sectionHelp}>
+          How often scheduled searches run to refresh the Home page panels
+          and the Detected Issues alerts. Lower values detect problems faster
+          but use more Cribl Search worker time.
+        </p>
+
+        <div className={s.currentRow}>
+          <span className={s.currentLabel}>Current</span>
+          <span className={s.currentValue}>{cadenceInfo?.label ?? currentCadence}</span>
+          <span className={s.cadenceLag}>
+            Detection lag: <strong>{cadenceInfo?.lagLabel ?? '~5 minutes'}</strong>
+          </span>
+        </div>
+
+        <div className={s.field}>
+          <label className={s.label} htmlFor="cadence-select">
+            Refresh interval
+          </label>
+          <select
+            id="cadence-select"
+            className={s.input}
+            value={currentCadence}
+            onChange={(e) => void handleCadenceChange(e.target.value as CadenceOption)}
+            disabled={cadenceSaving}
+          >
+            {CADENCE_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label} — detection lag {opt.lagLabel}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {flash && <span className={s.successFlash}>{flash}</span>}
+      </div>
+
+      <div id="notifications" className={s.card}>
+        <h2 className={s.sectionTitle}>Alert notification targets</h2>
+        <p className={s.sectionHelp}>
+          Auto-detected issues will send notifications to the selected targets
+          when they fire and when they resolve. Select one or more targets below.
+          Targets are configured in Cribl under Notification Targets.
+        </p>
+
+        {notifTargets.length === 0 ? (
+          <div className={s.fieldHelp}>
+            No notification targets configured in this workspace.
+            Configure them in Cribl under Settings → Notification Targets.
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            {notifTargets.map((t) => (
+              <label key={t.id} className={s.toggleRow}>
+                <input
+                  type="checkbox"
+                  checked={selectedTargets.includes(t.id)}
+                  disabled={notifSaving}
+                  onChange={() => void handleTargetToggle(t.id)}
+                />
+                <div>
+                  <div className={s.toggleTitle}>{t.name ?? t.id}</div>
+                  <div className={s.toggleSub}>{t.type} — {t.id}</div>
+                </div>
+              </label>
+            ))}
+          </div>
+        )}
+        {flash && <span className={s.successFlash}>{flash}</span>}
+      </div>
+
+      {/* ── Filtering & heuristics ───────────────────────── */}
+      <h2 className={s.groupHeading}>Filtering &amp; heuristics</h2>
+      <p className={s.groupHelp}>
+        Heuristic rules that decide what counts as noise or as a real
+        error. Affect what shows up on Home; alert pipeline picks them
+        up at next deploy.
+      </p>
+
+      <div id="noise-filters" className={s.card}>
         <h2 className={s.sectionTitle}>Noise filters</h2>
         <p className={s.sectionHelp}>
           Heuristics that keep streaming / idle-wait traces from distorting
@@ -299,7 +469,7 @@ export default function SettingsPage() {
         </label>
       </div>
 
-      <div className={s.card}>
+      <div id="error-filtering" className={s.card}>
         <h2 className={s.sectionTitle}>Error filtering</h2>
         <p className={s.sectionHelp}>
           Rules that decide which error spans the Home "Error classes" panel
@@ -339,8 +509,27 @@ export default function SettingsPage() {
         })}
       </div>
 
-      <div className={s.card}>
-        <h2 className={s.sectionTitle}>Trace originators</h2>
+      {/* ── Diagnostics ──────────────────────────────────── */}
+      <h2 className={s.groupHeading}>Diagnostics</h2>
+      <p className={s.groupHelp}>
+        Read-only audit views. Operators rarely need these — the
+        section is collapsed by default; expand on demand.
+      </p>
+
+      <div id="originators" className={s.card}>
+        <button
+          type="button"
+          className={s.diagnosticToggle}
+          onClick={() => setOriginatorsOpen((o) => !o)}
+          aria-expanded={originatorsOpen}
+        >
+          <span className={s.sectionTitle}>Trace originators</span>
+          <span className={s.diagnosticChevron} aria-hidden>
+            {originatorsOpen ? '▾' : '▸'}
+          </span>
+        </button>
+        {originatorsOpen && (
+          <>
         <p className={s.sectionHelp}>
           Auto-detected from each captured trace's root span by the
           <code> criblapm__trace_originators </code> scheduled search.
@@ -390,109 +579,12 @@ export default function SettingsPage() {
             </tbody>
           </table>
         )}
-      </div>
-
-      <div className={s.card}>
-        <h2 className={s.sectionTitle}>Detection cadence</h2>
-        <p className={s.sectionHelp}>
-          How often scheduled searches run to refresh the Home page panels
-          and the Detected Issues alerts. Lower values detect problems faster
-          but use more Cribl Search worker time.
-        </p>
-
-        <div className={s.currentRow}>
-          <span className={s.currentLabel}>Current</span>
-          <span className={s.currentValue}>{cadenceInfo?.label ?? currentCadence}</span>
-          <span className={s.cadenceLag}>
-            Detection lag: <strong>{cadenceInfo?.lagLabel ?? '~5 minutes'}</strong>
-          </span>
-        </div>
-
-        <div className={s.field}>
-          <label className={s.label} htmlFor="cadence-select">
-            Refresh interval
-          </label>
-          <select
-            id="cadence-select"
-            className={s.input}
-            value={currentCadence}
-            onChange={(e) => void handleCadenceChange(e.target.value as CadenceOption)}
-            disabled={cadenceSaving}
-          >
-            {CADENCE_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label} — detection lag {opt.lagLabel}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        {flash && <span className={s.successFlash}>{flash}</span>}
-      </div>
-
-      <div className={s.card}>
-        <h2 className={s.sectionTitle}>Alert notification targets</h2>
-        <p className={s.sectionHelp}>
-          Auto-detected issues will send notifications to the selected targets
-          when they fire and when they resolve. Select one or more targets below.
-          Targets are configured in Cribl under Notification Targets.
-        </p>
-
-        {notifTargets.length === 0 ? (
-          <div className={s.fieldHelp}>
-            No notification targets configured in this workspace.
-            Configure them in Cribl under Settings → Notification Targets.
-          </div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-            {notifTargets.map((t) => (
-              <label key={t.id} className={s.toggleRow}>
-                <input
-                  type="checkbox"
-                  checked={selectedTargets.includes(t.id)}
-                  disabled={notifSaving}
-                  onChange={() => void handleTargetToggle(t.id)}
-                />
-                <div>
-                  <div className={s.toggleTitle}>{t.name ?? t.id}</div>
-                  <div className={s.toggleSub}>{t.type} — {t.id}</div>
-                </div>
-              </label>
-            ))}
-          </div>
+          </>
         )}
-        {flash && <span className={s.successFlash}>{flash}</span>}
       </div>
 
-      <ProvisioningPanel
-        config={{
-          prefix: CRIBLAPM_PREFIX,
-          plan: getProvisioningPlan,
-          seedLookups: SEED_LOOKUPS,
-        }}
-        helpText={
-          <>
-            Cribl APM caches its expensive panel queries (Home catalog,
-            sparklines, slow trace classes, error classes, dependency graph,
-            latency baselines) as scheduled Cribl Saved Searches that run
-            every few minutes. Pages then read the cached rows via{' '}
-            <code>$vt_results</code> / lookup joins, which is ~10× faster
-            than running the underlying queries live on every load. Re-run
-            the preview after changing the <strong>Dataset</strong> or{' '}
-            <strong>Noise filters</strong> setting so the cached queries
-            pick up the new values.
-          </>
-        }
-        dangerHelpText={
-          <>
-            Deletes every <code>criblapm__*</code> saved search from the
-            workspace. Page loads revert to live queries (slower). Use
-            before reinstalling the pack or to fully reset state.
-          </>
-        }
-      />
-
-      <DatasetProvisioningPanel />
+        </div>{/* contentCol */}
+      </div>{/* layout */}
     </div>
   );
 }

@@ -134,56 +134,45 @@ letter and never got a query through.
 storage backend, or building an in-app query cache. The fix is
 within Cribl's existing primitives.
 
-### 2. Faceted trace search
-
-The current Search form is fixed-shape. Every commercial APM lets
-users query on arbitrary attributes with autocomplete and facets.
-
-- Typed filter builder: attribute name autocomplete → operator → value
-- Multi-condition AND/OR with grouping
-- Attribute value facets with counts, click to filter
-- Cardinality-aware autocomplete
-- "Edit as KQL" escape hatch for power users
-
-### 3. User-created alerts + notification dispatch
+### 2. User-created alerts + notification dispatch
 
 Phase 2 of alerting: "Create alert" button that persists a threshold
 as a Cribl saved search with notification targets. Full design in
 [`docs/research/alerting-design.md`](docs/research/alerting-design.md).
 
-### 4. SLO budgets
+### 3. SLO budgets
 
 Thin layer on top of alerts. SLO = saved search tracking
 (success / total) over a 28-day window, plus budget burn rate
 alerts at 1h / 6h / 24h windows.
 
-### 5. Dashboards (via Cribl Saved Searches)
+### 4. Dashboards (via Cribl Saved Searches)
 
 User-created dashboards composing multiple saved views as widgets.
 "Save this view" button on Traces / Logs / Metrics / ServiceDetail.
 
-### 6. Flame graph + critical path on Trace detail
+### 5. Flame graph + critical path on Trace detail
 
 - Flame graph / icicle chart for self-time visualization
 - Critical-path highlighting (spans that drove end-to-end duration)
 - Latency histogram per operation
 
-### 7. Service catalog / ownership
+### 6. Service catalog / ownership
 
 Tag services with team, oncall, runbook URL, repository link.
 Route alerts by ownership. Backstage-style but lightweight.
 
-### 8. Database query performance
+### 7. Database query performance
 
 Top slow queries, fingerprints, execution plans. Linked to traces
 via `db.statement` / `db.system`.
 
-### 9. Live tail
+### 8. Live tail
 
 Streaming logs and spans as they arrive. "Tail" button on the
 Logs page.
 
-### 10. Leak-fingerprint detection — hardening
+### 9. Leak-fingerprint detection — hardening
 
 The 2026-05-12 session shipped the architecture for detecting smooth-
 climb / memory-leak / cardinality-leak failures that the named flagd
@@ -255,7 +244,7 @@ Additional polish that didn't land in the foundation commits:
   value (op-baselines is hourly already; the per-5-min cadence on
   several panel caches is probably aggressive). Audit + reduce.
 
-### 11. Universal data mapping (schema-agnostic APM)
+### 10. Universal data mapping (schema-agnostic APM)
 
 The APM currently depends on OpenTelemetry's field naming conventions
 (`resource.attributes['service.name']`, `status.code`, `end_time_unix_nano`, etc.).
@@ -289,7 +278,7 @@ designed carefully and implemented incrementally — start with the
 mapping config UI + one query builder, validate the abstraction,
 then roll out to all queries.
 
-### 12. Background-failure / synthetic-noise filtering
+### 11. Background-failure / synthetic-noise filtering
 
 Real production traffic has a *baseline* of "errors" that aren't
 real problems. The OTel demo's load-generator deliberately fires
@@ -335,58 +324,6 @@ Filed as a roadmap item rather than shipped: it's blocking a
 cleaner "investigation is done" stopping rule but the design
 space is large enough that we need to think through approach
 before committing to one.
-
-### 13. Settings page cleanup
-
-The page has grown to 8 sections (~500 lines of JSX) without an
-information-architecture pass. The current order is roughly the
-chronological order each section landed in, not a mental model
-the operator would arrive with. Concrete symptoms:
-
-- **First-time setup actions are buried at the bottom.** The two
-  things a new user MUST do (run the saved-search provisioner,
-  run the dataset-acceleration provisioner) sit below five
-  preference / tuning sections. Most users won't scroll that far
-  on first visit.
-- **No section nav.** A single long scroll. There's no anchor
-  index or sticky sub-nav to jump between "Filtering", "Cadence",
-  "Notifications", etc.
-- **Diagnostic content is mixed with configuration.** The Trace
-  originators section is essentially a read-only audit table —
-  useful for verifying the originator classifier's output, but
-  it's not "settings" in the action-oriented sense the rest of
-  the page is. Most operators won't ever interact with it.
-- **Related sections aren't grouped.** Noise filters (stream
-  filter on/off) and Error filtering rules both shape what shows
-  up as an error, but they're separated by the Dataset selector.
-
-Proposed pass (no scope changes — pure rearrangement + visual
-polish):
-
-1. **Group by purpose**, with section headers framing each group:
-   - **Setup** (first-time install actions): Provisioning,
-     Dataset acceleration.
-   - **Workspace** (frequently adjusted): Dataset selector,
-     Detection cadence, Notification targets.
-   - **Filtering & heuristics** (tune what's shown): Noise
-     filters, Error filtering rules.
-   - **Diagnostics** (read-only audit data): Trace originators,
-     plus any future audit views.
-2. **Add a sticky left-rail or top-bar section nav** so each
-   group is one click away. The current layout makes the page
-   feel longer than it is.
-3. **Collapse the diagnostic section by default.** Most operators
-   never need to look at Trace originators; expanding on demand
-   keeps the page lean.
-4. **Surface "what needs my attention"** at the top — same
-   information the in-app banners surface (unprovisioned saved
-   searches, missing dataset acceleration), but as a "Setup
-   status" card with checkmarks. Replaces the implicit "scroll to
-   bottom and check the panel" workflow.
-
-This is pure UX polish — no new features, no schema work, no
-query changes. One focused PR. Skill required is component
-restructuring + a small amount of CSS work; no API touches.
 
 ### Blocked on Cribl
 
@@ -468,6 +405,70 @@ restructuring + a small amount of CSS work; no API touches.
 
 Items below shipped and are kept for historical reference. See git
 log and linked PRs for implementation details.
+
+### Faceted trace search + Spotlight (v0.9.0) — DONE
+
+PRs #46–#55. The Search page got the typed filter builder, per-
+attribute value autocomplete, and a side rail that introduces a new
+investigation primitive — **Spotlight**, the Honeycomb-BubbleUp
+equivalent that ranks attributes by how their values partition the
+selection (typically "errors") from the baseline. Spotlight is
+embedded on the Errors page (per-error-class expansion) and on
+Service Detail (service-level + per-operation), so the same primitive
+is one click away from anywhere the user notices something wrong.
+
+The final design (after a hard four-iteration walk: small-multiples
+histograms, readable-cards, scoped baseline, per-value rate bars)
+landed on the same primitive the Operations table uses — one bar per
+value, width = error rate. Same visual language across the app.
+
+What shipped:
+
+- **Typed filter builder** (`<FilterBuilder>`) — attribute name +
+  operator + value triples, ≠ / contains_cs / numeric ops with
+  toreal() coercion, per-attribute value autocomplete sourced from
+  the live facet distribution. Replaces the SearchForm "tags"
+  free-text input.
+- **Facets panel** — top values per attribute over the current
+  filter, click-to-add to filters.
+- **Spotlight engine** (`computeSpotlight`) — per-value selection
+  rate, attribute scoring by `max(|rate - overall|) * log1p(total)`
+  (volume-weighted L∞), variance-based filtering of uniform
+  attributes, tautology-aware attribute curation (response-side
+  status codes excluded).
+- **`<SpotlightSection>`** — embeddable rate-bar view with optional
+  `scopeKql` so embedded surfaces compare "errors of this
+  service/op" against "healthy of the same service/op" rather than
+  against the contaminating whole-window baseline.
+- **KQL escape hatch** (`<KqlEditor>`) — composed via `and` with
+  the typed predicate; Ctrl/⌘+Enter applies.
+- **Streaming queries** — `getFacetDistribution` and
+  `getSpotlightDiff` cap parallelism at 4 (cluster's max-20 job
+  ceiling) and stream per-attribute results so the panel populates
+  progressively instead of stalling on the slowest query.
+
+Driven by extensive manual validation against the OTel demo
+scenarios (`paymentFailure 50%` — clean uniform random failure;
+`productCatalogFailure on` — sharp per-input correlation via
+`app.product.id = OLJCESPC7Z`). Multiple visual iterations were
+discarded after live feedback: the share-differential paradigm
+(sel/base/diff jargon) and the small-multiples chart-only view both
+proved unreadable for a novice; the final rate-bar layout was
+unanimous.
+
+Session logs: `docs/sessions/2026-05-28-faceted-nav.md` and
+sibling files in the same directory for the iteration history.
+
+### Settings page reorganization (v0.9.0) — DONE
+
+PR #56. Pure UX rearrangement of the Settings page. Setup status
+card at the top with live `planOnly()` + `getDatasetStatus()`
+checks; two-column layout with sticky section nav (IntersectionObserver-
+driven active-link highlight); cards grouped into Setup / Workspace /
+Filtering & heuristics / Diagnostics. Setup panels moved from the
+bottom of the page to the top of the Setup group. Trace originators
+collapsed by default. Session log:
+`docs/sessions/2026-05-29-settings-cleanup.md`.
 
 ### Navigation overhaul + focused views (v0.7.0) — DONE
 
