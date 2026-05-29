@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import StatusBanner from '../components/StatusBanner';
 import ProvisioningPanel from '@cribl/app-utils/provisioning-panel';
+import DatasetProvisioningPanel from '../components/DatasetProvisioningPanel';
 import { loadAppSettings, saveAppSettings } from '../api/appSettings';
 import { listNotificationTargets, type NotificationTarget } from '../api/notificationTargets';
 import { setCurrentDataset } from '../api/dataset';
@@ -490,6 +491,8 @@ export default function SettingsPage() {
           </>
         }
       />
+
+      <DatasetProvisioningPanel />
     </div>
   );
 }
