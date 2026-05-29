@@ -13,14 +13,22 @@ import {
 } from '../queries';
 
 describe('SPOTLIGHT_ATTRIBUTES', () => {
-  it('keeps both modern + legacy http status semconv paths', () => {
-    // The OTel demo's services span SDK versions and use
-    // http.response.status_code AND http.status_code on different
-    // services. The facet panel client-side dedupes empty entries
-    // so including both is safe; missing one loses signal on
-    // whichever service uses that one.
-    expect(SPOTLIGHT_ATTRIBUTES).toContain('http.response.status_code');
-    expect(SPOTLIGHT_ATTRIBUTES).toContain('http.status_code');
+  it('keeps the request-shape http attributes', () => {
+    // HTTP request method + route describe what the caller asked for —
+    // they partition errors by request shape, not by response code.
+    expect(SPOTLIGHT_ATTRIBUTES).toContain('http.request.method');
+    expect(SPOTLIGHT_ATTRIBUTES).toContain('http.route');
+  });
+
+  it('excludes response-side status attributes (tautological with error selection)', () => {
+    // status codes correlate 1:1 with "is this an error" and just
+    // produce a 100% bar without surfacing actionable cause.
+    expect(SPOTLIGHT_ATTRIBUTES).not.toContain('http.response.status_code');
+    expect(SPOTLIGHT_ATTRIBUTES).not.toContain('http.status_code');
+    expect(SPOTLIGHT_ATTRIBUTES).not.toContain('rpc.grpc.status_code');
+    expect(SPOTLIGHT_ATTRIBUTES).not.toContain('response_flags');
+    expect(SPOTLIGHT_ATTRIBUTES).not.toContain('error.type');
+    expect(SPOTLIGHT_ATTRIBUTES).not.toContain('exception.type');
   });
 
   it('keeps the Spotlight parallel-query fan-out reasonable', () => {
@@ -63,6 +71,15 @@ describe('attrValueDistribution', () => {
   it('projects exactly the expected columns for the wrapper', () => {
     const q = attrValueDistribution('http.status_code', '');
     expect(q).toContain('| project attr_name, attr_value, n');
+  });
+
+  it('resolves top-level span columns (name, kind) as bare columns', () => {
+    expect(attrValueDistribution('name', '')).toContain(
+      `attr_value=tostring(name)`,
+    );
+    expect(attrValueDistribution('kind', '')).toContain(
+      `attr_value=tostring(kind)`,
+    );
   });
 });
 

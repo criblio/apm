@@ -1,19 +1,19 @@
 /*
- * SpotlightPanel — small-multiples grid.
+ * SpotlightPanel — one attribute per card, one value per row.
  *
- * Each attribute is one cell: header row (name + score) on top of a
- * mini-histogram. Click the header to expand a per-value detail list
- * inline. Cells are stacked in a single column to keep the rail
- * narrow, but they're individually compact (~80px tall collapsed).
+ * Each row's bar width IS the selection rate (e.g. error rate) for
+ * that value. High variance across rows = strong signal — the user
+ * sees instantly which values dominate the selection vs which don't.
  *
- * Replaces the old card-per-attribute design which ate ~200px per
- * attribute. Same data, ~3× shorter panel.
+ * Same primitive as the Operations table on Service Detail: a single
+ * percentage per row that says "X% of these are errors." Generalized
+ * to every attribute Spotlight measures.
  */
 
 .panel {
   display: flex;
   flex-direction: column;
-  gap: var(--cds-space-sm);
+  gap: var(--cds-space-md);
 }
 
 .placeholder {
@@ -21,14 +21,14 @@
   font-size: var(--cds-font-size-sm);
   color: var(--cds-color-fg-muted);
   text-align: center;
-  line-height: 1.4;
+  line-height: 1.5;
 }
 
 .caption {
   margin: 0;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--cds-color-fg-muted);
-  line-height: 1.4;
+  line-height: 1.5;
 }
 
 .grid {
@@ -37,159 +37,170 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--cds-space-sm);
 }
 
 .cell {
   display: flex;
   flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
   background: var(--cds-color-bg);
   border: 1px solid var(--cds-color-border-subtle);
-  border-radius: var(--cds-radius-sm);
-  overflow: visible;
-  transition: border-color var(--cds-transition-fast),
-    background var(--cds-transition-fast);
-}
-.cell:hover {
-  border-color: var(--cds-color-border);
-}
-
-/* The clickable surface wrapper covers the header + chart so clicks
- * anywhere in the cell toggle expansion. The histogram's hover
- * handlers only update local tooltip state — they don't intercept
- * clicks. */
-.cellSurface {
-  padding: 6px 8px;
-  cursor: pointer;
-  outline: none;
-  border-radius: var(--cds-radius-sm);
-}
-.cellSurface:hover .attrName,
-.cellSurfaceOpen .attrName {
-  color: var(--cds-color-accent);
-}
-.cellSurface:focus-visible {
-  box-shadow: 0 0 0 2px var(--cds-color-accent-subtle);
-}
-.cellSurfaceOpen {
-  background: var(--cds-color-bg-muted);
+  border-radius: var(--cds-radius-md);
 }
 
 .cellHeader {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 6px;
-  margin-bottom: 4px;
+  gap: 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--cds-color-border-subtle);
 }
-
 .attrName {
   font-family: var(--cds-font-family-mono);
-  font-size: 11px;
+  font-size: 13px;
   font-weight: var(--cds-font-weight-semibold);
   color: var(--cds-color-fg);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  word-break: break-all;
   min-width: 0;
-  transition: color var(--cds-transition-fast);
+  flex: 1 1 auto;
 }
-.score {
-  font-family: var(--cds-font-family-mono);
-  font-size: 10px;
-  color: var(--cds-color-fg-subtle);
+.avg {
+  font-size: 11px;
+  color: var(--cds-color-fg-muted);
   flex-shrink: 0;
+  white-space: nowrap;
 }
 
-.detailList {
+.valueList {
   list-style: none;
   margin: 0;
-  padding: 6px 8px 8px;
+  padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 1px;
-  border-top: 1px dashed var(--cds-color-border-subtle);
+  gap: 2px;
 }
-.detailRow {
-  display: flex;
-}
-.detailBtn {
+
+/*
+ * Per-value row: [ label  |  bar  |  rate  |  counts  |  Search → ]
+ *
+ * Two-row grid for compact width: row 1 has label / bar / rate / btn,
+ * row 2 spans the counts under everything to keep the bar visible.
+ */
+.valueRow {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  gap: 8px;
+  grid-template-columns: minmax(80px, 1fr) 2fr 44px auto;
+  grid-template-rows: auto auto;
+  grid-template-areas:
+    'label bar rate btn'
+    'counts counts counts btn';
   align-items: center;
-  width: 100%;
-  padding: 3px 4px;
-  background: transparent;
-  border: none;
+  gap: 4px 8px;
+  padding: 6px 8px;
   border-radius: var(--cds-radius-sm);
-  cursor: pointer;
-  text-align: left;
-  font-size: 11px;
-  transition: background var(--cds-transition-fast);
+  background: var(--cds-color-bg-subtle);
 }
-.detailBtn:hover {
+.row_high {
+  background: var(--cds-color-accent-subtle);
+}
+.row_low {
   background: var(--cds-color-bg-muted);
+  opacity: 0.85;
 }
-.detailValue {
+
+.valueLabel {
+  grid-area: label;
+  font-family: var(--cds-font-family-mono);
+  font-size: 12px;
   color: var(--cds-color-fg);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
 }
-.detailPct {
-  font-family: var(--cds-font-family-mono);
-  font-weight: var(--cds-font-weight-semibold);
-  color: var(--cds-color-fg);
-  min-width: 48px;
-  text-align: right;
-}
-.over .detailPct {
-  color: var(--cds-color-accent);
-}
-.under .detailPct {
-  color: var(--cds-color-fg-subtle);
-}
-.detailCounts {
-  display: flex;
-  gap: 6px;
-  font-family: var(--cds-font-family-mono);
-  font-size: 10px;
-  color: var(--cds-color-fg-subtle);
-}
-.detailSel::before {
-  content: '■ ';
-  color: var(--cds-color-accent);
-}
-.detailBase::before {
-  content: '■ ';
-  color: var(--cds-color-fg-subtle);
-  opacity: 0.5;
-}
 
-.legend {
-  display: flex;
-  gap: var(--cds-space-md);
-  padding: 4px 8px 0;
-  font-size: 10px;
-  color: var(--cds-color-fg-subtle);
+.rateTrack {
+  grid-area: bar;
+  height: 12px;
+  background: var(--cds-color-bg);
+  border: 1px solid var(--cds-color-border-subtle);
+  border-radius: 6px;
+  overflow: hidden;
+  min-width: 0;
 }
-.legendItem {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
+.rateFill {
+  height: 100%;
+  border-radius: 5px 0 0 5px;
+  transition: width var(--cds-transition-fast);
 }
-.legendSwatch {
-  display: inline-block;
-  width: 10px;
-  height: 6px;
-  border-radius: 1px;
-}
-.legendSwatchSel {
+.rateFill_high {
   background: var(--cds-color-accent);
 }
-.legendSwatchBase {
+.rateFill_low {
   background: var(--cds-color-fg-subtle);
-  opacity: 0.45;
+  opacity: 0.6;
+}
+.rateFill_flat {
+  background: var(--cds-color-fg-subtle);
+  opacity: 0.4;
+}
+
+.rateText {
+  grid-area: rate;
+  font-family: var(--cds-font-family-mono);
+  font-size: 12px;
+  font-weight: var(--cds-font-weight-semibold);
+  color: var(--cds-color-fg);
+  text-align: right;
+  white-space: nowrap;
+}
+.row_high .rateText {
+  color: var(--cds-color-accent);
+}
+.row_low .rateText {
+  color: var(--cds-color-fg-muted);
+}
+
+.counts {
+  grid-area: counts;
+  font-size: 10px;
+  font-family: var(--cds-font-family-mono);
+  color: var(--cds-color-fg-muted);
+  white-space: nowrap;
+}
+
+.searchBtn {
+  grid-area: btn;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: var(--cds-font-weight-medium);
+  color: var(--cds-color-accent);
+  background: transparent;
+  border: 1px solid var(--cds-color-accent);
+  border-radius: var(--cds-radius-sm);
+  cursor: pointer;
+  white-space: nowrap;
+  align-self: center;
+  transition: background var(--cds-transition-fast),
+    color var(--cds-transition-fast);
+}
+.searchBtn:hover {
+  background: var(--cds-color-accent);
+  color: var(--cds-color-primary-fg);
+}
+
+.toggle {
+  align-self: flex-start;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: var(--cds-font-weight-medium);
+  color: var(--cds-color-accent);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+.toggle:hover {
+  text-decoration: underline;
 }
