@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Fragment, useCallback, useEffect, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import TimeRangePicker from '../components/TimeRangePicker';
 import StatusBanner from '../components/StatusBanner';
 import InvestigateButton from '../components/InvestigateButton';
+import SpotlightSection from '../components/SpotlightSection';
 import { listErrorClasses } from '../api/search';
 import { listCachedErrorClasses } from '../api/panelCache';
 import { useStreamFilterEnabled } from '../hooks/useStreamFilter';
@@ -22,25 +23,45 @@ function fmtAgo(ms: number): string {
   return `${hr}h ago`;
 }
 
+/** KQL key for an error class — stable across renders for use as
+ *  the expanded-row tracker. */
+function errorKey(ec: ErrorClass): string {
+  return `${ec.service}::${ec.operation}::${ec.message}`;
+}
+
+/**
+ * Build the Spotlight selection KQL for one error class. Selection =
+ * spans on this service+operation with status_code == ERROR; baseline
+ * is the rest of the time window. We deliberately don't filter on
+ * message in the predicate because messages come from log bodies that
+ * the span attributes may not carry — adding the operation+service+
+ * error-status triple is enough to surface what's distinct about the
+ * failing calls.
+ */
+function spotlightSelectionFor(ec: ErrorClass): string {
+  const svc = ec.service.replace(/"/g, '\\"');
+  const op = ec.operation.replace(/"/g, '\\"');
+  return (
+    `tostring(resource.attributes['service.name'])=="${svc}"` +
+    ` and name=="${op}"` +
+    ` and tostring(status.code)=="2"`
+  );
+}
+
 export default function ErrorsPage() {
+  const navigate = useNavigate();
   const [range, setRange] = useRangeParam(DEFAULT_RANGE);
   const [errors, setErrors] = useState<ErrorClass[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState('');
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const streamFilterEnabled = useStreamFilterEnabled();
 
   const fetchErrors = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      // Cache-fast path on the default range. Reads pre-classified
-      // error spans from criblapm__home_error_spans $vt_results
-      // (populated every 5 min by the scheduled search), applies the
-      // same filter rules client-side, and returns the grouped
-      // classes. Falls through to the live query only when the
-      // cache is unpopulated (fresh install, scheduled search hasn't
-      // fired yet) or returns no rows.
       if (range === '-1h' && streamFilterEnabled) {
         const cached = await listCachedErrorClasses();
         if (cached) {
@@ -69,6 +90,30 @@ export default function ErrorsPage() {
 
   const totalErrors = errors.reduce((sum, e) => sum + e.count, 0);
 
+  function toggleExpanded(key: string) {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  /** Clicking a Spotlight value should take the user to the Search
+   *  page pre-seeded with the error context + the picked attribute,
+   *  so they can keep narrowing. */
+  function pickValue(ec: ErrorClass, attr: string, value: string) {
+    const params = new URLSearchParams();
+    params.set('service', ec.service);
+    params.set('operation', ec.operation);
+    params.append(
+      'f',
+      [attr, '=', value].map(encodeURIComponent).join(':'),
+    );
+    params.set('lookback', range);
+    navigate(`/traces?${params.toString()}`);
+  }
+
   return (
     <div className={s.page}>
       <div className={s.header}>
@@ -89,6 +134,14 @@ export default function ErrorsPage() {
           <TimeRangePicker value={range} onChange={setRange} />
         </div>
       </div>
+
+      <p className={s.howto}>
+        Click any row to expand <strong>Spotlight</strong> — the
+        attributes whose values are over- or under-represented in
+        this error class vs the rest of the time window. The
+        differential is the fastest way to answer{' '}
+        <em>"what's distinct about these failing spans?"</em>
+      </p>
 
       {error && <StatusBanner kind="error">{error}</StatusBanner>}
 
@@ -111,6 +164,7 @@ export default function ErrorsPage() {
           <table className={s.table}>
             <thead>
               <tr>
+                <th className={s.expandCell} />
                 <th>Error Group</th>
                 <th className={s.num}>Count</th>
                 <th>Last Seen</th>
@@ -119,47 +173,82 @@ export default function ErrorsPage() {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((ec, i) => (
-                <tr key={`${ec.service}-${ec.operation}-${ec.message}-${i}`}>
-                  <td>
-                    <div className={s.errorGroup}>
-                      <Link
-                        to={`/service/${encodeURIComponent(ec.service)}?range=${range}`}
-                        className={s.svcLink}
-                        style={{ color: serviceColor(ec.service) }}
-                      >
-                        {ec.service}
-                      </Link>
-                      <span className={s.opName}>{ec.operation}</span>
-                      <span className={s.errMsg}>{ec.message}</span>
-                    </div>
-                  </td>
-                  <td className={s.num}>
-                    <span className={s.countBadge}>{ec.count}</span>
-                  </td>
-                  <td className={s.lastSeen}>{fmtAgo(ec.lastSeenMs)}</td>
-                  <td>
-                    {ec.sampleTraceIDs[0] && (
-                      <Link to={`/trace/${ec.sampleTraceIDs[0]}`} className={s.traceLink}>
-                        {ec.sampleTraceIDs[0].slice(0, 12)}...
-                      </Link>
+              {filtered.map((ec, i) => {
+                const key = errorKey(ec);
+                const isOpen = expanded.has(key);
+                return (
+                  <Fragment key={`${key}-${i}`}>
+                    <tr
+                      className={`${s.errorRow} ${isOpen ? s.errorRowOpen : ''}`}
+                      onClick={() => toggleExpanded(key)}
+                    >
+                      <td className={s.expandCell}>
+                        <span
+                          className={`${s.chevron} ${isOpen ? s.chevronOpen : ''}`}
+                          aria-label={isOpen ? 'Collapse' : 'Expand'}
+                        >
+                          ▶
+                        </span>
+                      </td>
+                      <td>
+                        <div className={s.errorGroup}>
+                          <Link
+                            to={`/service/${encodeURIComponent(ec.service)}?range=${range}`}
+                            className={s.svcLink}
+                            style={{ color: serviceColor(ec.service) }}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {ec.service}
+                          </Link>
+                          <span className={s.opName}>{ec.operation}</span>
+                          <span className={s.errMsg}>{ec.message}</span>
+                        </div>
+                      </td>
+                      <td className={s.num}>
+                        <span className={s.countBadge}>{ec.count}</span>
+                      </td>
+                      <td className={s.lastSeen}>{fmtAgo(ec.lastSeenMs)}</td>
+                      <td>
+                        {ec.sampleTraceIDs[0] && (
+                          <Link
+                            to={`/trace/${ec.sampleTraceIDs[0]}`}
+                            className={s.traceLink}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {ec.sampleTraceIDs[0].slice(0, 12)}...
+                          </Link>
+                        )}
+                      </td>
+                      <td onClick={(e) => e.stopPropagation()}>
+                        <InvestigateButton
+                          seed={{
+                            question: `The ${ec.service} service has errors on ${ec.operation}: "${ec.message}". Investigate the root cause.`,
+                            service: ec.service,
+                            operation: ec.operation,
+                            knownSignals: [`Error: ${ec.message}`, `Count: ${ec.count}`, `Operation: ${ec.operation}`],
+                            earliest: range,
+                            latest: 'now',
+                          }}
+                          title={`Investigate ${ec.service} ${ec.operation}`}
+                        />
+                      </td>
+                    </tr>
+                    {isOpen && (
+                      <tr className={s.spotlightRow}>
+                        <td colSpan={6} className={s.spotlightCell}>
+                          <SpotlightSection
+                            selectionKql={spotlightSelectionFor(ec)}
+                            earliest={range}
+                            title={`Spotlight — what's distinct about errors on ${ec.service} / ${ec.operation}`}
+                            caption="Compared to the rest of the time window, these attributes have values that show up much more (or much less) in this error class. Click any value to open Search filtered to those spans."
+                            onPickValue={(attr, value) => pickValue(ec, attr, value)}
+                          />
+                        </td>
+                      </tr>
                     )}
-                  </td>
-                  <td>
-                    <InvestigateButton
-                      seed={{
-                        question: `The ${ec.service} service has errors on ${ec.operation}: "${ec.message}". Investigate the root cause.`,
-                        service: ec.service,
-                        operation: ec.operation,
-                        knownSignals: [`Error: ${ec.message}`, `Count: ${ec.count}`, `Operation: ${ec.operation}`],
-                        earliest: range,
-                        latest: 'now',
-                      }}
-                      title={`Investigate ${ec.service} ${ec.operation}`}
-                    />
-                  </td>
-                </tr>
-              ))}
+                  </Fragment>
+                );
+              })}
             </tbody>
           </table>
         </div>
