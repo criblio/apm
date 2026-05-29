@@ -1,0 +1,108 @@
+/*
+ * The FacetPanel lives in a right-hand drawer or below the filter
+ * builder. Each attribute is one card, with a list of value rows
+ * underneath. Bars under each row are proportional to the count.
+ */
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cds-space-md);
+}
+
+.placeholder {
+  padding: var(--cds-space-md);
+  font-size: var(--cds-font-size-sm);
+  color: var(--cds-color-fg-muted);
+  text-align: center;
+}
+
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: var(--cds-space-sm) var(--cds-space-md);
+  background: var(--cds-color-bg);
+  border: 1px solid var(--cds-color-border-subtle);
+  border-radius: var(--cds-radius-md);
+}
+
+.groupHeader {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--cds-space-sm);
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--cds-color-border-subtle);
+}
+.attrName {
+  font-size: var(--cds-font-size-sm);
+  font-weight: var(--cds-font-weight-semibold);
+  color: var(--cds-color-fg);
+  font-family: var(--cds-font-family-mono);
+  word-break: break-all;
+}
+.attrCount {
+  font-size: 10px;
+  color: var(--cds-color-fg-subtle);
+  white-space: nowrap;
+}
+
+.values {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.valueRow {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.valueBtn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--cds-space-sm);
+  width: 100%;
+  padding: 4px 6px;
+  background: transparent;
+  border: none;
+  border-radius: var(--cds-radius-sm);
+  text-align: left;
+  cursor: pointer;
+  z-index: 1;
+  transition: background var(--cds-transition-fast);
+}
+.valueBtn:hover {
+  background: var(--cds-color-bg-muted);
+}
+
+.valueLabel {
+  font-size: var(--cds-font-size-sm);
+  color: var(--cds-color-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.valueCount {
+  font-size: 11px;
+  font-family: var(--cds-font-family-mono);
+  color: var(--cds-color-fg-muted);
+}
+
+.bar {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 3px;
+  background: var(--cds-color-accent);
+  opacity: 0.6;
+  border-radius: 0 2px 2px 0;
+  z-index: 0;
+}
