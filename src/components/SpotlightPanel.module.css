@@ -1,0 +1,177 @@
+/*
+ * SpotlightPanel — pairs of SEL / BASE bars under each value row.
+ * The selection bar uses the accent color; baseline uses neutral.
+ * Over-represented rows are tinted slightly with the accent; under-
+ * represented rows are tinted muted, so a quick scan reveals "what's
+ * unusual" without reading every number.
+ */
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cds-space-md);
+}
+
+.placeholder {
+  padding: var(--cds-space-md);
+  font-size: var(--cds-font-size-sm);
+  color: var(--cds-color-fg-muted);
+  text-align: center;
+}
+
+.caption {
+  margin: 0 0 var(--cds-space-xs);
+  font-size: var(--cds-font-size-sm);
+  color: var(--cds-color-fg-muted);
+  line-height: 1.4;
+}
+
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: var(--cds-space-sm) var(--cds-space-md);
+  background: var(--cds-color-bg);
+  border: 1px solid var(--cds-color-border-subtle);
+  border-radius: var(--cds-radius-md);
+}
+
+.groupHeader {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--cds-space-sm);
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--cds-color-border-subtle);
+}
+.attrName {
+  font-size: var(--cds-font-size-sm);
+  font-weight: var(--cds-font-weight-semibold);
+  color: var(--cds-color-fg);
+  font-family: var(--cds-font-family-mono);
+  word-break: break-all;
+}
+.score {
+  font-size: 10px;
+  font-family: var(--cds-font-family-mono);
+  color: var(--cds-color-fg-subtle);
+  background: var(--cds-color-bg-muted);
+  padding: 1px 6px;
+  border-radius: var(--cds-radius-sm);
+}
+
+.values {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.valueRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 60px;
+  grid-template-rows: auto auto;
+  grid-template-areas:
+    'label bars'
+    'counts counts';
+  gap: 2px 8px;
+  padding: 4px 6px;
+  border-radius: var(--cds-radius-sm);
+  transition: background var(--cds-transition-fast);
+}
+.valueRow.over {
+  background: linear-gradient(
+    to right,
+    var(--cds-color-accent-subtle) 0%,
+    transparent 100%
+  );
+}
+.valueRow.under {
+  background: linear-gradient(
+    to right,
+    var(--cds-color-bg-muted) 0%,
+    transparent 100%
+  );
+}
+.valueRow:hover {
+  filter: brightness(0.98);
+}
+
+.valueBtn {
+  grid-area: label;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--cds-space-sm);
+  padding: 0;
+  background: transparent;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+  min-width: 0;
+}
+.valueLabel {
+  font-size: var(--cds-font-size-sm);
+  color: var(--cds-color-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.diffPct {
+  font-size: 11px;
+  font-family: var(--cds-font-family-mono);
+  font-weight: var(--cds-font-weight-semibold);
+  color: var(--cds-color-fg);
+}
+.over .diffPct {
+  color: var(--cds-color-accent);
+}
+.under .diffPct {
+  color: var(--cds-color-fg-subtle);
+}
+
+.bars {
+  grid-area: bars;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  justify-content: center;
+}
+.barTrack {
+  height: 4px;
+  background: var(--cds-color-bg-muted);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.barSel {
+  height: 100%;
+  background: var(--cds-color-accent);
+  border-radius: 2px;
+}
+.barBase {
+  height: 100%;
+  background: var(--cds-color-fg-subtle);
+  border-radius: 2px;
+  opacity: 0.5;
+}
+
+.counts {
+  grid-area: counts;
+  display: flex;
+  gap: var(--cds-space-sm);
+  font-size: 10px;
+  font-family: var(--cds-font-family-mono);
+  color: var(--cds-color-fg-subtle);
+}
+.countSel::before {
+  content: '■ ';
+  color: var(--cds-color-accent);
+}
+.countBase::before {
+  content: '■ ';
+  color: var(--cds-color-fg-subtle);
+  opacity: 0.5;
+}
