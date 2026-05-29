@@ -26,6 +26,39 @@ function spansBase(): string {
 }
 
 /**
+ * Field-access helpers — pick between the flat acceleration columns
+ * (when the dataset-ruleset + acceleratedFields are provisioned,
+ * see src/api/datasetProvisioner.ts) and the dotted-path fallbacks
+ * for unprovisioned installs.
+ *
+ * Both paths return values of the same shape, so callers can
+ * substitute the chosen expression into any predicate, projection,
+ * group-by, or extend without re-shaping the rest of the query.
+ *
+ * Default is the dotted path so unprovisioned installs keep
+ * working; callers that have already probed via featureDetect can
+ * opt into the flat form by passing `flatFields: true`.
+ */
+export interface QueryOpts {
+  /** When true, queries read top-level `service_name` / `status_code`
+   *  instead of the dotted nested paths. Caller is responsible for
+   *  having confirmed the fields are populated (see featureDetect). */
+  flatFields?: boolean;
+}
+
+function svcExpr(opts?: QueryOpts): string {
+  return opts?.flatFields
+    ? `service_name`
+    : `tostring(resource.attributes['service.name'])`;
+}
+
+function statusCodeExpr(opts?: QueryOpts): string {
+  return opts?.flatFields
+    ? `tostring(status_code)`
+    : `tostring(status.code)`;
+}
+
+/**
  * Shared KQL fragment that joins each span to its trace's root, looks
  * up the originator classification, and detects propagation. Output
  * columns added by this fragment, on top of whatever the caller
@@ -488,12 +521,16 @@ export function alertHistorySend(): string {
  * Callers typically pick a width that gives ~30–60 buckets across their
  * time range so the sparklines have enough resolution without being noisy.
  */
-export function serviceTimeSeries(binSeconds: number, service?: string): string {
+export function serviceTimeSeries(
+  binSeconds: number,
+  service?: string,
+  opts?: QueryOpts,
+): string {
   const svcFilter = service ? `| where svc=="${service.replace(/"/g, '\\"')}"` : '';
   return `${spansBase()}
-    | extend svc=tostring(resource.attributes['service.name']),
+    | extend svc=${svcExpr(opts)},
             dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
-            is_error=(tostring(status.code)=="2")
+            is_error=(${statusCodeExpr(opts)}=="2")
     ${svcFilter}
     ${streamFilterSpanKqlClause()}
     | summarize requests=count(),

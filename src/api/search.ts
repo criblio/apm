@@ -6,6 +6,7 @@ import { runQuery } from './cribl';
 import { listCachedMetricCatalog } from './panelCache';
 import { applyFilterRulesToRaw, DEFAULT_FILTER_RULES } from './errorFilter';
 import * as Q from './queries';
+import { flatFieldsAvailable } from './featureDetect';
 import { toJaegerTraces, summarizeTrace, toDependencyEdges, toMessagingEdges } from './transform';
 import type {
   TraceSummary,
@@ -189,6 +190,12 @@ export async function listServiceSummaries(
 
 /**
  * Fetch time-bucketed per-service aggregates.
+ *
+ * Reads the flat acceleration columns (service_name / status_code)
+ * when the dataset is provisioned (see datasetProvisioner.ts);
+ * falls back to dotted-path access otherwise. The featureDetect
+ * probe is cached, so this check is essentially free after first
+ * page load.
  */
 export async function getServiceTimeSeries(
   binSeconds: number,
@@ -196,8 +203,9 @@ export async function getServiceTimeSeries(
   earliest = '-1h',
   latest = 'now',
 ): Promise<ServiceBucket[]> {
+  const flatFields = await flatFieldsAvailable();
   const rows = await runQuery(
-    Q.serviceTimeSeries(binSeconds, service),
+    Q.serviceTimeSeries(binSeconds, service, { flatFields }),
     earliest,
     latest,
     10000,

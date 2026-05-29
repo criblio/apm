@@ -19,6 +19,10 @@ import {
   type PlanAction,
 } from '@cribl/app-utils/provisioner';
 import { reconcile, planOnly } from '../src/api/provisioner.js';
+import {
+  apply as applyDatasetProvisioning,
+  getStatus as getDatasetStatus,
+} from '../src/api/datasetProvisioner.js';
 import { setSearchCadence } from '@cribl/app-utils/cadence';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -92,6 +96,13 @@ async function main(): Promise<void> {
       console.log(`▶ Provision dry-run: ${actions.length} action(s)`);
       for (const a of actions) console.log(actionLabel(a));
     }
+    // Dataset acceleration dry-run
+    const status = await getDatasetStatus(http);
+    console.log('▶ Dataset acceleration:');
+    console.log(`   ruleset: ${status.ruleset.ok ? 'configured' : 'NOT configured'}`);
+    console.log(
+      `   acceleratedFields: ${status.acceleratedFields.ok ? 'all present' : `missing ${status.acceleratedFields.missing.join(', ')}`}`,
+    );
     return;
   }
 
@@ -112,6 +123,28 @@ async function main(): Promise<void> {
       process.exit(1);
     }
   }
+
+  // Reconcile dataset acceleration (ruleset + acceleratedFields).
+  // Independent of saved-search reconcile — runs even when the
+  // search reconcile was all noops.
+  const dsResult = await applyDatasetProvisioning(http);
+  const rulesetIcon =
+    dsResult.ruleset.action === 'noop'
+      ? '·'
+      : dsResult.ruleset.action === 'create'
+      ? '+'
+      : '~';
+  const fieldsIcon =
+    dsResult.acceleratedFields.action === 'noop'
+      ? '·'
+      : dsResult.acceleratedFields.action === 'create'
+      ? '+'
+      : '~';
+  console.log('▶ Dataset acceleration:');
+  console.log(`✓  ${rulesetIcon} ${dsResult.ruleset.action.padEnd(6)} dataset-ruleset.opentelemetry_demo`);
+  console.log(
+    `✓  ${fieldsIcon} ${dsResult.acceleratedFields.action.padEnd(6)} dataset.acceleratedFields${dsResult.acceleratedFields.added.length > 0 ? ` (added: ${dsResult.acceleratedFields.added.join(', ')})` : ''}`,
+  );
 }
 
 main().catch((err) => {
