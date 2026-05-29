@@ -81,10 +81,16 @@ test.beforeAll(() => {
 });
 
 test.describe('UI baseline timings', () => {
-  test.beforeEach((_, testInfo) => {
-    // Allow each test to run up to MARKER_TIMEOUT_MS + setup time.
-    testInfo.setTimeout(MARKER_TIMEOUT_MS + 60_000);
-  });
+  // Playwright requires the first argument of beforeEach to use an
+  // object-destructure pattern (it's the fixtures arg, even when
+  // unused). The no-empty-pattern lint rule is wrong for this case.
+  test.beforeEach(
+    // eslint-disable-next-line no-empty-pattern
+    ({}, testInfo) => {
+      // Allow each test to run up to MARKER_TIMEOUT_MS + setup time.
+      testInfo.setTimeout(MARKER_TIMEOUT_MS + 60_000);
+    },
+  );
 
   test('Home / Overview', async ({ page }) => {
     await measure(
