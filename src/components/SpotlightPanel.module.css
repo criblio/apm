@@ -1,19 +1,25 @@
 /*
- * SpotlightPanel — small-multiples grid.
+ * SpotlightPanel — each attribute is one card with:
+ *   1. Header row: attribute name + score chip
+ *   2. Headline sentence: TL;DR of the strongest single-value
+ *      differential, so the user can read the finding without
+ *      mentally translating the chart
+ *   3. Mini histogram: quick visual scan / hover detail
+ *   4. Inline value rows (top 3): the actual values + counts +
+ *      percentages, with a per-value "Search" button
+ *   5. "Show N more" toggle for the long tail
  *
- * Each attribute is one cell: header row (name + score) on top of a
- * mini-histogram. Click the header to expand a per-value detail list
- * inline. Cells are stacked in a single column to keep the rail
- * narrow, but they're individually compact (~80px tall collapsed).
- *
- * Replaces the old card-per-attribute design which ate ~200px per
- * attribute. Same data, ~3× shorter panel.
+ * The values are ALWAYS visible without clicking. The earlier
+ * chart-only design hid the substance behind interaction; users said
+ * they couldn't read it and didn't know what to do. This layout
+ * leads with words and numbers and treats the chart as a scanning
+ * aid, not the primary readout.
  */
 
 .panel {
   display: flex;
   flex-direction: column;
-  gap: var(--cds-space-sm);
+  gap: var(--cds-space-md);
 }
 
 .placeholder {
@@ -21,14 +27,14 @@
   font-size: var(--cds-font-size-sm);
   color: var(--cds-color-fg-muted);
   text-align: center;
-  line-height: 1.4;
+  line-height: 1.5;
 }
 
 .caption {
   margin: 0;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--cds-color-fg-muted);
-  line-height: 1.4;
+  line-height: 1.5;
 }
 
 .grid {
@@ -37,154 +43,200 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--cds-space-sm);
 }
 
 .cell {
   display: flex;
   flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
   background: var(--cds-color-bg);
   border: 1px solid var(--cds-color-border-subtle);
-  border-radius: var(--cds-radius-sm);
-  overflow: visible;
-  transition: border-color var(--cds-transition-fast),
-    background var(--cds-transition-fast);
-}
-.cell:hover {
-  border-color: var(--cds-color-border);
-}
-
-/* The clickable surface wrapper covers the header + chart so clicks
- * anywhere in the cell toggle expansion. The histogram's hover
- * handlers only update local tooltip state — they don't intercept
- * clicks. */
-.cellSurface {
-  padding: 6px 8px;
-  cursor: pointer;
-  outline: none;
-  border-radius: var(--cds-radius-sm);
-}
-.cellSurface:hover .attrName,
-.cellSurfaceOpen .attrName {
-  color: var(--cds-color-accent);
-}
-.cellSurface:focus-visible {
-  box-shadow: 0 0 0 2px var(--cds-color-accent-subtle);
-}
-.cellSurfaceOpen {
-  background: var(--cds-color-bg-muted);
+  border-radius: var(--cds-radius-md);
 }
 
 .cellHeader {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 6px;
-  margin-bottom: 4px;
+  gap: 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--cds-color-border-subtle);
 }
-
 .attrName {
   font-family: var(--cds-font-family-mono);
-  font-size: 11px;
+  font-size: 13px;
   font-weight: var(--cds-font-weight-semibold);
   color: var(--cds-color-fg);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  word-break: break-all;
+  flex: 1 1 auto;
   min-width: 0;
-  transition: color var(--cds-transition-fast);
 }
 .score {
   font-family: var(--cds-font-family-mono);
   font-size: 10px;
   color: var(--cds-color-fg-subtle);
+  background: var(--cds-color-bg-muted);
+  padding: 1px 6px;
+  border-radius: var(--cds-radius-sm);
+  white-space: nowrap;
   flex-shrink: 0;
 }
 
-.detailList {
+.headline {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--cds-color-fg);
+}
+.headline code {
+  font-family: var(--cds-font-family-mono);
+  background: var(--cds-color-bg-muted);
+  padding: 1px 4px;
+  border-radius: 2px;
+  word-break: break-all;
+}
+.headline strong {
+  color: var(--cds-color-accent);
+}
+
+.valueList {
   list-style: none;
   margin: 0;
-  padding: 6px 8px 8px;
+  padding: 0;
   display: flex;
   flex-direction: column;
   gap: 1px;
-  border-top: 1px dashed var(--cds-color-border-subtle);
 }
-.detailRow {
-  display: flex;
-}
-.detailBtn {
+
+.valueRow {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  width: 100%;
-  padding: 3px 4px;
-  background: transparent;
-  border: none;
+  gap: 8px;
+  padding: 6px 8px;
   border-radius: var(--cds-radius-sm);
-  cursor: pointer;
-  text-align: left;
-  font-size: 11px;
-  transition: background var(--cds-transition-fast);
+  background: var(--cds-color-bg-subtle);
 }
-.detailBtn:hover {
-  background: var(--cds-color-bg-muted);
+.valueRow.over {
+  border-left: 3px solid var(--cds-color-accent);
+  padding-left: 9px;
 }
-.detailValue {
+.valueRow.under {
+  border-left: 3px solid var(--cds-color-fg-subtle);
+  padding-left: 9px;
+}
+.valueRow.flat {
+  opacity: 0.7;
+}
+
+.valueMain {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  grid-column: 1 / 2;
+  min-width: 0;
+}
+.valueLabel {
+  font-family: var(--cds-font-family-mono);
+  font-size: 12px;
   color: var(--cds-color-fg);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
 }
-.detailPct {
+.valueDiff {
   font-family: var(--cds-font-family-mono);
+  font-size: 11px;
   font-weight: var(--cds-font-weight-semibold);
-  color: var(--cds-color-fg);
-  min-width: 48px;
-  text-align: right;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
-.over .detailPct {
+.over .valueDiff {
   color: var(--cds-color-accent);
 }
-.under .detailPct {
-  color: var(--cds-color-fg-subtle);
+.under .valueDiff {
+  color: var(--cds-color-fg-muted);
 }
-.detailCounts {
+
+.valueCounts {
   display: flex;
-  gap: 6px;
-  font-family: var(--cds-font-family-mono);
+  flex-direction: column;
+  gap: 1px;
   font-size: 10px;
-  color: var(--cds-color-fg-subtle);
+  font-family: var(--cds-font-family-mono);
+  color: var(--cds-color-fg-muted);
+  grid-column: 1 / 2;
 }
-.detailSel::before {
+.countSel::before {
   content: '■ ';
   color: var(--cds-color-accent);
 }
-.detailBase::before {
+.countBase::before {
   content: '■ ';
   color: var(--cds-color-fg-subtle);
-  opacity: 0.5;
+  opacity: 0.6;
+}
+
+.searchBtn {
+  grid-column: 2 / 3;
+  grid-row: 1 / span 2;
+  align-self: stretch;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: var(--cds-font-weight-medium);
+  color: var(--cds-color-accent);
+  background: transparent;
+  border: 1px solid var(--cds-color-accent);
+  border-radius: var(--cds-radius-sm);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--cds-transition-fast),
+    color var(--cds-transition-fast);
+}
+.searchBtn:hover {
+  background: var(--cds-color-accent);
+  color: var(--cds-color-primary-fg);
+}
+
+.toggleMore {
+  align-self: flex-start;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: var(--cds-font-weight-medium);
+  color: var(--cds-color-accent);
+  background: transparent;
+  border: none;
+  border-radius: var(--cds-radius-sm);
+  cursor: pointer;
+}
+.toggleMore:hover {
+  text-decoration: underline;
 }
 
 .legend {
   display: flex;
-  gap: var(--cds-space-md);
-  padding: 4px 8px 0;
-  font-size: 10px;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px 0;
+  font-size: 11px;
   color: var(--cds-color-fg-subtle);
+  line-height: 1.4;
 }
 .legendItem {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
 }
 .legendSwatch {
   display: inline-block;
-  width: 10px;
-  height: 6px;
+  width: 12px;
+  height: 8px;
   border-radius: 1px;
+  flex-shrink: 0;
 }
 .legendSwatchSel {
   background: var(--cds-color-accent);
