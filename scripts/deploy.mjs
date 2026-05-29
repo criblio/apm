@@ -7,8 +7,8 @@
 //
 //   1. Runs `npm run package` to build a fresh tgz
 //   2. Exchanges the client credentials for a Cribl Cloud bearer token
-//   3. PUT /api/v1/packs?filename=… (raw tgz body) → upload, returns source
-//   4. POST /api/v1/packs { source, force: true } → install / replace
+//   3. PUT /api/v1/apps?filename=… (raw tgz body) → upload, returns source
+//   4. POST /api/v1/apps { source, force: true } → install / replace
 //
 // Endpoint references: criblio/cribl-control-plane-sdk-typescript
 //   src/funcs/packsUpload.ts (PUT /packs)
@@ -99,7 +99,7 @@ async function getBearerToken({ tokenUrl, audience, clientId, clientSecret }) {
 }
 
 async function uploadPack({ baseUrl, token, filename, body }) {
-  const url = `${baseUrl}/api/v1/packs?filename=${encodeURIComponent(filename)}`;
+  const url = `${baseUrl}/api/v1/apps?filename=${encodeURIComponent(filename)}`;
   const resp = await fetch(url, {
     method: 'PUT',
     headers: {
@@ -128,7 +128,7 @@ async function uploadPack({ baseUrl, token, filename, body }) {
 }
 
 async function installPack({ baseUrl, token, source, displayName, version }) {
-  const url = `${baseUrl}/api/v1/packs`;
+  const url = `${baseUrl}/api/v1/apps`;
   const resp = await fetch(url, {
     method: 'POST',
     headers: {
