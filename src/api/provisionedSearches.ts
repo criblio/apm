@@ -267,6 +267,17 @@ export function getProvisioningPlan(): ProvisionedSearch[] {
       sampleRate: 1,
       schedule: { ...panelCadence },
     },
+    {
+      id: 'criblapm__error_propagation',
+      name: 'Cribl APM - error propagation rollup',
+      description:
+        'Cribl APM: per-(trace_id, parent_span_id) rollup of error-status spans with a non-empty parent. Used by errorClassificationJoins (via opts.cachedPropagation = true) to skip the 3rd full-dataset scan that the inline path requires. Output stays in $vt_results, read by UI callers of rawRecentErrorSpans / serviceSummary. See HEURISTICS.md §"Error propagation detection".',
+      query: Q.errorPropagationRollup(),
+      earliest: '-1h',
+      latest: 'now',
+      sampleRate: 1,
+      schedule: { ...panelCadence },
+    },
     // ── Alert pipeline: prev summary → evaluator → state export
     //
     // Three searches run in sequence each cadence cycle:

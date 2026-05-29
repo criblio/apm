@@ -182,7 +182,12 @@ export async function listServiceSummaries(
   service?: string,
 ): Promise<ServiceSummary[]> {
   const flatFields = await flatFieldsAvailable();
-  const rows = await runQuery(Q.serviceSummary(service, { flatFields }), earliest, latest, 500);
+  const rows = await runQuery(
+    Q.serviceSummary(service, { flatFields, cachedPropagation: true }),
+    earliest,
+    latest,
+    500,
+  );
   return rows.map((r) => {
     const requests = toNum(r.requests);
     const errors = toNum(r.errors);
@@ -447,7 +452,12 @@ export async function listErrorClasses(
   topClasses = 20,
 ): Promise<ErrorClass[]> {
   const flatFields = await flatFieldsAvailable();
-  const rows = await runQuery(Q.rawRecentErrorSpans(rawLimit, { flatFields }), earliest, latest, rawLimit);
+  const rows = await runQuery(
+    Q.rawRecentErrorSpans(rawLimit, { flatFields, cachedPropagation: true }),
+    earliest,
+    latest,
+    rawLimit,
+  );
   const { kept } = applyFilterRulesToRaw(rows, DEFAULT_FILTER_RULES);
   return groupErrorClasses(kept, topClasses);
 }
@@ -522,7 +532,12 @@ export async function listErrorClassesWithBreakdown(
   rules: import('./errorFilter').ErrorFilterRule[] = DEFAULT_FILTER_RULES,
 ): Promise<ErrorClassesBreakdown> {
   const flatFields = await flatFieldsAvailable();
-  const rows = await runQuery(Q.rawRecentErrorSpans(rawLimit, { flatFields }), earliest, latest, rawLimit);
+  const rows = await runQuery(
+    Q.rawRecentErrorSpans(rawLimit, { flatFields, cachedPropagation: true }),
+    earliest,
+    latest,
+    rawLimit,
+  );
   const { kept, droppedBy } = applyFilterRulesToRaw(rows, rules);
   return {
     classes: groupErrorClasses(kept, topClasses),

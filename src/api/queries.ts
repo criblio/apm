@@ -44,6 +44,22 @@ export interface QueryOpts {
    *  instead of the dotted nested paths. Caller is responsible for
    *  having confirmed the fields are populated (see featureDetect). */
   flatFields?: boolean;
+  /**
+   * When true, `errorClassificationJoins()` (and queries that
+   * transitively use it — \`rawRecentErrorSpans\`, \`serviceSummary\`)
+   * reads the propagation rollup from \`$vt_results\` of the
+   * \`criblapm__error_propagation\` scheduled search instead of
+   * computing it inline. Cuts one full-dataset scan out of the
+   * 3-scan join graph.
+   *
+   * UI callers should pass \`true\` — the staleness window of the
+   * scheduled search (~5 min) is well within the freshness budget
+   * for the Errors / Service Detail panels. Scheduled-search
+   * callers leave the default \`false\` to keep the inline path,
+   * avoiding a circular dependency on a search that runs on a
+   * different cadence.
+   */
+  cachedPropagation?: boolean;
 }
 
 function svcExpr(opts?: QueryOpts): string {
@@ -56,6 +72,26 @@ function statusCodeExpr(opts?: QueryOpts): string {
   return opts?.flatFields
     ? `tostring(status_code)`
     : `tostring(status.code)`;
+}
+
+/**
+ * Pushdown-friendly error predicate. Used in `| where` clauses
+ * placed BEFORE the per-row `extend` block — the engine then
+ * eliminates non-error spans using the indexed `status_code`
+ * column (when accelerated) before any per-row work happens. For
+ * a workspace with 1% error rate this is roughly a 100× reduction
+ * in the work done by downstream extends / projections.
+ *
+ * The flat form drops the `tostring()` wrapper because
+ * `status_code` is stored as a string in the accelerated column —
+ * leaving the predicate on the raw column lets Cribl push it
+ * down. The dotted form keeps `tostring()` because `status.code`
+ * is a nested-object access that needs coercion.
+ */
+function errorPredicate(opts?: QueryOpts): string {
+  return opts?.flatFields
+    ? `status_code == "2"`
+    : `tostring(status.code) == "2"`;
 }
 
 /**
@@ -80,7 +116,41 @@ function statusCodeExpr(opts?: QueryOpts): string {
  * heuristic flows to alerts and panel together. See
  * docs/research/error-filter-design.md + HEURISTICS.md.
  */
+/**
+ * The propagation half of errorClassificationJoins, as a standalone
+ * query: scans every span, identifies error-status spans with a
+ * non-empty parent, rolls up to (trace_id, child_parent) counts.
+ *
+ * Used by:
+ *   - The `criblapm__error_propagation` scheduled search (computes
+ *     the rollup, output lands in $vt_results for live consumers).
+ *   - errorClassificationJoins, conditionally, when the caller is
+ *     OK with the inline path. Most UI callers want the cached path
+ *     (read from $vt_results) instead — it's the same data without
+ *     the scan cost.
+ */
+export function errorPropagationRollup(opts?: QueryOpts): string {
+  // Predicate pushed before extend so the accelerated status_code
+  // column does the heavy filter, same as rawRecentErrorSpans.
+  return `${spansBase()}
+    | where ${errorPredicate(opts)}
+    | extend child_parent=tostring(parent_span_id)
+    | where isnotempty(child_parent)
+    | summarize n_error_children=count() by trace_id, child_parent`;
+}
+
 function errorClassificationJoins(opts?: QueryOpts): string {
+  const propagationJoin = opts?.cachedPropagation
+    ? `
+    | join kind=leftouter (
+        dataset="$vt_results"
+        | where jobName == "criblapm__error_propagation"
+        | project trace_id, child_parent, n_error_children
+      ) on trace_id, $left.sid == $right.child_parent`
+    : `
+    | join kind=leftouter (
+        ${errorPropagationRollup(opts)}
+      ) on trace_id, $left.sid == $right.child_parent`;
   return `
     | join kind=leftouter (
         ${spansBase()}
@@ -89,14 +159,7 @@ function errorClassificationJoins(opts?: QueryOpts): string {
         | project trace_id, root_svc
         | lookup criblapm_trace_originators on root_svc
       ) on trace_id
-    | extend trace_origin=coalesce(type, "unknown")
-    | join kind=leftouter (
-        ${spansBase()}
-        | extend is_error_c=(${statusCodeExpr(opts)}=="2"),
-                 child_parent=tostring(parent_span_id)
-        | where is_error_c and isnotempty(child_parent)
-        | summarize n_error_children=count() by trace_id, child_parent
-      ) on trace_id, $left.sid == $right.child_parent
+    | extend trace_origin=coalesce(type, "unknown")${propagationJoin}
     | extend has_error_child=isnotnull(n_error_children)`;
 }
 
@@ -273,15 +336,17 @@ export function traceSpans(traceIds: string[], opts?: QueryOpts): string {
  * <5% of spans) gets the same answer with a fraction of the work.
  */
 function filteredErrorsBranch(svcFilter: string, opts?: QueryOpts): string {
+  // Predicate pushed BEFORE the extend block — same rationale as
+  // rawRecentErrorSpans. The svc filter follows immediately so
+  // both pushdowns can fire on the indexed columns.
   return `${spansBase()}
+    | where ${errorPredicate(opts)}
     | extend svc=${svcExpr(opts)},
-             is_error=(${statusCodeExpr(opts)}=="2"),
              span_kind=tostring(kind),
              http_status=toint(attributes['http.response.status_code']),
              grpc_status=toint(attributes['rpc.grpc.status_code']),
              sid=tostring(span_id)
     ${svcFilter}
-    | where is_error
     ${errorClassificationJoins(opts)}
     | extend counts_as_error = not(${DEFAULT_FILTER_KQL})
     | where counts_as_error
@@ -773,15 +838,18 @@ export function rawSlowestTraces(limit: number = 500): string {
  * the Cribl KQL join-truncation behavior we hit during Phase 0.
  */
 export function rawRecentErrorSpans(limit: number = 300, opts?: QueryOpts): string {
+  // Predicate pushed BEFORE the extend block — the accelerated
+  // `status_code` column filters out ~99% of spans before any
+  // per-row work happens. The extend block then computes 7
+  // fields only on the error subset.
   return `${spansBase()}
+    | where ${errorPredicate(opts)}
     | extend svc=${svcExpr(opts)},
              span_kind=tostring(kind),
-             is_error=(${statusCodeExpr(opts)}=="2"),
              msg=tostring(status.message),
              http_status=toint(attributes['http.response.status_code']),
              grpc_status=toint(attributes['rpc.grpc.status_code']),
              sid=tostring(span_id)
-    | where is_error
     | sort by _time desc
     | limit ${limit}
     | project _time, svc, name, span_kind, http_status, grpc_status, msg, trace_id, sid
