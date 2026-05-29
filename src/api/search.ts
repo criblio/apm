@@ -31,13 +31,15 @@ import type {
 } from './types';
 
 export async function listServices(earliest = '-1h'): Promise<string[]> {
-  const rows = await runQuery(Q.services(), earliest, 'now', 500);
+  const flatFields = await flatFieldsAvailable();
+  const rows = await runQuery(Q.services({ flatFields }), earliest, 'now', 500);
   return rows.map((r) => String(r.svc)).filter(Boolean);
 }
 
 export async function listOperations(service: string, earliest = '-1h'): Promise<string[]> {
   if (!service) return [];
-  const rows = await runQuery(Q.operations(service), earliest, 'now', 1000);
+  const flatFields = await flatFieldsAvailable();
+  const rows = await runQuery(Q.operations(service, { flatFields }), earliest, 'now', 1000);
   return rows.map((r) => String(r.name)).filter(Boolean);
 }
 
@@ -58,7 +60,13 @@ export async function findTraces(
   earliest = '-1h',
   latest = 'now',
 ): Promise<SearchResult> {
-  const rootRows = await runQuery(Q.findTraces(params), earliest, latest, params.limit ?? 20);
+  const flatFields = await flatFieldsAvailable();
+  const rootRows = await runQuery(
+    Q.findTraces({ ...params, opts: { flatFields } }),
+    earliest,
+    latest,
+    params.limit ?? 20,
+  );
   const traceIds = rootRows.map((r) => String(r.trace_id)).filter(Boolean);
   if (traceIds.length === 0) {
     return { summaries: [], traces: new Map() };
@@ -71,7 +79,12 @@ export async function findTraces(
   // The stream filter only affects aggregate statistics (service
   // percentiles, top operations, dependency edges, slow-trace
   // rankings), not individual trace listings.
-  const spanRows = await runQuery(Q.traceSpans(traceIds), earliest, latest, 10000);
+  const spanRows = await runQuery(
+    Q.traceSpans(traceIds, { flatFields }),
+    earliest,
+    latest,
+    10000,
+  );
   const traces = toJaegerTraces(spanRows);
   const traceMap = new Map<string, JaegerTrace>();
   for (const t of traces) traceMap.set(t.traceID, t);
@@ -92,7 +105,8 @@ export async function getTrace(
   earliest = '-1h',
   latest = 'now',
 ): Promise<JaegerTrace | null> {
-  const rows = await runQuery(Q.traceSpans([traceId]), earliest, latest, 10000);
+  const flatFields = await flatFieldsAvailable();
+  const rows = await runQuery(Q.traceSpans([traceId], { flatFields }), earliest, latest, 10000);
   const traces = toJaegerTraces(rows);
   return traces[0] ?? null;
 }
@@ -115,9 +129,10 @@ export async function getDependencies(
   earliest = '-1h',
   latest = 'now',
 ): Promise<DependencyEdge[]> {
+  const flatFields = await flatFieldsAvailable();
   const [rpcRows, msgRows] = await Promise.all([
-    runQuery(Q.dependencies(), earliest, latest, 1000),
-    runQuery(Q.messagingDependencies(), earliest, latest, 1000).catch(() => []),
+    runQuery(Q.dependencies({ flatFields }), earliest, latest, 1000),
+    runQuery(Q.messagingDependencies({ flatFields }), earliest, latest, 1000).catch(() => []),
   ]);
   return [...toDependencyEdges(rpcRows), ...toMessagingEdges(msgRows)];
 }
@@ -166,7 +181,8 @@ export async function listServiceSummaries(
   latest = 'now',
   service?: string,
 ): Promise<ServiceSummary[]> {
-  const rows = await runQuery(Q.serviceSummary(service), earliest, latest, 500);
+  const flatFields = await flatFieldsAvailable();
+  const rows = await runQuery(Q.serviceSummary(service, { flatFields }), earliest, latest, 500);
   return rows.map((r) => {
     const requests = toNum(r.requests);
     const errors = toNum(r.errors);
@@ -235,8 +251,9 @@ export async function getServiceStatusCodeMix(
   earliest = '-1h',
   latest = 'now',
 ): Promise<StatusCodeMixBucket[]> {
+  const flatFields = await flatFieldsAvailable();
   const rows = await runQuery(
-    Q.serviceStatusCodeMix(binSeconds, service),
+    Q.serviceStatusCodeMix(binSeconds, service, { flatFields }),
     earliest,
     latest,
     10000,
@@ -260,7 +277,8 @@ export async function listOperationSummaries(
   earliest = '-1h',
   latest = 'now',
 ): Promise<OperationSummary[]> {
-  const rows = await runQuery(Q.serviceOperations(service), earliest, latest, 100);
+  const flatFields = await flatFieldsAvailable();
+  const rows = await runQuery(Q.serviceOperations(service, { flatFields }), earliest, latest, 100);
   return rows.map((r) => ({
     operation: String(r.name ?? 'unknown'),
     requests: toNum(r.requests),
@@ -288,7 +306,8 @@ export async function listPodUptime(
   earliest = '-30m',
   latest = 'now',
 ): Promise<PodUptime[]> {
-  const rows = await runQuery(Q.podUptime(service), earliest, latest, 50);
+  const flatFields = await flatFieldsAvailable();
+  const rows = await runQuery(Q.podUptime(service, { flatFields }), earliest, latest, 50);
   return rows.map((r) => ({
     service: String(r.svc ?? service),
     pod: String(r.pod ?? 'unknown'),
@@ -302,7 +321,8 @@ export async function listServiceInstances(
   earliest = '-1h',
   latest = 'now',
 ): Promise<InstanceSummary[]> {
-  const rows = await runQuery(Q.serviceInstances(service), earliest, latest, 100);
+  const flatFields = await flatFieldsAvailable();
+  const rows = await runQuery(Q.serviceInstances(service, { flatFields }), earliest, latest, 100);
   return rows.map((r) => ({
     instanceId: String(r.instance_id ?? 'unknown'),
     requests: toNum(r.requests),
@@ -320,7 +340,8 @@ export async function listSlowestTraces(
   earliest = '-1h',
   latest = 'now',
 ): Promise<TraceBrief[]> {
-  const rows = await runQuery(Q.slowestTraces(service), earliest, latest, 30);
+  const flatFields = await flatFieldsAvailable();
+  const rows = await runQuery(Q.slowestTraces(service, { flatFields }), earliest, latest, 30);
   return rows
     .map((r) => ({
       traceID: String(r.trace_id ?? ''),
@@ -335,7 +356,8 @@ export async function listRecentErrorTraces(
   earliest = '-1h',
   latest = 'now',
 ): Promise<TraceBrief[]> {
-  const rows = await runQuery(Q.recentErrorTraces(service), earliest, latest, 30);
+  const flatFields = await flatFieldsAvailable();
+  const rows = await runQuery(Q.recentErrorTraces(service, { flatFields }), earliest, latest, 30);
   return rows
     .map((r) => ({
       traceID: String(r.trace_id ?? ''),
@@ -424,7 +446,8 @@ export async function listErrorClasses(
   rawLimit = 300,
   topClasses = 20,
 ): Promise<ErrorClass[]> {
-  const rows = await runQuery(Q.rawRecentErrorSpans(rawLimit), earliest, latest, rawLimit);
+  const flatFields = await flatFieldsAvailable();
+  const rows = await runQuery(Q.rawRecentErrorSpans(rawLimit, { flatFields }), earliest, latest, rawLimit);
   const { kept } = applyFilterRulesToRaw(rows, DEFAULT_FILTER_RULES);
   return groupErrorClasses(kept, topClasses);
 }
@@ -498,7 +521,8 @@ export async function listErrorClassesWithBreakdown(
   topClasses = 20,
   rules: import('./errorFilter').ErrorFilterRule[] = DEFAULT_FILTER_RULES,
 ): Promise<ErrorClassesBreakdown> {
-  const rows = await runQuery(Q.rawRecentErrorSpans(rawLimit), earliest, latest, rawLimit);
+  const flatFields = await flatFieldsAvailable();
+  const rows = await runQuery(Q.rawRecentErrorSpans(rawLimit, { flatFields }), earliest, latest, rawLimit);
   const { kept, droppedBy } = applyFilterRulesToRaw(rows, rules);
   return {
     classes: groupErrorClasses(kept, topClasses),
