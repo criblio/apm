@@ -478,7 +478,16 @@ export function alertEvaluator(): string {
                (curr_requests == 0 and prev_requests >= 50)
                or (curr_err_pct >= 1)
                or (traffic_ratio <= 0.5 and prev_requests >= 50))
-    | extend alert_id=strcat("auto:", signal_type, ":", svc)
+    // alert_id is STABLE per service (doesn't include signal_type).
+    // Why: when a service recovers, signal_type rotates from
+    // "error_rate" → "none", so an signal_type-keyed alert_id
+    // would change too. The state export uses mode=overwrite, so
+    // the old "auto:error_rate:svc" row gets wiped before the
+    // state machine ever sees prev_status="firing" on the new
+    // "auto:none:svc" key — meaning the resolving→ok walk never
+    // fires, no "resolved" event is emitted, and the Alert Timeline
+    // shows the alert as "ongoing" forever. Stable key fixes this.
+    | extend alert_id=strcat("auto:health:", svc)
     | lookup criblapm_alert_states on alert_id
     | extend prev_status=iff(isnotnull(alert_status), tostring(alert_status), "ok"),
              prev_bad=iff(isnotnull(consecutive_bad), tolong(consecutive_bad), 0),
