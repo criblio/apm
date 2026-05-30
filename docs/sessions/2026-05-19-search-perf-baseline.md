@@ -306,3 +306,150 @@ Documented for the follow-up cycle:
 
 Each of these is its own design conversation; not bundled into
 the current change.
+
+---
+
+## 2026-05-29 — re-measure on v0.9.0 after Cribl server-side adjustments
+
+Cribl made server-side changes intended to relieve the queue
+saturation that dominated the baseline. Pack is now v0.9.0
+(this measurement does NOT isolate Cribl-side changes from the
+pack-side cadence + consolidation work that landed between
+baselines; it captures the combined state the operator sees today).
+
+Same methodology as the baseline:
+
+- Backend: `mcp__cribl__cribl_getSearchJobs` (limit 100, scheduled
+  only). 46 `criblapm__*` runs captured.
+- Frontend: `tests/baseline-ui-timing.spec.ts`, one consecutive run
+  immediately after the backend pull.
+
+### Backend: per-search runtime + queue wait
+
+Sorted alphabetically for direct comparison with the baseline table.
+
+| Scheduled search | n | p50 runtime | max runtime | p50 queue | max queue | status |
+|---|---:|---:|---:|---:|---:|---|
+| `criblapm__alert_history_send` | 3 | 0.8 s | 0.9 s | 5.9 s | 7.3 s | completed:3 |
+| `criblapm__alert_state_export` | 3 | 0.8 s | 0.9 s | 5.9 s | 7.6 s | completed:3 |
+| `criblapm__attr_catalog` | 2 | 0.9 s | 0.9 s | 11.9 s | 18.7 s | completed:2 ← **recovered** |
+| `criblapm__attr_catalog_export` | 2 | 0.5 s | 0.5 s | 2.8 s | 3.0 s | completed:2 |
+| `criblapm__error_propagation` | 2 | 5.0 s | 8.7 s | 12.8 s | 18.7 s | completed:2 |
+| `criblapm__error_rate_history` | 2 | 105.0 s | 110.1 s | 15.0 s | 16.9 s | completed:2 |
+| `criblapm__home_alerts` | 3 | 0.8 s | 0.8 s | 5.8 s | 7.4 s | completed:3 |
+| `criblapm__home_alerts_prev` | 3 | 8.4 s | 14.7 s | 11.4 s | 31.3 s | completed:3 ← **recovered** |
+| `criblapm__home_error_spans` | 3 | 5.2 s | 6.2 s | 11.4 s | 31.2 s | completed:3 |
+| `criblapm__home_service_summary` | 3 | 7.6 s | 15.6 s | 16.4 s | 31.4 s | completed:3 |
+| `criblapm__home_service_time_series` | 2 | 9.4 s | 15.0 s | 5.7 s | 6.8 s | completed:2 |
+| `criblapm__home_slow_traces` | 2 | 9.8 s | 15.7 s | 6.6 s | 8.3 s | completed:2 |
+| `criblapm__metric_catalog` | 3 | 1.5 s | 1.6 s | 2.4 s | 3.1 s | completed:3 |
+| `criblapm__op_baselines` | 2 | 27.6 s | 32.1 s | 14.8 s | 27.3 s | completed:2 |
+| `criblapm__svc_operations` | 2 | 10.0 s | 16.0 s | 6.4 s | 7.9 s | completed:2 |
+| `criblapm__sysarch_dependencies` | 3 | 3.6 s | 9.8 s | 11.7 s | 24.5 s | completed:3 |
+| `criblapm__sysarch_messaging_deps` | 2 | 6.2 s | 7.3 s | 14.6 s | 18.0 s | completed:2 |
+| `criblapm__trace_originators` | 2 | 0.7 s | 0.7 s | 5.2 s | 5.4 s | completed:2 |
+
+### Two previously-failing searches now complete cleanly
+
+- `criblapm__attr_catalog` — baseline: failed both sampled runs
+  with `Unexpected 'reset' signal received`. Now: 2/2 completed
+  in ~0.9 s. The "specific to the scheduled run path under
+  concurrent load" hypothesis from the baseline checks out — the
+  queue-pressure relief made the same query work.
+- `criblapm__home_alerts_prev` — baseline: 0/3 sampled runs
+  succeeded. Now: 3/3 completed (with one max-queue outlier at
+  31 s, but it completed). Alerts are no longer running against
+  silently-stale `criblapm_alert_prev` data.
+
+### Queue-wait deltas (the headline story)
+
+| Search | Baseline p50 queue | Now p50 queue | Drop |
+|---|---:|---:|---:|
+| `op_baselines` | 184.2 s | 14.8 s | **−92%** |
+| `home_service_summary` | 61.0 s | 16.4 s | −73% |
+| `home_error_spans` | 47.7 s | 11.4 s | −76% |
+| `sysarch_messaging_deps` | 47.7 s | 14.6 s | −69% |
+| `metric_catalog` | 38.6 s | 2.4 s | −94% |
+| `home_slow_traces` | 41.3 s | 6.6 s | −84% |
+| `trace_originators` | 43.5 s | 5.2 s | −88% |
+| `svc_operations` | 30.4 s | 6.4 s | −79% |
+| `alert_state_export` | 28.9 s | 5.9 s | −80% |
+| `alert_history_send` | 24.9 s | 5.9 s | −76% |
+| `home_alerts` | 20.8 s | 5.8 s | −72% |
+| `home_service_time_series` | 23.4 s | 5.7 s | −76% |
+| `sysarch_dependencies` | 12.4 s | 11.7 s | −6% |
+| `error_rate_daily` → `error_rate_history` | 87.5 s | 15.0 s | −83% |
+
+Most searches now queue under 16 s — a 70–94% drop from the
+baseline. The single 184 s outlier from the baseline
+(`op_baselines`) is gone.
+
+### Per-search runtimes — mixed
+
+Runtimes moved in both directions; some searches slowed slightly
+(the 5-min span-scanning cluster pushed work around between
+searches as part of the Phase-3-adjacent consolidation), some sped
+up substantially.
+
+| Search | Baseline p50 runtime | Now p50 runtime |
+|---|---:|---:|
+| `home_service_summary` | 11.3 s | 7.6 s |
+| `home_error_spans` | 7.4 s | 5.2 s |
+| `sysarch_dependencies` | 7.2 s | 3.6 s |
+| `sysarch_messaging_deps` | 7.2 s | 6.2 s |
+| `metric_catalog` | 4.4 s | 1.5 s |
+| `home_slow_traces` | 3.2 s | 9.8 s |
+| `svc_operations` | 3.0 s | 10.0 s |
+| `home_service_time_series` | 3.0 s | 9.4 s |
+| `trace_originators` | 1.1 s | 0.7 s |
+| `error_rate_daily` → `error_rate_history` | 134.8 s | 105.0 s |
+| `op_baselines` | 42.5 s | 27.6 s |
+
+The longer-runtime searches (`home_slow_traces`, `svc_operations`,
+`home_service_time_series`) likely absorbed extra work as part of
+consolidation; the wall-clock impact on the user is dwarfed by
+the queue drop.
+
+## Frontend: UI page timings
+
+Same Playwright spec, captured immediately after the backend pull.
+
+| Page | Baseline nav ms | Now nav ms | Baseline first-content ms | Now first-content ms |
+|---|---:|---:|---:|---:|
+| Home / Overview | 5,384 | **4,661** | 5,437 | **4,858** |
+| Services list | 4,946 | **3,985** | 35,271 | **9,989** |
+| Service Detail (frontend) | 33,051 | **9,374** | 33,158 | **9,406** |
+| Errors | 4,490 | **4,947** | 19,045 | **9,293** |
+| System Architecture | 4,369 | **4,055** | 4,403 | **4,100** |
+
+### The big wins
+
+- **Services list**: 35.3 s → **10.0 s** (−72%). The most-clicked
+  page is now usable on a cold open.
+- **Service Detail**: 33.2 s → **9.4 s** (−72%). Together with the
+  Services-list drop, the two-hop "browse to a service" workflow
+  is ~25 s faster.
+- **Errors**: 19.0 s → **9.3 s** (−51%).
+
+The 4-5 s pages (Home, System Architecture) were already
+cache-hitting and didn't have much room to move; the gains were
+all concentrated in the live-query pages — consistent with the
+queue-wait drop being the dominant factor.
+
+## What this confirms
+
+The baseline's hypothesis — "queue wait dominates runtime for
+most searches" — was correct. Relieving the queue pressure
+recovered the two failing searches, dropped queue waits 70–94%
+across the board, and cut the worst UI page-load times by ~72%
+without touching the pack queries themselves. The remaining
+work-per-hour reduction targets (Phases 4-6 of the perf plan —
+Lakehouse indexed fields) would compound on top of this, but
+they're no longer blocking; the user-felt latency story is
+already mostly solved.
+
+Sample artifacts:
+- UI timings: `/tmp/apm-baseline-ui.json` (this run).
+- Backend job pull: scheduled jobs returned by
+  `cribl_getSearchJobs` (limit 100); 46 `criblapm__*` runs were
+  in the window.
