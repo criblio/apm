@@ -486,19 +486,24 @@ export function alertEvaluator(): string {
              traffic_ratio=iff(prev_requests >= 50,
                                (curr_requests / 15.0) / (prev_requests / 60.0),
                                1.0)
-    // Min curr_requests floor on the error_rate clause: with the
-    // -15m window, very-low-traffic services (1-3 requests) would
-    // otherwise produce 33%-100% error rates from a single span and
-    // false-fire alerts. Require at least 5 spans before letting an
-    // error rate count.
+    // Two error_rate paths:
+    //   1. Rate-based: ≥1% error rate over ≥5 spans. The 5-span
+    //      floor prevents 1-error-of-1-span noise at -15m.
+    //   2. Absolute-count: ≥3 errors regardless of total volume.
+    //      Catches low-traffic services like product-reviews and
+    //      recommendation where the 5-span floor blocks legitimate
+    //      Bernoulli-rate failures. The 2026-05-31 eval kept these
+    //      services at <0.40 score until this path was added (1f).
     | extend signal_type=case(
                curr_requests == 0 and prev_requests >= 50, "silent",
                curr_err_pct >= 1 and curr_requests >= 5, "error_rate",
+               curr_errors >= 3, "error_rate",
                traffic_ratio <= 0.5 and prev_requests >= 50, "traffic_drop",
                "none"),
              is_bad=(
                (curr_requests == 0 and prev_requests >= 50)
                or (curr_err_pct >= 1 and curr_requests >= 5)
+               or (curr_errors >= 3)
                or (traffic_ratio <= 0.5 and prev_requests >= 50))
     // alert_id is STABLE per service (doesn't include signal_type).
     // Why: when a service recovers, signal_type rotates from
@@ -547,9 +552,14 @@ export function alertEvaluator(): string {
         | lookup criblapm_op_baselines on svc, op
         | extend prev_p95_us=iff(isnotnull(p95_us), toreal(p95_us), 0.0),
                  prev_op_requests=iff(isnotnull(requests), toreal(requests), 0.0)
+        // Lowered from 1s to 500ms absolute floor. Gradual drift
+        // scenarios like emailMemoryLeak couldn't cross the 1s
+        // threshold in 7 min of telemetry even at 5x baseline
+        // multiplier — the 2026-05-31 eval scored 0.20 on that
+        // scenario as a result. Item 1e in ROADMAP.
         | where isnotnull(prev_p95_us) and prev_p95_us > 0
                 and curr_p95_us >= prev_p95_us * 5
-                and curr_p95_us >= 1000000
+                and curr_p95_us >= 500000
                 and prev_op_requests >= 20
         | extend alert_id=strcat("auto:latency:", svc, ":", op),
                  signal_type="latency",
