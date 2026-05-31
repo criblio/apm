@@ -489,21 +489,24 @@ export function alertEvaluator(): string {
     // Two error_rate paths:
     //   1. Rate-based: ≥1% error rate over ≥5 spans. The 5-span
     //      floor prevents 1-error-of-1-span noise at -15m.
-    //   2. Absolute-count: ≥3 errors regardless of total volume.
-    //      Catches low-traffic services like product-reviews and
-    //      recommendation where the 5-span floor blocks legitimate
-    //      Bernoulli-rate failures. The 2026-05-31 eval kept these
-    //      services at <0.40 score until this path was added (1f).
+    //   2. Absolute-count from a clean baseline: ≥2 errors NOW
+    //      when the prev window had effectively zero. The ≥3 floor
+    //      from the third eval was still too high for ultra-low-
+    //      traffic services (product-reviews, recommendation) which
+    //      typically see 0-2 errors per 15m even when broken. The
+    //      prev_errors < 0.5 gate (was clean, now isn't) keeps
+    //      this from firing on services that always have a low
+    //      background error rate.
     | extend signal_type=case(
                curr_requests == 0 and prev_requests >= 50, "silent",
                curr_err_pct >= 1 and curr_requests >= 5, "error_rate",
-               curr_errors >= 3, "error_rate",
+               curr_errors >= 2 and prev_errors < 0.5, "error_rate",
                traffic_ratio <= 0.5 and prev_requests >= 50, "traffic_drop",
                "none"),
              is_bad=(
                (curr_requests == 0 and prev_requests >= 50)
                or (curr_err_pct >= 1 and curr_requests >= 5)
-               or (curr_errors >= 3)
+               or (curr_errors >= 2 and prev_errors < 0.5)
                or (traffic_ratio <= 0.5 and prev_requests >= 50))
     // alert_id is STABLE per service (doesn't include signal_type).
     // Why: when a service recovers, signal_type rotates from
@@ -552,14 +555,15 @@ export function alertEvaluator(): string {
         | lookup criblapm_op_baselines on svc, op
         | extend prev_p95_us=iff(isnotnull(p95_us), toreal(p95_us), 0.0),
                  prev_op_requests=iff(isnotnull(requests), toreal(requests), 0.0)
-        // Lowered from 1s to 500ms absolute floor. Gradual drift
-        // scenarios like emailMemoryLeak couldn't cross the 1s
-        // threshold in 7 min of telemetry even at 5x baseline
-        // multiplier — the 2026-05-31 eval scored 0.20 on that
-        // scenario as a result. Item 1e in ROADMAP.
+        // Thresholds tuned for gradual-drift scenarios. The
+        // 2026-05-31 third eval scored emailMemoryLeak at 0.30
+        // with 5x ratio + 500ms floor — drift over 7 min didn't
+        // get there. Loosened to 3x ratio + 250ms floor with a
+        // 20-span volume gate to keep the noise tolerable. Item
+        // 1e in ROADMAP.
         | where isnotnull(prev_p95_us) and prev_p95_us > 0
-                and curr_p95_us >= prev_p95_us * 5
-                and curr_p95_us >= 500000
+                and curr_p95_us >= prev_p95_us * 3
+                and curr_p95_us >= 250000
                 and prev_op_requests >= 20
         | extend alert_id=strcat("auto:latency:", svc, ":", op),
                  signal_type="latency",
