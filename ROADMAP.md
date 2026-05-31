@@ -158,6 +158,64 @@ Lower-priority cleanup:
   setup issue and we should mark the scenario "blocked on cluster
   config" rather than dock the score.
 
+#### 1e. Latency-branch detection for gradual-onset scenarios
+
+emailMemoryLeak in the 2026-05-31 re-run scored 0.20 — the
+latency-anomaly branch in `alertEvaluator()` requires
+`curr_p95_us >= 1000000` (≥1 second absolute) which gradual
+memory-leak drift may not reach in 7 minutes of telemetry, even
+when the multiplier ratio is already 5x baseline. Two fixes
+worth trying:
+
+1. **Lower the absolute floor to 500ms.** Trivially loosens
+   detection without breaking the 5x ratio.
+2. **Add slope-based detection** — alert when curr_p95 is well
+   above prev_p95 AND the slope across the last 3-5 time buckets
+   is positive. Catches gradual drift before it crosses an
+   absolute threshold.
+
+#### 1f. Low-volume service alerting
+
+The `curr_requests >= 5` floor added in 1a (to prevent micro-noise
+on services with 1-3 spans per 15m) blocks legitimate signal on
+`llmRateLimitError` (product-reviews) and
+`recommendationCacheFailure`. Both stayed at ~0.10-0.40 in the
+re-run despite the 1a improvements elsewhere.
+
+Two paths:
+1. **Lower the floor to ≥3 spans.** Probably still noisy.
+2. **Add an absolute-error-count path** — alert if
+   `curr_errors >= 3 AND curr_error_rate >= 0.5` regardless of
+   total volume. Distinct from the rate-based alert; matches the
+   "service is broken but barely used" pattern.
+
+#### 1g. Investigator playbook coverage for slow-evolving scenarios
+
+Investigator scored 0 on emailMemoryLeak, leakFingerprint, AND
+recommendationCacheFailure across two consecutive eval runs.
+Bumping `waitMs` from 5 to 10 minutes (1c) didn't help — the
+issue isn't time, it's playbook coverage. Each scenario has a
+specific signature (gradual drift, multi-day climb, intermittent
+cache miss) that needs a dedicated decision step in the
+Investigator's reasoning.
+
+#### 1h. svcDetailAlertBadge surface flakiness
+
+The badge failed in 5 scenarios in the 2026-05-31 re-run even
+when the underlying alert state machine fired (cart, email,
+failed-readiness, payment-unreachable, recommendation). The 30-
+second timeout may not be enough for the panel-cache refresh
+cycle to pick up the new state, or there's a real refresh bug
+in `ServiceDetailPage`'s alert-state read.
+
+#### 1i. Low-traffic services drop off the Services list
+
+`llmRateLimitError` failed 2 surfaces with `navigation failed`
+because product-reviews wasn't on the Services list page when the
+eval tried to click into it. Either keep low-traffic services in
+the list (with an "idle" pill — pattern already exists for stale
+services), or update the eval to use URL-based navigation.
+
 ### 2. Performance: reclaim search-worker headroom
 
 **This is the only priority on this list that's currently blocking
