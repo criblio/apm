@@ -304,9 +304,13 @@ export function getProvisioningPlan(): ProvisionedSearch[] {
       id: 'criblapm__home_alerts',
       name: 'Cribl APM - alert evaluator',
       description:
-        'Cribl APM: reads current service summary from $vt_results, joins previous from lookup, computes health + debounce state machine. Output includes alert_status (ok/pending/firing/resolving) and transitioned_to.',
+        'Cribl APM: queries spans over a -15m window for curr_requests/errors (fresher than the home_service_summary -1h dilution), joins previous from lookup, computes health + debounce state machine. Output includes alert_status (ok/pending/firing/resolving) and transitioned_to.',
       query: Q.alertEvaluator(),
-      earliest: '-1h',
+      // -15m window so fresh fault-injection bursts on low-traffic
+      // services aren't diluted by healthy traffic from the prior
+      // 53 minutes. Baseline (prev) is still -2h to -1h via the
+      // criblapm_alert_prev lookup.
+      earliest: '-15m',
       latest: 'now',
       sampleRate: 1,
       schedule: { ...evalCadence },
@@ -317,7 +321,7 @@ export function getProvisioningPlan(): ProvisionedSearch[] {
       description:
         'Cribl APM: exports alert state machine columns to the criblapm_alert_states lookup for persistence across evaluation cycles.',
       query: Q.alertEvaluatorExportState(),
-      earliest: '-1h',
+      earliest: '-15m',
       latest: 'now',
       sampleRate: 1,
       schedule: { ...evalCadence },
@@ -328,7 +332,7 @@ export function getProvisioningPlan(): ProvisionedSearch[] {
       description:
         'Cribl APM: sends alert state transitions (firing/resolved) back to the dataset as searchable history via | send group="search".',
       query: Q.alertHistorySend(),
-      earliest: '-1h',
+      earliest: '-15m',
       latest: 'now',
       sampleRate: 1,
       schedule: { ...evalCadence },

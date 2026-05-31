@@ -74,7 +74,10 @@ const scenario: ScenarioDeclaration = {
     prompt:
       'The email service latency is increasing over time. What could be causing gradual performance degradation?',
     expectedRootCausePattern: 'email.*latency|memory|leak|gradual|drift|increasing',
-    waitMs: 5 * 60_000,
+    // 10m — gradual-drift playbooks need multiple queries (uptime,
+    // memory metric, latency slope) and don't complete in 5m. The
+    // 2026-05-30 eval saw this scenario time out.
+    waitMs: 10 * 60_000,
   },
 };
 

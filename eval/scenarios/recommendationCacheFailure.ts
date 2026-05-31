@@ -73,7 +73,9 @@ const scenario: ScenarioDeclaration = {
     prompt:
       'Why are there recommendation service errors in the last 15 minutes? Summarise root cause.',
     expectedRootCausePattern: 'recommendation.*error|cache|redis|ListRecommendations',
-    waitMs: 5 * 60_000,
+    // 10m — intermittent cache-miss patterns need multiple queries
+    // to surface; 5m timed out in the 2026-05-30 eval.
+    waitMs: 10 * 60_000,
   },
 };
 
