@@ -418,37 +418,60 @@ export default function ServiceDetailPage() {
   }, [fetchAll]);
 
   // Alert queries — independent of the time range picker since they
-  // use fixed windows. Only re-run when the service changes.
+  // use fixed windows. Polled every 30s so the badge picks up a
+  // state transition while the user is on the page; without the
+  // poll, a service that became 'firing' after navigation never
+  // updates the badge until reload (item 1h, the 2026-05-31 eval
+  // saw svcDetailAlertBadge timeouts in 5+ scenarios as a result).
   useEffect(() => {
     if (!serviceName) return;
     const svcEsc = serviceName.replace(/"/g, '\\"');
-    runQuery(
-      `dataset="$vt_results" | where jobName == "criblapm__home_alerts" and svc == "${svcEsc}" | project alert_status`,
-      '-1h', 'now', 1,
-    )
-      .then((rows) => {
-        const status = String(rows[0]?.alert_status ?? 'ok');
-        if (['ok', 'pending', 'firing', 'resolving'].includes(status)) {
-          setAlertStatus(status as typeof alertStatus);
-        }
-      })
-      .catch(() => {});
+    let cancelled = false;
 
-    runQuery(
-      `dataset="otel" | where data_datatype == "criblapm_alert" and svc == "${svcEsc}" | project _time, event_type, signal_type, curr_error_rate, prev_error_rate | sort by _time desc | limit 20`,
-      '-24h', 'now', 20,
-    )
-      .then((rows) => {
-        setAlertHistory(rows.map((r) => ({
-          time: Number(r._time) * 1000,
-          eventType: String(r.event_type ?? ''),
-          signalType: String(r.signal_type ?? ''),
-          detail: r.curr_error_rate != null
-            ? `Error rate ${(Number(r.curr_error_rate) * 100).toFixed(1)}% (was ${(Number(r.prev_error_rate ?? 0) * 100).toFixed(1)}%)`
-            : '',
-        })));
-      })
-      .catch(() => {});
+    const refreshAlertStatus = () => {
+      runQuery(
+        `dataset="$vt_results" | where jobName == "criblapm__home_alerts" and svc == "${svcEsc}" | sort by _time desc | limit 1 | project alert_status`,
+        '-1h', 'now', 1,
+      )
+        .then((rows) => {
+          if (cancelled) return;
+          const status = String(rows[0]?.alert_status ?? 'ok');
+          if (['ok', 'pending', 'firing', 'resolving'].includes(status)) {
+            setAlertStatus(status as typeof alertStatus);
+          }
+        })
+        .catch(() => {});
+    };
+
+    const refreshAlertHistory = () => {
+      runQuery(
+        `dataset="otel" | where data_datatype == "criblapm_alert" and svc == "${svcEsc}" | project _time, event_type, signal_type, curr_error_rate, prev_error_rate | sort by _time desc | limit 20`,
+        '-24h', 'now', 20,
+      )
+        .then((rows) => {
+          if (cancelled) return;
+          setAlertHistory(rows.map((r) => ({
+            time: Number(r._time) * 1000,
+            eventType: String(r.event_type ?? ''),
+            signalType: String(r.signal_type ?? ''),
+            detail: r.curr_error_rate != null
+              ? `Error rate ${(Number(r.curr_error_rate) * 100).toFixed(1)}% (was ${(Number(r.prev_error_rate ?? 0) * 100).toFixed(1)}%)`
+              : '',
+          })));
+        })
+        .catch(() => {});
+    };
+
+    refreshAlertStatus();
+    refreshAlertHistory();
+    const id = window.setInterval(() => {
+      refreshAlertStatus();
+      refreshAlertHistory();
+    }, 30_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
   }, [serviceName]);
 
   // Metric cards fire TWO queries in parallel: the catalog (which
