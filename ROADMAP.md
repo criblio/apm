@@ -60,7 +60,105 @@ See [`docs/research/ux-competitive-analysis.md`](docs/research/ux-competitive-an
 for the full competitive analysis against Datadog, New Relic,
 Dynatrace, and Grafana that drives this priority order.
 
-### 1. Performance: reclaim search-worker headroom
+### 1. Alert detection — fix the cases the 2026-05-30 eval surfaced
+
+Full eval on v0.9.0 scored **mean 0.66, 3/14 fully detected** (see
+`docs/sessions/2026-05-30-eval-v0.9.0.md`). The Investigator scored
+root-cause-correct on 10/11 scenarios where it ran — the diagnosis
+layer is healthy. The detection layer is where the score is hiding.
+
+Four distinct failure modes need work, in priority order:
+
+#### 1a. Alert state machine doesn't fire on low-error-rate / low-volume services
+
+cartFailure 0.48, failedReadinessProbe 0.40, llmRateLimitError 0.39,
+recommendationCacheFailure 0.10, adFailure 0.60. In every case the
+KQL on `criblapm__home_alerts` $vt_results never returns
+`alert_status: firing|pending` within 8 minutes of the flag flipping.
+
+Root cause: the home_service_summary scheduled search uses a -1h
+window. A 7-min burst on a service that gets ~70 calls in 7 min
+gets diluted by ~530 healthy calls from the prior 53 min — the
+diluted error rate often lands right at or below the 1% threshold
+`curr_err_pct >= 1`. Even when it clears, FIRE_AFTER=2 cycles ×
+5-min cadence = 10 minutes minimum to reach FIRING, longer than
+the eval's 8-min assertion timeout.
+
+Two orthogonal fixes:
+
+1. **Use a shorter analysis window in the alert evaluator** (e.g.
+   -15m instead of -1h) so fresh bursts aren't diluted by hour-old
+   healthy traffic. Trade-off: noisier on services with naturally
+   intermittent error patterns; could be mitigated by raising the
+   threshold from 1% to 3% to compensate.
+2. **Add a low-volume floor** — if curr_requests is below some
+   minimum (e.g. 30 over the window), don't require the 1%
+   threshold; instead alert on `curr_errors >= N` raw count.
+   Catches Bernoulli scenarios on low-traffic services where 5–10
+   errors out of 50 calls is meaningful but doesn't clear 1%
+   reliably.
+
+Also worth verifying directly that cartFailure actually injects
+errors on this cluster's cart pod — if the flag doesn't take
+effect without a pod restart, that's its own bug independent of
+the threshold question.
+
+#### 1b. Alert state → UI render path is leaky
+
+productCatalogFailure showed `alert_status: firing` in $vt_results
+AND emitted firing events to the `criblapm_alert` history dataset,
+but Overview Detected Issues, Alerts page, and svcDetailAlertBadge
+all timed out waiting for the visible signal. Three UI surfaces
+that all should react to the same state change didn't.
+
+paymentFailure showed `alert_status: firing` AND every UI surface
+reading from $vt_results worked, but the alertHistory event never
+appeared in the otel dataset. The `alert_history_send` search isn't
+reliably emitting transitions even when the state machine fires.
+
+Both are symptoms of one underlying area: fan-out from "state
+machine fires" → "every consumer that should react." Likely
+fixes are in (a) the alert_history_send query — verify it's
+actually running on every cycle, not erroring silently — and (b)
+the UI's cache layer — confirm Detected Issues / Alerts page /
+svcDetailAlertBadge all read from a fresh source rather than a
+stale cached snapshot.
+
+#### 1c. Investigator times out on gradual-onset scenarios
+
+emailMemoryLeak (0.70, investigator timed out), leakFingerprint
+(0.23, timed out), recommendationCacheFailure (0.10, timed out).
+Each has a multi-step playbook (pod uptime + cardinality + error
+slope + downstream health) that doesn't complete in the 5-min
+Investigator wait.
+
+Two fixes:
+1. **Raise the per-scenario waitMs** for gradual-onset scenarios
+   to 10 min (matches what leakFingerprint already uses).
+2. **Add a sequential-query optimization** — the Investigator
+   often runs queries in a serial loop where parallel would do.
+   Even a basic "fire 3 queries in parallel" change should
+   compress the time-to-conclusion meaningfully.
+
+#### 1d. Surface contracts mismatch observed cluster behavior
+
+Lower-priority cleanup:
+
+- **adHighCpu p99 column**: pattern asserts ≥5ms but ad's
+  saturation shifts p95 from ~1ms to ~3-4ms. Loosen to ≥3ms or
+  match any non-baseline value.
+- **llmRateLimitError navigation**: product-reviews drops off the
+  Services list at low traffic; the eval's "navigate to
+  serviceDetail" step then fails for 2 surfaces. Either keep
+  low-traffic services in the Services list (with an "idle" pill)
+  or have the eval fall back to URL-based navigation.
+- **failedReadinessProbe**: cluster behavior may not match the
+  flag's intent here. Verify with `kubectl describe pod cart`
+  during the eval; if k8s isn't yanking the pod, that's a flagd
+  setup issue and we should mark the scenario "blocked on cluster
+  config" rather than dock the score.
+
+### 2. Performance: reclaim search-worker headroom
 
 **This is the only priority on this list that's currently blocking
 the rest of the roadmap.** Background scheduled searches now
@@ -134,45 +232,45 @@ letter and never got a query through.
 storage backend, or building an in-app query cache. The fix is
 within Cribl's existing primitives.
 
-### 2. User-created alerts + notification dispatch
+### 3. User-created alerts + notification dispatch
 
 Phase 2 of alerting: "Create alert" button that persists a threshold
 as a Cribl saved search with notification targets. Full design in
 [`docs/research/alerting-design.md`](docs/research/alerting-design.md).
 
-### 3. SLO budgets
+### 4. SLO budgets
 
 Thin layer on top of alerts. SLO = saved search tracking
 (success / total) over a 28-day window, plus budget burn rate
 alerts at 1h / 6h / 24h windows.
 
-### 4. Dashboards (via Cribl Saved Searches)
+### 5. Dashboards (via Cribl Saved Searches)
 
 User-created dashboards composing multiple saved views as widgets.
 "Save this view" button on Traces / Logs / Metrics / ServiceDetail.
 
-### 5. Flame graph + critical path on Trace detail
+### 6. Flame graph + critical path on Trace detail
 
 - Flame graph / icicle chart for self-time visualization
 - Critical-path highlighting (spans that drove end-to-end duration)
 - Latency histogram per operation
 
-### 6. Service catalog / ownership
+### 7. Service catalog / ownership
 
 Tag services with team, oncall, runbook URL, repository link.
 Route alerts by ownership. Backstage-style but lightweight.
 
-### 7. Database query performance
+### 8. Database query performance
 
 Top slow queries, fingerprints, execution plans. Linked to traces
 via `db.statement` / `db.system`.
 
-### 8. Live tail
+### 9. Live tail
 
 Streaming logs and spans as they arrive. "Tail" button on the
 Logs page.
 
-### 9. Leak-fingerprint detection — hardening
+### 10. Leak-fingerprint detection — hardening
 
 The 2026-05-12 session shipped the architecture for detecting smooth-
 climb / memory-leak / cardinality-leak failures that the named flagd
@@ -244,7 +342,7 @@ Additional polish that didn't land in the foundation commits:
   value (op-baselines is hourly already; the per-5-min cadence on
   several panel caches is probably aggressive). Audit + reduce.
 
-### 10. Universal data mapping (schema-agnostic APM)
+### 11. Universal data mapping (schema-agnostic APM)
 
 The APM currently depends on OpenTelemetry's field naming conventions
 (`resource.attributes['service.name']`, `status.code`, `end_time_unix_nano`, etc.).
@@ -278,7 +376,7 @@ designed carefully and implemented incrementally — start with the
 mapping config UI + one query builder, validate the abstraction,
 then roll out to all queries.
 
-### 11. Background-failure / synthetic-noise filtering
+### 12. Background-failure / synthetic-noise filtering
 
 Real production traffic has a *baseline* of "errors" that aren't
 real problems. The OTel demo's load-generator deliberately fires
