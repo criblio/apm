@@ -453,10 +453,21 @@ export function alertEvaluator(): string {
   const FIRE_AFTER = 2;
   const CLEAR_AFTER = 3;
 
-  return `dataset="$vt_results"
-    | where jobName == "criblapm__home_service_summary"
-    | project svc, curr_requests=toreal(requests), curr_errors=toreal(errors),
-              curr_error_rate=toreal(error_rate)
+  // curr_* are computed DIRECTLY from spans over the search's
+  // earliest window (-15m), NOT from home_service_summary's -1h
+  // $vt_results. Why: a 7-min flag-on burst on a low-traffic
+  // service was getting diluted by 53 minutes of healthy traffic
+  // in the -1h window, dropping the error rate below the 1%
+  // threshold even when the burst itself was much higher. The
+  // -15m window keeps the signal fresh. Baseline (prev) stays on
+  // the -1h lookup so the alert evaluator still compares against
+  // a longer healthy reference.
+  return `${spansBase()}
+    | extend svc=tostring(resource.attributes['service.name']),
+             is_error=(tostring(status.code)=="2")
+    | summarize curr_requests=toreal(count()),
+                curr_errors=toreal(countif(is_error)) by svc
+    | extend curr_error_rate=iff(curr_requests > 0, curr_errors/curr_requests, 0.0)
     | lookup criblapm_alert_prev on svc
     | extend prev_requests=iff(isnotnull(prev_req), toreal(prev_req), 0.0),
              prev_errors=iff(isnotnull(prev_err), toreal(prev_err), 0.0),
@@ -468,15 +479,26 @@ export function alertEvaluator(): string {
              // A 25% error rate that's been 25% for an hour is still
              // a real problem that should be visible.
              is_persistent=(prev_error_rate * 100 >= 1 and (curr_error_rate * 100 - prev_error_rate * 100) < 2),
-             traffic_ratio=iff(prev_requests >= 50, curr_requests/prev_requests, 1.0)
+             // traffic_ratio normalizes to requests-per-minute so the
+             // -15m curr window and -60m prev window compare on the
+             // same scale. Without normalization a healthy service
+             // would look like it's at 25% of prior traffic (15/60).
+             traffic_ratio=iff(prev_requests >= 50,
+                               (curr_requests / 15.0) / (prev_requests / 60.0),
+                               1.0)
+    // Min curr_requests floor on the error_rate clause: with the
+    // -15m window, very-low-traffic services (1-3 requests) would
+    // otherwise produce 33%-100% error rates from a single span and
+    // false-fire alerts. Require at least 5 spans before letting an
+    // error rate count.
     | extend signal_type=case(
                curr_requests == 0 and prev_requests >= 50, "silent",
-               curr_err_pct >= 1, "error_rate",
+               curr_err_pct >= 1 and curr_requests >= 5, "error_rate",
                traffic_ratio <= 0.5 and prev_requests >= 50, "traffic_drop",
                "none"),
              is_bad=(
                (curr_requests == 0 and prev_requests >= 50)
-               or (curr_err_pct >= 1)
+               or (curr_err_pct >= 1 and curr_requests >= 5)
                or (traffic_ratio <= 0.5 and prev_requests >= 50))
     // alert_id is STABLE per service (doesn't include signal_type).
     // Why: when a service recovers, signal_type rotates from
