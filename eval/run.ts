@@ -88,13 +88,16 @@ async function loadScenarios(
     all.push(mod.default);
   }
   if (filter) {
-    const found = all.filter((s) => s.name === filter);
-    if (found.length === 0) {
+    const names = filter.split(',').map((n) => n.trim()).filter((n) => n);
+    const found = all.filter((s) => names.includes(s.name));
+    const missing = names.filter((n) => !all.some((s) => s.name === n));
+    if (missing.length > 0) {
       console.error(
-        `Scenario "${filter}" not found. Available: ${all.map((s) => s.name).join(', ')}`,
+        `Scenario(s) "${missing.join(', ')}" not found. Available: ${all.map((s) => s.name).join(', ')}`,
       );
       process.exit(1);
     }
+    found.sort((a, b) => names.indexOf(a.name) - names.indexOf(b.name));
     return found;
   }
   return all;
