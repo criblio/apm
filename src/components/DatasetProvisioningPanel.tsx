@@ -175,7 +175,7 @@ function describeRulesetState(status: DatasetProvisioningStatus): string {
   switch (r.reason) {
     case 'missing-rule':
       return 'Rule "opentelemetry_demo" not present in the default ruleset.';
-    case 'missing-extend-expression':
+    case 'invalid':
       return 'Rule present but missing the service_name / status_code extend expression.';
     case 'fetch-failed':
       return 'Could not read current state from the Cribl API.';

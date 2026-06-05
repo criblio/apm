@@ -5,66 +5,6 @@
   padding: var(--cds-space-md) var(--cds-space-lg) 0;
 }
 
-.banner {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--cds-space-md);
-  padding: var(--cds-space-md) var(--cds-space-lg);
-  border-radius: var(--cds-radius-md);
-  border: 1px solid;
-  font-size: var(--cds-font-size-sm);
-}
-
-.warning {
-  background: rgba(245, 158, 11, 0.08);
-  border-color: rgba(245, 158, 11, 0.35);
-  color: var(--cds-color-fg);
-}
-
-.info {
-  background: rgba(59, 130, 246, 0.06);
-  border-color: rgba(59, 130, 246, 0.3);
-  color: var(--cds-color-fg);
-}
-
-.bannerIcon {
-  font-size: var(--cds-font-size-lg);
-  flex-shrink: 0;
-  line-height: 1.2;
-}
-
-.warning .bannerIcon {
-  color: #d97706;
-}
-
-.info .bannerIcon {
-  color: #2563eb;
-}
-
-.bannerMain {
-  flex: 1 1 auto;
-  min-width: 0;
-  line-height: 1.5;
-}
-
-.bannerTitle {
-  font-weight: var(--cds-font-weight-semibold);
-  color: var(--cds-color-fg);
-  margin-bottom: 2px;
-}
-
-.bannerBody {
-  color: var(--cds-color-fg-muted);
-}
-
-.bannerBody code {
-  font-family: var(--cds-font-family-mono);
-  font-size: 0.9em;
-  padding: 1px 4px;
-  background: var(--cds-color-bg-subtle);
-  border-radius: 3px;
-}
-
 .bannerAction {
   flex-shrink: 0;
   padding: var(--cds-space-xs) var(--cds-space-md);
