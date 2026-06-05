@@ -30,7 +30,7 @@ import {
 } from './agentTools';
 import { buildAgentContext } from './agentContext';
 import { APM_TOOL_DEFINITIONS } from './agentToolDefs';
-import { getCurrentDataset } from './dataset';
+import { getCurrentDataset } from '@cribl/app-utils/dataset';
 
 /**
  * Events emitted by the loop. The UI subscribes to these and

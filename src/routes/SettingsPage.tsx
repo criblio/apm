@@ -6,7 +6,7 @@ import SettingsSetupStatus from './SettingsSetupStatus';
 import SettingsNav, { type NavGroup } from './SettingsNav';
 import { loadAppSettings, saveAppSettings } from '../api/appSettings';
 import { listNotificationTargets, type NotificationTarget } from '../api/notificationTargets';
-import { setCurrentDataset } from '../api/dataset';
+import { setCurrentDataset, useDataset } from '@cribl/app-utils/dataset';
 import { setStreamFilterEnabled } from '../api/streamFilter';
 import { setSearchCadence, CADENCE_OPTIONS, type CadenceOption } from '@cribl/app-utils/cadence';
 import {
@@ -16,7 +16,6 @@ import {
 } from '../api/provisionedSearches';
 import { DEFAULT_FILTER_RULES } from '../api/errorFilter';
 import { listTraceOriginators, type TraceOriginatorRow } from '../api/search';
-import { useDataset } from '../hooks/useDataset';
 import { useStreamFilterEnabled } from '../hooks/useStreamFilter';
 import { useSearchCadence } from '../hooks/useSearchCadence';
 import s from './SettingsPage.module.css';

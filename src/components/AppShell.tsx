@@ -1,7 +1,7 @@
 import { Outlet } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import ProvisioningBanners from './ProvisioningBanners';
-import { useDataset } from '../hooks/useDataset';
+import { useDataset } from '@cribl/app-utils/dataset';
 import s from './AppShell.module.css';
 
 export default function AppShell() {
