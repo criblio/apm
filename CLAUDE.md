@@ -268,6 +268,14 @@ tracked for the next session.
 - **`(?i)` inline regex flag crashes** in complex pipelines
   (summarize + extend + nested negation). Use character-class
   alternation `[Cc]onsume[d]?` instead.
+- **`(?i)` upstream of `| export to lookup` silently corrupts the
+  write**: export stats report the right `totalEventsOut` and
+  `lookupFile`, but the resulting CSV is not joinable — every
+  `lookup <name> on <key>` returns no matches, with no error
+  anywhere. Same family as the mv-expand/export incompatibility
+  (see attrCatalogComputeQuery). Use character-class alternation
+  in any query that exports to a lookup (found 2026-06-09 via
+  criblapm_trace_originators).
 - **`foldkeys`** operator exists but the output `key`/`value`
   columns don't support type filtering. Use `_raw` regex parsing
   for field-name discovery instead.

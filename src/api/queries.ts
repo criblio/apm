@@ -1087,12 +1087,19 @@ export function traceOriginators(): string {
              ua=tostring(attributes['http.user_agent']),
              msg_sys=tostring(attributes['messaging.system']),
              span_name=tostring(name)
-    | extend ua_browser=(ua matches regex "(?i)(mozilla|chrome|safari|firefox|edge|opera)"),
-             ua_loadtest=(ua matches regex "(?i)(k6|locust|jmeter|gatling|wrk|ab/|loadgen)"),
-             ua_probe=(ua matches regex "(?i)(kube-probe|go-http-client|healthcheck|liveness|readiness)"),
+    // Character-class alternation instead of (?i): the inline flag
+    // upstream of export-to-lookup makes the func:store write stage
+    // emit a CSV that reports totalEventsOut correctly but is not
+    // joinable — lookup-on-root_svc returns no matches. Same bug
+    // family as the mv-expand/export incompatibility in
+    // attrCatalogComputeQuery. Found 2026-06-09 when the lookup
+    // never repopulated after the dataset-empty wipe.
+    | extend ua_browser=(ua matches regex "[Mm]ozilla|[Cc]hrome|[Ss]afari|[Ff]irefox|[Ee]dge|[Oo]pera"),
+             ua_loadtest=(ua matches regex "k6|[Ll]ocust|[Jj]meter|[Gg]atling|wrk|ab/|[Ll]oadgen"),
+             ua_probe=(ua matches regex "kube-probe|[Gg]o-http-client|[Hh]ealthcheck|[Ll]iveness|[Rr]eadiness"),
              has_msg=isnotempty(msg_sys),
-             name_user=(span_name matches regex "(?i)(^|_)(user|browse|view|checkout|cart|search)(_|$)"),
-             name_service=(span_name matches regex "(?i)(^|_)(tick|cron|consume|process|poll|worker|job|task)(_|$)")
+             name_user=(span_name matches regex "(^|_)([Uu]ser|[Bb]rowse|[Vv]iew|[Cc]heckout|[Cc]art|[Ss]earch)(_|$)"),
+             name_service=(span_name matches regex "(^|_)([Tt]ick|[Cc]ron|[Cc]onsume|[Pp]rocess|[Pp]oll|[Ww]orker|[Jj]ob|[Tt]ask)(_|$)")
     | summarize total=count(),
                 n_browser=countif(ua_browser),
                 n_loadtest=countif(ua_loadtest),
