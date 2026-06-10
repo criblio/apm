@@ -486,27 +486,39 @@ export function alertEvaluator(): string {
              traffic_ratio=iff(prev_requests >= 50,
                                (curr_requests / 15.0) / (prev_requests / 60.0),
                                1.0)
-    // Two error_rate paths:
-    //   1. Rate-based: ≥1% error rate over ≥5 spans. The 5-span
-    //      floor prevents 1-error-of-1-span noise at -15m.
-    //   2. Absolute-count from a clean baseline: ≥2 errors NOW
-    //      when the prev window had effectively zero. The ≥3 floor
-    //      from the third eval was still too high for ultra-low-
-    //      traffic services (product-reviews, recommendation) which
-    //      typically see 0-2 errors per 15m even when broken. The
-    //      prev_errors < 0.5 gate (was clean, now isn't) keeps
-    //      this from firing on services that always have a low
-    //      background error rate.
+    // Three error_rate paths, tuned for production noise tolerance.
+    // The prior ≥1% / ≥2-error floors were over-fit to chaos-
+    // engineered eval scenarios (llmRateLimit, recommendationCache)
+    // and fired on normal background error rates of real services.
+    //   1. High absolute rate — ≥5% with ≥20 spans. Paging-worthy
+    //      regardless of baseline.
+    //   2. Sharp deviation from a stable baseline — current rate
+    //      ≥3× prev AND ≥2% absolute AND prev window had ≥100
+    //      requests (baseline is statistically meaningful).
+    //   3. Catastrophic ramp on previously-clean service — ≥10
+    //      errors when the prior window had effectively zero,
+    //      gated on ≥50 current requests to distinguish "real
+    //      service just broke" from low-volume background noise.
+    // Tradeoff: silences chaos scenarios on ultra-low-volume
+    // services (llmRateLimit / recommendationCache product-reviews).
+    // Reintroducing those would need an explicit "low-volume mode"
+    // toggle in settings rather than default-on for everyone.
     | extend signal_type=case(
                curr_requests == 0 and prev_requests >= 50, "silent",
-               curr_err_pct >= 1 and curr_requests >= 5, "error_rate",
-               curr_errors >= 2 and prev_errors < 0.5, "error_rate",
+               curr_err_pct >= 5 and curr_requests >= 20, "error_rate",
+               curr_err_pct >= 2 and curr_err_pct >= prev_err_pct * 3
+                 and prev_requests >= 100, "error_rate",
+               curr_errors >= 10 and prev_errors < 1
+                 and curr_requests >= 50, "error_rate",
                traffic_ratio <= 0.5 and prev_requests >= 50, "traffic_drop",
                "none"),
              is_bad=(
                (curr_requests == 0 and prev_requests >= 50)
-               or (curr_err_pct >= 1 and curr_requests >= 5)
-               or (curr_errors >= 2 and prev_errors < 0.5)
+               or (curr_err_pct >= 5 and curr_requests >= 20)
+               or (curr_err_pct >= 2 and curr_err_pct >= prev_err_pct * 3
+                   and prev_requests >= 100)
+               or (curr_errors >= 10 and prev_errors < 1
+                   and curr_requests >= 50)
                or (traffic_ratio <= 0.5 and prev_requests >= 50))
     // alert_id is STABLE per service (doesn't include signal_type).
     // Why: when a service recovers, signal_type rotates from

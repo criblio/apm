@@ -30,12 +30,19 @@ import {
   type ProvisioningBannerSource,
 } from '@cribl/app-utils/provisioning-banner';
 import { createBrowserHttpClient } from '@cribl/app-utils/provisioner';
+import { useDataset } from '@cribl/app-utils/dataset';
 import { planOnly, type PlanAction } from '../api/provisioner';
 import { getStatus as getDatasetStatus } from '../api/datasetProvisioner';
 import s from './ProvisioningBanners.module.css';
 
 export default function ProvisioningBanners() {
   const location = useLocation();
+  // Keyed to the dataset: planOnly() builds the desired KQL from
+  // getCurrentDataset(), so the diff must be recomputed when the
+  // KV-loaded (or user-changed) dataset arrives. Without this dep
+  // the check races the async settings load and compares the
+  // server's plan against one built from the wrong dataset.
+  const dataset = useDataset();
   const sources = useMemo<ProvisioningBannerSource[]>(
     () => {
       const http = createBrowserHttpClient();
@@ -85,7 +92,11 @@ export default function ProvisioningBanners() {
         },
       ];
     },
-    [],
+    // dataset is intentionally the only dep: it forces a sources
+    // rebuild (and a re-check via useProvisioningBanners) when the
+    // dataset changes, even though the closure doesn't read it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [dataset],
   );
 
   const banners = useProvisioningBanners(sources);
