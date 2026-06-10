@@ -24,6 +24,7 @@ import {
   getStatus as getDatasetStatus,
 } from '../src/api/datasetProvisioner.js';
 import { setSearchCadence } from '@cribl/app-utils/cadence';
+import { setCurrentDataset } from '@cribl/app-utils/dataset';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..');
@@ -54,7 +55,12 @@ function actionLabel(a: PlanAction): string {
   return `  · noop`;
 }
 
-async function loadCadenceFromKV(http: HttpClient): Promise<void> {
+async function loadAppSettingsFromKV(http: HttpClient): Promise<void> {
+  // Default the dataset to 'otel' first so the in-memory store has
+  // a value even when KV is unreachable. Without this, every saved
+  // search gets `dataset=""` baked in at provision time and reads
+  // produce zero rows — a complete outage of every panel.
+  setCurrentDataset('otel');
   try {
     const raw = await http.get('/kvstore/settings/app');
     if (raw && typeof raw === 'object') {
@@ -62,9 +68,12 @@ async function loadCadenceFromKV(http: HttpClient): Promise<void> {
       if (settings.searchCadence && typeof settings.searchCadence === 'string') {
         setSearchCadence(settings.searchCadence);
       }
+      if (settings.dataset && typeof settings.dataset === 'string' && settings.dataset.trim()) {
+        setCurrentDataset(settings.dataset.trim());
+      }
     }
   } catch {
-    // KV not available or empty — use default cadence.
+    // KV not available or empty — defaults already applied above.
   }
 }
 
@@ -86,7 +95,7 @@ async function main(): Promise<void> {
   const dryRun = process.argv.includes('--dry');
   const http = await createNodeHttpClient({ baseUrl, clientId, clientSecret });
 
-  await loadCadenceFromKV(http);
+  await loadAppSettingsFromKV(http);
 
   if (dryRun) {
     const { actions } = await planOnly(http);
