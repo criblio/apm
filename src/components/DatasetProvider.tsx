@@ -15,6 +15,15 @@ import { setCurrentDataset } from '@cribl/app-utils/dataset';
 import { setStreamFilterEnabled } from '../api/streamFilter';
 import { setSearchCadence } from '@cribl/app-utils/cadence';
 
+// Synchronous module-scope default. The framework's dataset store
+// initializes to '' — any query builder that runs before the async
+// KV load below completes (ProvisioningBanners' planOnly check,
+// first page queries) would otherwise emit `dataset=""` and either
+// return zero rows or report every saved search as needing update.
+// React effect ordering can't fix this (child effects run before
+// this provider's effect), so the default is applied at import time.
+setCurrentDataset('otel');
+
 interface Props {
   children: ReactNode;
 }
