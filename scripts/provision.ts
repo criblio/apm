@@ -19,6 +19,11 @@ import {
   type PlanAction,
 } from '@cribl/app-utils/provisioner';
 import { reconcile, planOnly } from '../src/api/provisioner.js';
+import { validateProvisionPlan } from '../src/api/provisionGuard.js';
+import {
+  getProvisioningPlan,
+  SEED_LOOKUPS,
+} from '../src/api/provisionedSearches.js';
 import {
   apply as applyDatasetProvisioning,
   getStatus as getDatasetStatus,
@@ -96,6 +101,20 @@ async function main(): Promise<void> {
   const http = await createNodeHttpClient({ baseUrl, clientId, clientSecret });
 
   await loadAppSettingsFromKV(http);
+
+  // P0.1 tripwire: refuse to push a corrupt plan to the server. The
+  // June 2026 outage chain (dataset="" in 17 searches, unjoinable
+  // lookup CSVs) shipped through a reconcile that reported success.
+  const guardErrors = validateProvisionPlan([
+    ...getProvisioningPlan().map((s) => ({ id: s.id, query: s.query })),
+    ...SEED_LOOKUPS.map((l) => ({ id: `seed:${l.name}`, query: l.seedQuery })),
+  ]);
+  if (guardErrors.length > 0) {
+    console.error(`✗ Provision guard: ${guardErrors.length} violation(s) — refusing to reconcile`);
+    for (const e of guardErrors) console.error(`    ${e}`);
+    process.exit(1);
+  }
+  console.log('▶ Provision guard: plan OK');
 
   if (dryRun) {
     const { actions } = await planOnly(http);
