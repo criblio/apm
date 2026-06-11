@@ -1,11 +1,9 @@
 # Cribl APM — Roadmap
 
 This document is the canonical priority list for the Cribl APM
-Search App. It captures the competitive gap analysis we ran against
-Datadog, Honeycomb, Dash0, Kloudfuse, Grafana Tempo/Loki, New Relic,
-and Sentry, plus the architectural insight that we're built on top of
-Cribl Search and should lean on its primitives (saved searches,
-alerts, query language, federation) rather than reinvent them.
+Search App. Rewritten 2026-06-11 from the full repo audit
+(`docs/sessions/` has the history) plus the competitive gap analysis
+against Datadog, New Relic, Dynatrace, Honeycomb, and Grafana Cloud.
 
 > **Refer to this doc as `ROADMAP.md`** (or `/ROADMAP.md` from the repo
 > root). Companion docs: `FAILURE-SCENARIOS.md` for the flagd flag
@@ -14,788 +12,275 @@ alerts, query language, federation) rather than reinvent them.
 
 ## Guiding principle: lean on Cribl Search
 
-The Cribl APM runs *inside* Cribl Search. Cribl Search already
-provides:
+The app runs *inside* Cribl Search, which already provides saved
+searches, scheduled searches, alerts/notifications, KQL, federation,
+and a pack-scoped KV store. We do **not** reinvent those — we build a
+**domain-specific UI on top of them** that speaks traces / logs /
+metrics. Users should never need to know there's a KQL editor
+underneath (though power users get an escape hatch).
 
-- **Saved searches** — named, shareable KQL queries with persistence
-- **Scheduled searches** — run a query on a cron and act on the result
-- **Alerts / notifications** — monitor a saved search and trigger
-  webhooks, Slack, email, PagerDuty
-- **KQL** — rich query language for slicing spans, logs, and metrics
-- **Federation** — queries can fan out across multiple datasets and
-  worker groups
-- **Pack-scoped KV store** — for app-level settings and state
+A second principle joined the first after the June outages:
+**the platform must be unable to fail silently.** Every layer that
+can corrupt quietly — KQL generation, provisioning, lookup exports —
+gets a tripwire. We cannot sell detection we can't trust ourselves.
 
-So we do **not** need to reinvent alerting, dashboards, saved searches,
-or a query language from scratch. What we need is a **domain-specific
-UI on top of those primitives** that speaks traces / logs / metrics
-rather than raw KQL. Users of our app should never have to know they
-can drop into a KQL editor — the app should translate their
-intentions into saved searches and alerts behind the scenes.
+## Strategic posture
 
-Concretely, that shapes every roadmap item:
+Three moves, in order:
 
-- "Detected issues" → the health-bucket signals we already compute
-  (error rate thresholds, traffic drops, latency anomalies) should be
-  **materialized by scheduled searches** and rendered as a prominent
-  alerts panel on the home page — not buried in row tints
-- "User-created alerts" → a **"Create alert"** button that builds a
-  saved-search + alert definition under the hood, then calls the Cribl
-  API to persist it
-- "Saved views" → Cribl saved searches owned by the app, tagged with
-  a `criblapm:view` tag so we can list and render them
-- "Dashboards" → a set of saved searches composed into a page; still
-  backed by Cribl, rendered by us
-- "Query language" → we keep the guided forms as the primary surface
-  but expose an optional "Edit as KQL" escape hatch for power users
-
-The rest of this document groups features by the Cribl Search
-capability they'd ride on.
+1. **Tripwires first (P0)** — one focused effort so silent outages
+   stop burning days.
+2. **Adoption features (P1–P2)** — detection quality measured on
+   both precision and recall, then user alerts, SLOs, and change
+   correlation. These convert "impressive demo" into "daily driver"
+   for the first external users (arriving soon).
+3. **Moat (P3)** — the Investigator and Cribl-native capabilities
+   (field mapping, telemetry cost analytics) that competitors
+   structurally cannot copy because they don't sit on the pipeline.
 
 ---
 
-## Priorities (in rough order)
-
-See [`docs/research/ux-competitive-analysis.md`](docs/research/ux-competitive-analysis.md)
-for the full competitive analysis against Datadog, New Relic,
-Dynatrace, and Grafana that drives this priority order.
-
-### 1. Alert detection — fix the cases the 2026-05-30 eval surfaced
-
-Full eval on v0.9.0 scored **mean 0.66, 3/14 fully detected** (see
-`docs/sessions/2026-05-30-eval-v0.9.0.md`). The Investigator scored
-root-cause-correct on 10/11 scenarios where it ran — the diagnosis
-layer is healthy. The detection layer is where the score is hiding.
-
-Four distinct failure modes need work, in priority order:
-
-#### 1a. Alert state machine doesn't fire on low-error-rate / low-volume services
-
-cartFailure 0.48, failedReadinessProbe 0.40, llmRateLimitError 0.39,
-recommendationCacheFailure 0.10, adFailure 0.60. In every case the
-KQL on `criblapm__home_alerts` $vt_results never returns
-`alert_status: firing|pending` within 8 minutes of the flag flipping.
-
-Root cause: the home_service_summary scheduled search uses a -1h
-window. A 7-min burst on a service that gets ~70 calls in 7 min
-gets diluted by ~530 healthy calls from the prior 53 min — the
-diluted error rate often lands right at or below the 1% threshold
-`curr_err_pct >= 1`. Even when it clears, FIRE_AFTER=2 cycles ×
-5-min cadence = 10 minutes minimum to reach FIRING, longer than
-the eval's 8-min assertion timeout.
-
-Two orthogonal fixes:
-
-1. **Use a shorter analysis window in the alert evaluator** (e.g.
-   -15m instead of -1h) so fresh bursts aren't diluted by hour-old
-   healthy traffic. Trade-off: noisier on services with naturally
-   intermittent error patterns; could be mitigated by raising the
-   threshold from 1% to 3% to compensate.
-2. **Add a low-volume floor** — if curr_requests is below some
-   minimum (e.g. 30 over the window), don't require the 1%
-   threshold; instead alert on `curr_errors >= N` raw count.
-   Catches Bernoulli scenarios on low-traffic services where 5–10
-   errors out of 50 calls is meaningful but doesn't clear 1%
-   reliably.
-
-Also worth verifying directly that cartFailure actually injects
-errors on this cluster's cart pod — if the flag doesn't take
-effect without a pod restart, that's its own bug independent of
-the threshold question.
-
-#### 1b. Alert state → UI render path is leaky
-
-productCatalogFailure showed `alert_status: firing` in $vt_results
-AND emitted firing events to the `criblapm_alert` history dataset,
-but Overview Detected Issues, Alerts page, and svcDetailAlertBadge
-all timed out waiting for the visible signal. Three UI surfaces
-that all should react to the same state change didn't.
-
-paymentFailure showed `alert_status: firing` AND every UI surface
-reading from $vt_results worked, but the alertHistory event never
-appeared in the otel dataset. The `alert_history_send` search isn't
-reliably emitting transitions even when the state machine fires.
-
-Both are symptoms of one underlying area: fan-out from "state
-machine fires" → "every consumer that should react." Likely
-fixes are in (a) the alert_history_send query — verify it's
-actually running on every cycle, not erroring silently — and (b)
-the UI's cache layer — confirm Detected Issues / Alerts page /
-svcDetailAlertBadge all read from a fresh source rather than a
-stale cached snapshot.
-
-#### 1c. Investigator times out on gradual-onset scenarios
-
-emailMemoryLeak (0.70, investigator timed out), leakFingerprint
-(0.23, timed out), recommendationCacheFailure (0.10, timed out).
-Each has a multi-step playbook (pod uptime + cardinality + error
-slope + downstream health) that doesn't complete in the 5-min
-Investigator wait.
-
-Two fixes:
-1. **Raise the per-scenario waitMs** for gradual-onset scenarios
-   to 10 min (matches what leakFingerprint already uses).
-2. **Add a sequential-query optimization** — the Investigator
-   often runs queries in a serial loop where parallel would do.
-   Even a basic "fire 3 queries in parallel" change should
-   compress the time-to-conclusion meaningfully.
-
-#### 1d. Surface contracts mismatch observed cluster behavior
-
-Lower-priority cleanup:
-
-- **adHighCpu p99 column**: pattern asserts ≥5ms but ad's
-  saturation shifts p95 from ~1ms to ~3-4ms. Loosen to ≥3ms or
-  match any non-baseline value.
-- **llmRateLimitError navigation**: product-reviews drops off the
-  Services list at low traffic; the eval's "navigate to
-  serviceDetail" step then fails for 2 surfaces. Either keep
-  low-traffic services in the Services list (with an "idle" pill)
-  or have the eval fall back to URL-based navigation.
-- **failedReadinessProbe**: cluster behavior may not match the
-  flag's intent here. Verify with `kubectl describe pod cart`
-  during the eval; if k8s isn't yanking the pod, that's a flagd
-  setup issue and we should mark the scenario "blocked on cluster
-  config" rather than dock the score.
-
-#### 1e. Latency-branch detection for gradual-onset scenarios
-
-emailMemoryLeak in the 2026-05-31 re-run scored 0.20 — the
-latency-anomaly branch in `alertEvaluator()` requires
-`curr_p95_us >= 1000000` (≥1 second absolute) which gradual
-memory-leak drift may not reach in 7 minutes of telemetry, even
-when the multiplier ratio is already 5x baseline. Two fixes
-worth trying:
-
-1. **Lower the absolute floor to 500ms.** Trivially loosens
-   detection without breaking the 5x ratio.
-2. **Add slope-based detection** — alert when curr_p95 is well
-   above prev_p95 AND the slope across the last 3-5 time buckets
-   is positive. Catches gradual drift before it crosses an
-   absolute threshold.
-
-#### 1f. Low-volume service alerting
-
-The `curr_requests >= 5` floor added in 1a (to prevent micro-noise
-on services with 1-3 spans per 15m) blocks legitimate signal on
-`llmRateLimitError` (product-reviews) and
-`recommendationCacheFailure`. Both stayed at ~0.10-0.40 in the
-re-run despite the 1a improvements elsewhere.
-
-Two paths:
-1. **Lower the floor to ≥3 spans.** Probably still noisy.
-2. **Add an absolute-error-count path** — alert if
-   `curr_errors >= 3 AND curr_error_rate >= 0.5` regardless of
-   total volume. Distinct from the rate-based alert; matches the
-   "service is broken but barely used" pattern.
-
-#### 1g. Investigator playbook coverage for slow-evolving scenarios
-
-Investigator scored 0 on emailMemoryLeak, leakFingerprint, AND
-recommendationCacheFailure across two consecutive eval runs.
-Bumping `waitMs` from 5 to 10 minutes (1c) didn't help — the
-issue isn't time, it's playbook coverage. Each scenario has a
-specific signature (gradual drift, multi-day climb, intermittent
-cache miss) that needs a dedicated decision step in the
-Investigator's reasoning.
-
-#### 1h. svcDetailAlertBadge surface flakiness
-
-The badge failed in 5 scenarios in the 2026-05-31 re-run even
-when the underlying alert state machine fired (cart, email,
-failed-readiness, payment-unreachable, recommendation). The 30-
-second timeout may not be enough for the panel-cache refresh
-cycle to pick up the new state, or there's a real refresh bug
-in `ServiceDetailPage`'s alert-state read.
-
-#### 1i. Low-traffic services drop off the Services list
-
-`llmRateLimitError` failed 2 surfaces with `navigation failed`
-because product-reviews wasn't on the Services list page when the
-eval tried to click into it. Either keep low-traffic services in
-the list (with an "idle" pill — pattern already exists for stale
-services), or update the eval to use URL-based navigation.
-
-### 2. Performance: reclaim search-worker headroom
-
-**This is the only priority on this list that's currently blocking
-the rest of the roadmap.** Background scheduled searches now
-saturate the workspace's `max: 20` concurrent search queue (see
-the corresponding entry in "Blocked on Cribl"). Investigator
-queries and ad-hoc operator searches sit in the queue for
-~56-57 seconds — long enough that every multi-turn
-investigation runs out the per-turn budget before it can read
-any data. The 2026-05-12 `leakFingerprint` eval transcript is
-the concrete artifact: the agent followed the playbook to the
-letter and never got a query through.
-
-**Two orthogonal levers** (both worth pulling):
-
-1. **Acceleration at the dataset level.** Cribl Lakehouse Indexed
-   Fields and Parquet predicate-pushdown both pull JSON-nested
-   fields up to top-level columns so filters and group-bys don't
-   have to deserialize the whole record. Up to **5 indexed
-   fields per Lake Dataset** plus **3 partitions**. (The deprecated
-   "Dataset Acceleration" prescan feature is gone; the
-   replacement is Lakehouse.) Field-access inventory from
-   `src/api/queries.ts` (uses of each as predicate or
-   group-by key):
-
-   | Field | Uses | Why it matters |
-   |---|---:|---|
-   | `resource.attributes['service.name']` | 28 | filtered/grouped by ~every query |
-   | `status.code` | many | error predicate |
-   | `kind` | 19 | server/client/internal filter |
-   | `name` | 171 (mostly proj; ~10 as predicate) | operation grouping |
-   | `end_time_unix_nano` | 19 | "is this a span?" filter |
-   | `parent_span_id` | 12 | trace topology, leaf detection |
-   | `trace_id` | 23 | trace scoping, self-joins |
-   | `span_id` | 9 | trace topology |
-   | `attributes['http.response.status_code']` | 3 | filter rules |
-   | `attributes['rpc.grpc.status_code']` | 3 | filter rules |
-
-   Proposed 5 indexed-field picks (subject to Cribl Lake migration
-   plan): `service.name`, `status.code`, `kind`, `name`,
-   `parent_span_id`. The HTTP/gRPC status fields are used by
-   fewer queries; once the top-five are accelerated, those
-   queries are already cheap.
-
-2. **Reduce the steady-state search load.** Today the workspace
-   runs 16 `criblapm__*` scheduled searches; many fire every 5
-   minutes on -1h windows scanning the same span set. Audit
-   targets:
-
-   - **Cadence drops** for searches whose data doesn't move every
-     5 min: `criblapm__trace_originators`, `criblapm__metric_catalog`
-     could be hourly. `criblapm__svc_operations` could be every
-     15 min.
-   - **Consolidate** searches that scan the same -1h span window
-     and emit related aggregations. The home_service_summary,
-     sysarch_dependencies, sysarch_messaging_deps, svc_operations
-     all derive from the same input — a "wide aggregation"
-     pattern that emits multiple lookups in one pass would
-     eliminate redundant scans. Limitation: `| export` consumes
-     rows, so a single search can write to only one lookup. The
-     workaround is to land the wide aggregation in `$vt_results`
-     and have lookup-emit searches read FROM `$vt_results`
-     rather than spans.
-   - **Tighter windows where possible** — some searches widen
-     to -1h to compute averages; for "current state" panels,
-     -10m or -15m is plenty and dramatically cheaper.
-
-**Detailed implementation plan**:
-[`docs/research/search-perf-plan.md`](docs/research/search-perf-plan.md).
-
-**Out of scope**: replacing the Cribl Lake dataset with another
-storage backend, or building an in-app query cache. The fix is
-within Cribl's existing primitives.
-
-### 3. User-created alerts + notification dispatch
-
-Phase 2 of alerting: "Create alert" button that persists a threshold
-as a Cribl saved search with notification targets. Full design in
-[`docs/research/alerting-design.md`](docs/research/alerting-design.md).
-
-### 4. SLO budgets
-
-Thin layer on top of alerts. SLO = saved search tracking
-(success / total) over a 28-day window, plus budget burn rate
-alerts at 1h / 6h / 24h windows.
-
-### 5. Dashboards (via Cribl Saved Searches)
-
-User-created dashboards composing multiple saved views as widgets.
-"Save this view" button on Traces / Logs / Metrics / ServiceDetail.
-
-### 6. Flame graph + critical path on Trace detail
-
-- Flame graph / icicle chart for self-time visualization
-- Critical-path highlighting (spans that drove end-to-end duration)
-- Latency histogram per operation
-
-### 7. Service catalog / ownership
-
-Tag services with team, oncall, runbook URL, repository link.
-Route alerts by ownership. Backstage-style but lightweight.
-
-### 8. Database query performance
-
-Top slow queries, fingerprints, execution plans. Linked to traces
-via `db.statement` / `db.system`.
-
-### 9. Live tail
-
-Streaming logs and spans as they arrive. "Tail" button on the
-Logs page.
-
-### 10. Leak-fingerprint detection — hardening
-
-The 2026-05-12 session shipped the architecture for detecting smooth-
-climb / memory-leak / cardinality-leak failures that the named flagd
-scenarios don't cover. Foundations are in (Investigator playbook,
-attribute catalog, daily error-rate snapshot, pod uptime feed into
-knownSignals, origin attribution in trace view). The
-`leakFingerprint` eval scores 0.70 (3/3 surface checks; Investigator
-times out on cluster queue saturation, not on misdiagnosis — the
-transcript shows the agent correctly opens with the leak hypothesis
-and follows the playbook step by step).
-
-Three follow-ups to take the eval to 1.0:
-
-- **Cardinality dcount search** (the actual per-(svc, attr_name)
-  growth signal). Today only the attribute *catalog* ships; computing
-  dcount needs KQL that's regenerated at provision time from the
-  catalog contents (each attribute baked into the query as a static
-  name, since Cribl KQL doesn't support `attributes[col]` dynamic
-  indexing). Requires a provisioner change to read the catalog
-  lookup before building the plan. Bigger plumbing change held back
-  in the foundation commit.
-
-- **`lookup` semantics: returns one row per key**. The
-  `criblapm_error_rate_daily` lookup has 7 daily rows per service,
-  but `| project svc="frontend" | lookup criblapm_error_rate_daily
-  on svc` returns only ONE row — the first match. Playbook's "read
-  the 7-day slope in one query" pattern only delivers one data
-  point. Workaround: restructure the lookup as one row per service
-  with the daily history as a list field (`days_json`, or seven
-  columns `d0_pct .. d6_pct`). Tracked as a Cribl ergonomic issue
-  in "Blocked on Cribl" below.
-
-- **Eval `runInvestigator` plumbing**: today the eval clicks the
-  top-nav "Investigate" link, which lands on the free-form composer
-  with no `knownSignals` seeded. The C work plumbs pod uptime into
-  `buildServiceSeed` on Service Detail — but the eval doesn't route
-  through Service Detail, so those signals never reach the agent.
-  Two options: (a) change `runInvestigator` to navigate Service
-  Detail and click ITS Investigate button (changes the prompt
-  contract for the eval), or (b) wire the free-form composer to
-  auto-fetch known signals when the user's prompt mentions a service
-  name. Option (b) is the better product change.
-
-Additional polish that didn't land in the foundation commits:
-
-- **Drift alert state-machine wiring.** The 7-day daily error-rate
-  history lookup exists; the alert evaluator doesn't yet emit a
-  `drift` signal type from it. State machine + UI sparkline +
-  "errors trending up: X% → Y%" affordance on service rows are
-  separate features.
-- **Pod-uptime timeline overlay on Service Detail.** Today the
-  uptime feeds `knownSignals` and renders in the Investigator
-  context, but there's no visible chip or timeline marker on the
-  Service Detail page itself.
-- **`tests/scenarios/payment-failure.spec.ts` iframe migration.**
-  Iframe-nav fix updated `apm-smoke.spec.ts` and the eval engine,
-  but payment-failure.spec.ts still uses `page.getByRole(...)` on
-  the main frame and would fail the same way the smoke test did
-  before. Mechanical update — copy the `apmFrame(page)` pattern.
-- **Extract `attributeOrigin` from `SpanDetail.tsx`** to its own
-  utility module and unit-test it. The function is pure and the
-  branching logic deserves the same coverage `errorFilter.ts`
-  rules get.
-- **Cluster capacity / scheduled-search load.** The workspace now
-  has ~16 `criblapm__*` scheduled searches; with `max: 20`
-  concurrent search jobs, the queue is consistently full and live
-  Investigator queries are stuck behind 56-57s queue waits. Some
-  scheduled searches could move to longer cadences without losing
-  value (op-baselines is hourly already; the per-5-min cadence on
-  several panel caches is probably aggressive). Audit + reduce.
-
-### 11. Universal data mapping (schema-agnostic APM)
-
-The APM currently depends on OpenTelemetry's field naming conventions
-(`resource.attributes['service.name']`, `status.code`, `end_time_unix_nano`, etc.).
-This limits the app to OTel-instrumented workloads.
-
-**Vision:** any data in Cribl Search should be mappable to the APM's
-service model — Cribl internal logs/metrics, custom application logs,
-legacy monitoring data. The same dashboards, alerts, and investigations
-would work regardless of the source schema.
-
-**Design questions:**
-- **Configuration UI** — a mapping editor that lets users define
-  "service name is field X", "error indicator is field Y == value Z",
-  "latency is field W". Store mappings in KV per dataset.
-- **LLM-assisted mapping** — given a sample of records from a dataset,
-  use an LLM to suggest field mappings automatically. "This looks like
-  `hostname` maps to service, `response_time_ms` maps to duration,
-  `status >= 400` maps to error."
-- **Copilot Investigator tool** — a `create_field_mapping` tool that
-  the Investigator can call to build mappings interactively during an
-  investigation. "I see this dataset uses `app_name` for the service
-  identifier — let me configure that for you."
-- **Query abstraction** — all query builders in queries.ts should read
-  from the mapping config instead of hardcoding OTel field paths.
-  A `fieldResolver(dataset, 'service.name')` function that returns
-  the mapped field path.
-
-**Scope:** this is a foundational architecture change that affects
-every query, every panel, and every scheduled search. It should be
-designed carefully and implemented incrementally — start with the
-mapping config UI + one query builder, validate the abstraction,
-then roll out to all queries.
-
-### 12. Background-failure / synthetic-noise filtering
-
-Real production traffic has a *baseline* of "errors" that aren't
-real problems. The OTel demo's load-generator deliberately fires
-fault-injection requests (`DEADBEEF99`, `NOTAPRODUCT`, `%00`,
-intentional 4xx) so the demo can exercise error-handling paths.
-Real workloads have the equivalent: bots probing wrong URLs, users
-hitting deleted products, expired session cookies, scrapers, etc.
-The OTel instrumentation marks all of those as `status=ERROR` —
-the trace shape can't tell them apart from "the order service is
-on fire."
-
-The Investigator currently chases all errors equally. When it
-correctly identifies a real root cause (currency OOMKill in the
-2026-05-27 incident), the *remaining* span-error rate after the
-fix is still high because of the synthetic baseline, and the agent
-can't conclude "we're done."
-
-The hard problem: there's no clean, reliable heuristic.
-
-- **Trace-origin classification** (already shipped) helps when the
-  originator is identifiable (load-generator → `user`,
-  cron-job → `service`), but doesn't distinguish "real user
-  looking for a deleted product" from "real user encountering a
-  bug." Both have the same trace origin.
-- **Error-message regex** (drop traces with `DEADBEEF99` etc.) is
-  brittle and demo-specific; doesn't generalize to real workloads
-  where bad inputs aren't predictable strings.
-- **Rate-based baselining** — if (svc, op, status_class) has been
-  at 5% error rate for weeks, drop it from "current errors" —
-  risks suppressing slow regressions.
-- **Customer-specific tagging** — let operators mark
-  (service, operation, status) tuples as "expected noise" via
-  Settings. Reliable but high-maintenance and not auto-detected.
-
-What we'd actually want is a *learned* "baseline-noise" signal:
-identify the (svc, op, status, message-fingerprint) tuples that
-have been a steady-state minority of every window for the last
-N days, and treat them as expected when they appear in the
-current window. That's a real piece of research, not a preamble
-tweak.
-
-Filed as a roadmap item rather than shipped: it's blocking a
-cleaner "investigation is done" stopping rule but the design
-space is large enough that we need to think through approach
-before committing to one.
-
-### Blocked on Cribl
-
-- **Metrics: `_metric_name` in wide-column format** — Cribl's
-  wide-column metric storage flattens the metric value and its
-  numeric attributes into top-level fields with no way to
-  distinguish them. Fields like `http.status_code` (a dimension)
-  are indistinguishable from `http.server.duration` (the metric).
-  We use a blocklist of known numeric attributes as a workaround.
-  Feature request submitted to Cribl to preserve `_metric_name`
-  (or equivalent) in the wide-column ingest pipeline.
-
-- **`summarize → summarize max(iff(...))`** — Cribl KQL crashes
-  on real data when a second `summarize` uses `max(iff(...))` on
-  output from a prior `summarize`. Workaround: split into separate
-  scheduled searches joined via lookups. Bug report pending.
-
-- **`lookup` returns only one row per key.** When a lookup table
-  has multiple rows for the same key, `| project key="X" | lookup
-  T on key` returns only the first match — not all matches.
-  Confirmed against `criblapm_error_rate_daily` which holds 7
-  daily rows per service: the join collapses to one. This shapes
-  every "read a series from a lookup" pattern (drift, daily
-  history, per-attribute cardinality over time, etc.).
-  Workarounds today: pack the series into one row (CSV string,
-  array column, or N parallel columns). A real fix lets the
-  consumer say "return all matching rows."
-
-- **Dynamic field access `attributes[col_name]` is rejected.**
-  KQL parses `attributes['session.id']` (static string) fine but
-  fails on `attributes[some_column]` where `some_column` holds a
-  value chosen at query time. This is the constraint that makes
-  per-(svc, attr_name) cardinality search require KQL generated at
-  provision time rather than a single dynamic search reading from
-  the catalog lookup at query time. `bag_keys` discovers names;
-  `bag_values` doesn't exist either, so even pairing keys with
-  their values per row inside one query isn't possible. The most
-  natural fix is dynamic indexing or a `bag_values` companion.
-
-- **Long-window aggregations (-7d hourly bins, -10d any bins)
-  routinely exceed the 60s search-job timeout.** Workaround: run
-  shorter windows in sequence and aggregate client-side, or use
-  daily bins instead of hourly (still ~60-70s on -7d but
-  completes). Affects every "show me the multi-day trend" feature.
-
-- **Concurrent search queue limit (`max: 20`).** With the app's
-  ~16 scheduled searches firing on their cadences, a user-issued
-  investigation routinely waits >56s for each query to dequeue.
-  Either the per-pack quota needs raising or scheduled searches
-  need to share workers more efficiently.
-
-### Future categories (whole new signal types)
-
-- **Continuous profiling** — CPU/memory/lock via eBPF/pprof
-- **Real User Monitoring** — browser SDKs, web vitals, session replay
-- **Synthetics / uptime** — scheduled HTTP + browser checks
+## P0 — Platform integrity (do first, ~1 week)
+
+Rationale: the 2026-06-09/10 outage chain. A latent framework change
+(dataset store defaulting to `""`) shipped through green CI, the
+provisioner pushed `dataset=""` into 17 saved searches and reported
+success, `mode=overwrite` exports wiped two lookups, and a separate
+latent bug (`(?i)` regex upstream of `export to lookup` writes an
+unjoinable CSV while reporting success) prevented self-healing.
+Three silent-failure layers, zero tripwires, all found in production.
+
+- **P0.1 Provisioning guard** (S) — before reconcile, assert every
+  plan query: non-empty `dataset="…"` clause, no `(?i)` upstream of
+  `export to lookup`, non-empty lookup names. Exit 1 loudly.
+  `scripts/provision.ts`; upstream to `@cribl/app-utils` after.
+- **P0.2 Post-reconcile canary** (M) — after apply, read one row
+  from `$vt_results` for sentinel searches and join-test one lookup.
+  Tolerate empty only with `--first-install`.
+- **P0.3 Golden-file KQL tests** (M) — snapshot every exported
+  builder in `src/api/queries.ts` (40+, zero tests today) with
+  invariant assertions (dataset clause present, escaping applied,
+  no `(?i)` in export queries). The June outages become 3-line
+  negative tests. Also regression-tests the dataset-default bug.
+- **P0.4 Alert state-machine tests** (M) — extract the transition
+  table (`ok → pending → firing → resolving → ok`, FIRE_AFTER=2,
+  CLEAR_AFTER=3) to a pure TS function mirroring the KQL `case()`;
+  test all transitions; keep KQL in sync via snapshot.
+- **P0.5 Framework SHA pin** (S) — CI clones
+  `cribl-search-app-framework` at a SHA recorded in-repo, bumped
+  deliberately. PR #66's latent break is the rationale.
+
+Quick wins alongside: delete dead `spanmetrics*` builders
+(queries.ts ~1739-1962) and legacy `HomePage.tsx` (~1,000 lines
+total); surface the three swallowed exceptions
+(`agentPreflight.ts:102`, `agentTools.ts:107`,
+`notificationTargets.ts:32`); add a check for backticks inside
+template-literal comments (bit us twice).
+
+**Done =** the June outage chain, replayed, fails the deploy loudly
+at the first step.
+
+## P1 — Detection quality, two-sided
+
+The eval harness optimizes recall on chaos scenarios; production
+needs precision on real traffic. Thresholds whiplashed from
+"fires at 1% background noise" to production-tuned (PR #67/#69)
+because only one side was measured. Detection changes now ship with
+both numbers.
+
+- **P1.1 Noise budget** (M) — scheduled search counting
+  firing-hours per service per week on flag-off traffic; publish
+  alongside eval recall in every eval report. This is the
+  acceptance metric for all threshold changes.
+- **P1.2 Low-volume mode** (S) — Settings toggle re-enabling the
+  ≥2-error path per service, for low-traffic environments where
+  chaos-level sensitivity is wanted. Off by default. Restores
+  llmRateLimit / recommendationCache detection without taxing
+  everyone (the old 1f debate, resolved as opt-in).
+- **P1.3 Slope-based latency detection** (L) — the real fix for
+  gradual-onset scenarios (emailMemoryLeak stuck at 0.30 across
+  four evals; threshold loosening provably insufficient). Alert
+  when p95 is above baseline AND the slope over the last 3-5
+  buckets is positive.
+- **P1.4 Seasonality-aware baselines** (L) — day-of-week /
+  hour-of-day baselines instead of fixed prior-window. Needs the
+  packed-row workaround for the lookup one-row-per-key limit
+  (see Blocked on Cribl).
+- **P1.5 CI live smoke** (M) — on master merge: deploy to a
+  workspace, run `apm-smoke.spec.ts` + the P0.2 canary.
+  **Cribl will provision a dedicated CI workspace for this** —
+  isolates CI from the demo cluster and unblocks eval-in-CI later.
+- **P1.6 Learned noise baseline (research)** — identify
+  (svc, op, status, message-fingerprint) tuples that are a
+  steady-state minority over N days and treat them as expected.
+  Feeds both alert precision and the Investigator's "we're done"
+  stopping rule. Design doc first; the space is large.
+
+## P2 — Adoption: the three trust gaps + trace depth
+
+Table-stakes features every competitor has, each a thin layer over
+Cribl primitives we already use. Ordered for the first external
+users.
+
+- **P2.1 User-created alerts + notification dispatch** (XL —
+  break down) — "Create alert" persists a saved search + alert
+  definition with notification targets (Slack/PagerDuty/email via
+  the product-level targets API). Design:
+  `docs/research/alerting-design.md`.
+- **P2.2 Deployment / change correlation** (L) — "what changed?"
+  is the first RCA question and we have nothing; `service.version`
+  is already on resource attributes. MVP: scheduled search detects
+  version transitions per service → `criblapm_deploy` events via
+  `| send` (same pattern as alert history) → markers on Service
+  Detail RED charts, "deployed 12m before this alert" chip in
+  Detected Issues, and injection into Investigator `knownSignals`.
+  No SCM integration needed for v1.
+- **P2.3 SLO budgets** (L) — SLO = saved search tracking
+  success/total over 28 days + burn-rate alerts at 1h/6h/24h
+  windows. The lingua franca of reliability conversations.
+- **P2.4 Flame graph + critical path** (L) — icicle/self-time view
+  and critical-path highlighting on Trace detail; latency histogram
+  per operation. Client-side over span data we already fetch.
+
+## P3 — Moat: what only Cribl can build
+
+- **P3.1 Field mapping + per-signal datasets** (near-term, elevated)
+  — two forcing functions arrived: (a) metrics support is landing
+  now and **metrics and logs may live in different datasets than
+  traces**, (b) schema-agnostic APM (the long-term vision) starts
+  with the same abstraction. Step 1: replace the single
+  `getCurrentDataset()` with per-signal resolution
+  (`datasetFor('traces' | 'logs' | 'metrics')`) threaded through
+  queries.ts and the provisioner; Settings grows one field per
+  signal type. Step 2: `fieldResolver(signal, 'service.name')`
+  behind one query builder to validate the abstraction. Step 3:
+  mapping editor UI + LLM-assisted mapping suggestions + an
+  Investigator `create_field_mapping` tool. Full vision retained
+  from the prior roadmap §11 — incremental rollout, one builder at
+  a time.
+- **P3.2 Investigator v2** (L) — auto-seed `knownSignals` when a
+  prompt mentions a service (today only Service Detail's button
+  seeds them); a "done" criterion using the P1.6 noise baseline so
+  the agent can conclude "remaining errors are background";
+  deployment events (P2.2) injected as context. **Design note:
+  Cribl's AI Platform will ship a server-side agent runtime soon —
+  keep the tool definitions and context builder
+  (`agentTools.ts`, `agentContext.ts`) transport-agnostic so the
+  loop can migrate from the client to the platform runtime without
+  a rewrite.**
+- **P3.3 Telemetry cost & noise analytics** (L) — we sit ON the
+  pipeline; Datadog sits at the end of it. Page answering: which
+  services emit the most span volume, what fraction is idle-wait /
+  health-check noise (we already classify it), and what the
+  Cribl Stream pipeline change to trim it would be. No competitor
+  can close that loop.
+
+## P4 — Breadth
+
+- **Dashboards** via saved-search composition ("Save this view" on
+  Traces/Logs/Metrics/ServiceDetail; widgets composed into a page).
+- **Service catalog / ownership** — team, oncall, runbook URL per
+  service in KV; route alerts by ownership.
+- **Database query performance** — top slow queries by fingerprint
+  via `db.statement` / `db.system`, linked to traces.
+- **Live tail** — streaming logs/spans on the Logs page.
+
+## Future — new signal types
+
+- **Continuous profiling** (eBPF/pprof) · **Real User Monitoring**
+  (browser SDK, web vitals, session replay) · **Synthetics**
+  (scheduled HTTP + browser checks). Deliberately parked until the
+  core earns daily-driver trust.
+
+---
+
+## Blocked on Cribl
+
+- **`(?i)` regex upstream of `| export to lookup` silently corrupts
+  the write** — stats report success (`totalEventsOut`,
+  `lookupFile`) but the CSV is unjoinable. Found 2026-06-09 via
+  `criblapm_trace_originators`; cost us a day. Same family as the
+  mv-expand/export incompatibility. Bug report pending; P0.1 guards
+  against reintroduction on our side.
+- **Metrics: `_metric_name` in wide-column format** — dimensions
+  indistinguishable from metric values; we use a blocklist
+  workaround. Feature request submitted.
+- **`summarize → summarize max(iff(...))`** crashes on real data.
+  Workaround: split into searches joined via lookups.
+- **`lookup` returns one row per key** — blocks every
+  "read a series from a lookup" pattern (drift, daily history,
+  seasonality baselines → P1.4). Workaround: pack series into one
+  row (N columns or JSON string). Real fix: return all matches.
+- **Dynamic field access `attributes[col]` rejected** — forces
+  per-attribute KQL generation at provision time (cardinality
+  search). Fix: dynamic indexing or `bag_values`.
+- **Long-window aggregations (-7d hourly) exceed the 60s job
+  timeout** — affects every multi-day-trend feature.
+- **Concurrent search queue (`max: 20`)** — improved by Lakehouse
+  indexed fields + cadence tuning (shipped), but Investigator
+  queries still queue behind scheduled searches at peak. Per-pack
+  quota or scheduled-search worker sharing would help.
 
 ---
 
 ## Things we have that ARE competitive
 
-- **Server-side alert state machine** — debounce, clear messages,
-  alert history in the dataset. Most cheaper APMs don't have this.
-- **Baseline delta chips** — regressions vs previous window on
-  catalog rows
-- **Messaging edges on the arch graph** — OTel `messaging.*`
-  attributes. Most backends only show RPC edges.
-- **Noise filter** on trace aggregates — hides streaming/idle-wait
-  spans from percentiles. Novel.
-- **Edge-level health** on the graph, not just node-level
-- **Copilot Investigator** — AI root-cause analysis embedded
-  throughout the UI with pre-filled context
-- **Configurable detection cadence** — user controls the speed/cost
-  tradeoff for scheduled searches
+- **Embedded agentic RCA (Copilot Investigator)** — root-cause-
+  correct on 10/11 eval scenarios, pre-filled topology context,
+  one click from every surface. Nobody at this price point has it.
+- **Spotlight** — Honeycomb-BubbleUp-equivalent attribute analysis,
+  embedded on Search, Errors, and Service Detail.
+- **Server-side alert state machine** — debounce, history in the
+  dataset, resolution events. Most cheaper APMs don't have this.
+- **Messaging edges + edge-level health** on the architecture graph.
+- **Noise filter** on trace aggregates (idle-wait/streaming spans).
+- **Baseline delta chips**, configurable detection cadence,
+  trace-origin classification feeding error filtering.
 
 ---
 
-## Completed
+## Completed (historical reference — see git log / PRs)
 
-Items below shipped and are kept for historical reference. See git
-log and linked PRs for implementation details.
+### Detection-quality program, rounds 1–5 (v0.9.0 → v0.9.1) — DONE
+The 2026-05-30 → 06-01 eval grind (old roadmap items 1a–1i): -15m
+evaluator window with traffic normalization (PR #60), stable
+alert_id so resolutions emit (PR #58), latency floor + absolute
+error-count paths (PR #62), low-volume floor + badge polling
+(PR #64), then the production reversal to precision-tuned
+thresholds — ≥5% absolute, or ≥3× baseline at ≥2%, or ≥10 errors
+on a previously-clean service (PRs #67/#69) after real-traffic
+noise proved the eval-driven floors over-sensitive. Eval mean
+0.66 → 0.78 reconstructed; fully-detected 1 → 6. Remaining gaps
+(slope detection, low-volume) carried into P1. Session logs:
+`docs/sessions/2026-05-30-eval-v0.9.0.md` through
+`2026-05-31-eval-fourth.md`.
+
+### Search-worker performance program — DONE
+Lakehouse indexed fields provisioned (service_name, status_code,
+kind, name, parent_span_id) + dataset-ruleset flattening, cadence
+tuning, search consolidation. Queue waits no longer block the
+Investigator in steady state. Plan:
+`docs/research/search-perf-plan.md`.
+
+### Framework extraction + outage hardening (2026-06) — DONE
+Shared primitives moved to `cribl-search-app-framework`
+(dataset store, provisioner, banners, deploy tooling; framework
+PRs #9–#13, APM #66). The dataset="" outage chain diagnosed and
+fixed: provision-time default (PR #68), browser-side race +
+threshold re-apply (PR #69), (?i)-export corruption (PR #70).
+P0 exists so this class can't recur silently.
 
 ### Faceted trace search + Spotlight (v0.9.0) — DONE
+PRs #46–#55: typed filter builder, facets panel, Spotlight engine
+(volume-weighted L∞ scoring), embedded SpotlightSection, KQL
+escape hatch, streaming facet queries. Four visual iterations to
+the final rate-bar design. `docs/sessions/2026-05-28-faceted-nav.md`.
 
-PRs #46–#55. The Search page got the typed filter builder, per-
-attribute value autocomplete, and a side rail that introduces a new
-investigation primitive — **Spotlight**, the Honeycomb-BubbleUp
-equivalent that ranks attributes by how their values partition the
-selection (typically "errors") from the baseline. Spotlight is
-embedded on the Errors page (per-error-class expansion) and on
-Service Detail (service-level + per-operation), so the same primitive
-is one click away from anywhere the user notices something wrong.
-
-The final design (after a hard four-iteration walk: small-multiples
-histograms, readable-cards, scoped baseline, per-value rate bars)
-landed on the same primitive the Operations table uses — one bar per
-value, width = error rate. Same visual language across the app.
-
-What shipped:
-
-- **Typed filter builder** (`<FilterBuilder>`) — attribute name +
-  operator + value triples, ≠ / contains_cs / numeric ops with
-  toreal() coercion, per-attribute value autocomplete sourced from
-  the live facet distribution. Replaces the SearchForm "tags"
-  free-text input.
-- **Facets panel** — top values per attribute over the current
-  filter, click-to-add to filters.
-- **Spotlight engine** (`computeSpotlight`) — per-value selection
-  rate, attribute scoring by `max(|rate - overall|) * log1p(total)`
-  (volume-weighted L∞), variance-based filtering of uniform
-  attributes, tautology-aware attribute curation (response-side
-  status codes excluded).
-- **`<SpotlightSection>`** — embeddable rate-bar view with optional
-  `scopeKql` so embedded surfaces compare "errors of this
-  service/op" against "healthy of the same service/op" rather than
-  against the contaminating whole-window baseline.
-- **KQL escape hatch** (`<KqlEditor>`) — composed via `and` with
-  the typed predicate; Ctrl/⌘+Enter applies.
-- **Streaming queries** — `getFacetDistribution` and
-  `getSpotlightDiff` cap parallelism at 4 (cluster's max-20 job
-  ceiling) and stream per-attribute results so the panel populates
-  progressively instead of stalling on the slowest query.
-
-Driven by extensive manual validation against the OTel demo
-scenarios (`paymentFailure 50%` — clean uniform random failure;
-`productCatalogFailure on` — sharp per-input correlation via
-`app.product.id = OLJCESPC7Z`). Multiple visual iterations were
-discarded after live feedback: the share-differential paradigm
-(sel/base/diff jargon) and the small-multiples chart-only view both
-proved unreadable for a novice; the final rate-bar layout was
-unanimous.
-
-Session logs: `docs/sessions/2026-05-28-faceted-nav.md` and
-sibling files in the same directory for the iteration history.
-
-### Settings page reorganization (v0.9.0) — DONE
-
-PR #56. Pure UX rearrangement of the Settings page. Setup status
-card at the top with live `planOnly()` + `getDatasetStatus()`
-checks; two-column layout with sticky section nav (IntersectionObserver-
-driven active-link highlight); cards grouped into Setup / Workspace /
-Filtering & heuristics / Diagnostics. Setup panels moved from the
-bottom of the page to the top of the Setup group. Trace originators
-collapsed by default. Session log:
-`docs/sessions/2026-05-29-settings-cleanup.md`.
-
-### Navigation overhaul + focused views (v0.7.0) — DONE
-
-PR #30. Driven by competitive analysis against Datadog, New Relic,
-Dynatrace, and Grafana.
-
-- **Left sidebar navigation** — collapsible sidebar with 10 nav items,
-  section dividers, icon-only collapse mode. Replaces horizontal nav.
-- **Overview page** — focused "is anything wrong?" dashboard: Detected
-  Issues, Key Metrics row, Services Needing Attention, Recent Alerts.
-- **Errors Inbox** — first-class error tracking page with error groups
-  by (service, operation, message), count badges, sample traces,
-  Investigate buttons.
-- **Service Detail tabs** — Overview / Traces / Logs / Errors /
-  Dependencies, URL-driven via `?tab=` param.
-- **Alert timeline** — stacked service bars with drag-to-select
-  filtering, incident pairing (firing→resolved with duration), time
-  range picker (1h–30d), 30s auto-refresh.
-- **Metric catalog cleanup** — blocklist for numeric OTel attributes
-  misclassified as metrics.
-- **Eval framework** — updated for new views, SPA sidebar navigation,
-  Pending/Firing alert checks. Mean score 0.71 (5/13 fully detected).
-
-### AI-powered investigations (Copilot Investigator) — DONE
-
-Cribl Search ships a "Run an Investigation" feature (Copilot
-Investigator) — a chat-based AI agent that runs KQL queries, reads
-dataset schemas, and produces structured findings. We embedded it
-throughout Cribl APM so users can drill into problems with one click.
-
-**What shipped** (PR #14, branch `copilot-investigator`):
-
-- **API spike + protocol docs** in
-  [`docs/research/copilot-investigator.md`](docs/research/copilot-investigator.md)
-  — streaming NDJSON protocol, tool-use loop, A/B comparison
-  confirming pre-filled APM context dramatically improves accuracy
-  and time-to-root-cause (bare prompt never completed; context-enriched
-  found `ECONNREFUSED` and `Invalid token` root causes in minutes)
-- **Agent client** (`src/api/agent.ts`) — streaming NDJSON reader +
-  frame parser
-- **Context builder** (`src/api/agentContext.ts`) — pre-fills dataset
-  shape, field mappings, KQL dialect notes (including the bracket-
-  quoted dotted-field rule), service topology, ISO-8601 timestamp
-  requirement, trace-vs-span semantics, and example working queries
-- **Tool dispatcher** (`src/api/agentTools.ts`) — implements
-  `run_search` against the existing `runQuery`, `render_trace`
-  against `getTrace`, `present_investigation_summary` with a
-  structured UI payload
-- **Loop orchestrator** (`src/api/agentLoop.ts`) — conversation
-  state machine emitting typed events to the UI reducer
-- **Chat UI** (`src/routes/InvestigatePage.tsx`) — streaming
-  transcript, inline Run Query approval cards, result tables,
-  rendered trace waterfall (reuses the existing `SpanTree`
-  component), and a dedicated Final Report card
-- **Investigate buttons** on Home catalog rows, Service Detail hero,
-  Trace Detail header, System Architecture nodes and edges, and
-  Latency anomaly widget rows
-
-### Eval harness (Autoresearch loop) — DONE
-
-Manual Autoresearch eval tool shipped as `npm run eval` (PR #19).
-Design: `docs/research/eval-harness/design.md`. Three starter
-scenarios (paymentFailure, kafkaQueueProblems, paymentUnreachable)
-covering the three most distinct failure shapes: error injection,
-consumer lag, and hard downtime.
-
-First improvement loop completed (PR #20). Ran 4 rounds, fixed
-every failure, brought mean score from **0.71 -> 1.00**:
-
-| Fix | What it addressed |
-|---|---|
-| Investigator latency-anomaly preflight | Copilot couldn't diagnose kafka lag (latency-only, no errors) |
-| ServiceDetail Recent errors -15m fallback | Panel too slow during fresh incidents (62s -> 18s) |
-| Cribl KQL `(?i)` regex crash | Entire rawSlowestTraces query silently returned zero results |
-| `npm run provision` automation | No more manual Settings clicks after deploy |
-
-Full 13-scenario matrix completed (PRs #22-#23). 10 of 13
-fully detected (1.00), 3 at 0.77 with cluster-specific causes
-(adHighCpu flag effectiveness, cartFailure error attribution,
-flaky Copilot latency).
-
-### Scenario detection & test harness (1b-1d) — DONE
-
-- **UI gaps** (1b) — ghost nodes, red rate-drop chip, root-cause
-  hint: all three shipped. Verified against source in the 2026-04-16
-  coverage audit.
-- **Flagd smoke test** (1c) — PR #10
-  `tests/scenarios/flagd-catalog-validation.spec.ts`. Also surfaced
-  `adFailure`'s 10% Bernoulli rate (upstream `AdService.java`).
-- **Detection coverage gaps** (1d) — mapped all 15
-  `FAILURE-SCENARIOS.md` flags to current UI capability. Result:
-  **9 fully detected, 3 partially detected, 1 design-limited,
-  2 out of scope.** All four proposed fixes shipped (PRs #13-#17).
-
-### Metrics wide-column migration — DONE
-
-Cribl Search changed the metrics schema on 2026-04-15 from
-`_metric`/`_value` pair format to wide-column (each metric is
-its own top-level field). PR #24 rewrites all 14 query functions
-and 9 search functions to use bracket-quoted field references.
-
-- Metric discovery via regex on `_raw`, pre-computed by the
-  `criblapm__metric_catalog` scheduled search
-- Metrics picker redesigned: fuzzy search, prefix grouping,
-  inline type badges (C/G/H), alphabetical sort
-- Search results table: full 32-char trace IDs, compact layout
-
-**Known limitation:** histogram metrics with cumulative
-temporality (.NET SDK) store running sums — `percentile()`
-over these is nonsensical. Needs delta-based aggregation or
-temporality detection.
-
-### Metrics support — DONE
-
-The app now covers spans, logs, and metrics. The Metrics explorer tab
-supports metric type detection (counter/gauge/histogram), smart
-aggregation defaults (counter->rate, histogram->p95), group-by
-dimension picker, multi-series line charts, and rate derivation for
-counters.
-
-### Durable baselines + panel caching — DONE
-
-- **Research** — saved search provisioning API, persistence
-  mechanisms (`$vt_results`, `export to lookup`, `| send`),
-  notification targets, idempotent `criblapm__` naming. See
-  [`docs/research/cribl-saved-searches.md`](docs/research/cribl-saved-searches.md).
-- **Durable baselines** — scheduled search computes per-(service,
-  operation) p50/p95/p99 over a rolling 24h window, exports to
-  `lookup criblapm_op_baselines`. Anomaly detector reads via
-  hash-join. Graceful degradation when lookup doesn't exist yet.
-- **Panel caching** — Home and System Architecture read precomputed
-  data from `$vt_results` in one batched query (~1-2s). Scheduled
-  searches: `criblapm__home_service_summary`,
-  `criblapm__home_service_time_series`, `criblapm__home_slow_traces`,
-  `criblapm__home_error_spans`, `criblapm__sysarch_dependencies`,
-  `criblapm__sysarch_messaging_deps`, `criblapm__op_baselines`,
-  `criblapm__svc_operations`, `criblapm__metric_catalog`.
-- **Provisioning workflow** — Settings page reconciles scheduled
-  saved searches (preview -> apply). `npm run provision` for CLI.
-  `npm run deploy` auto-reconciles.
-
-### Core APM surfaces — DONE
-
-- Home: service catalog with rate / error / p50/p95/p99 columns,
-  delta chips, error classes, slowest trace classes, latency anomalies
-- Health buckets: error-rate + traffic_drop + latency_anomaly with
-  precedence ordering. Row tints on catalog, halos on arch graph.
-- Search: fixed-shape form with results table and stream-noise filter
-- Logs: service / severity / body / range filters, sticky facet sidebar
-- Metrics: explorer with picker, group-by, rate derivation, percentile
-- Compare: two-trace structural diff
-- System Architecture: force-directed + isometric, edge-level health,
-  messaging edges, ghost nodes, node hover tooltips
-- Service Detail: RED charts, top operations, recent errors,
-  dependencies, instances, metric cards (batched)
-- Trace detail: waterfall, span detail with attributes / events /
-  logs / process tags / exception stack traces, trace logs tab
-- Settings: dataset selection + stream-filter toggle + provisioning
-
-### Infrastructure & testing — DONE
-
-- **ServiceDetail panel caching** — PR #15. Mirrors Home panel
-  cache for ServiceDetail (~1-2s vs 10-20s).
-- **Kafka consumer stream-filter exemption** — PR #14. Consumer
-  ops bypass idle-wait filter for kafka lag scenarios.
-- **Home panel cache-miss fallback** — PR #8. Live query fallback
-  with "cache Nm stale" indicator.
-- **Trace waterfall clock-skew resilience** — PR #9. Root-span
-  anchoring for clock-skewed children.
-- **Playwright e2e framework** — PRs #4-#7, #13. Auth0 login,
-  host-global injection, flagd-ui client, Cribl Search helper,
-  scenario specs.
-- **Documentation consolidation** — PR #12.
-- **Search results table density** — PR #24.
+### Settings reorganization (PR #56) · Navigation overhaul +
+Overview/Errors/Alerts pages (PR #30) · AI Investigator (PR #14)
+· Eval harness + 17-scenario matrix (PRs #19–#23) · Metrics
+wide-column migration (PR #24) · Metrics explorer · Durable
+baselines + panel caching · Core APM surfaces (catalog, search,
+logs, compare, arch graph, service detail, trace detail) ·
+Playwright e2e framework — all DONE; details in git history and
+`docs/sessions/`.
