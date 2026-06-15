@@ -134,9 +134,84 @@ Each of these has a sharp correct answer ("symptom is X; cause is consistent wit
 
 ## Tooling considerations
 
-- `jq` over many GB of NDJSON is slow but workable. If the data set is large, pre-shard by service or pre-extract `(service, name, status, duration_ms, time_min)` into TSV. That tooling choice effectively shifts the medium/hard line — pre-extracted duration columns make #3 and #11 substantially more tractable. Decide deliberately whether you're testing the model's *reasoning* or its *jq fluency*.
-- For percentile computation in `awk`, the LLM needs to know the trick: collect into an array, sort, index at `n * p`. Many models will reach for a built-in that doesn't exist. Probably worth allowing `datamash` (single binary, no deps) as a quality-of-life tool — `datamash` perc:95 0 is standard Linux-ish.
-- If you want to keep `awk`-only for purity, expect models to either lose points on #3/#11 or burn a turn writing a manual percentile function.
+### Volume
+
+`jq` over many GB of NDJSON is slow but workable. If the data
+set is large, pre-shard by service or pre-extract
+`(service, name, status, duration_ms, time_min)` into TSV.
+That tooling choice effectively shifts the medium/hard line —
+pre-extracted duration columns make #3 (`adManualGc`) and #11
+(`emailMemoryLeak`) substantially more tractable. Decide
+deliberately whether you're testing the model's *reasoning*
+or its *`jq` / `awk` fluency*.
+
+### Recommended toolset
+
+The minimum (`jq` / `awk` / `grep` / `sort` / `uniq` / `wc` /
+`cut` / `sed`) is enough to detect everything in the table, but
+forces models to write manual percentile and group-by code in
+`awk` — burning a turn on plumbing that the better-equipped
+models would skip. Suggested extensions, all of which are
+single binaries from standard distro repos (no network, no
+vendor accounts, no runtimes):
+
+| Tool | Use | Install |
+|---|---|---|
+| `datamash` | percentiles, mean, median, group-by-and-aggregate on TSV | `apt install datamash` / `brew install datamash` (GNU, GPL) |
+| `mlr` (Miller) | "awk for JSON/CSV/TSV" — group-by, stats, joins, type-aware | `apt install miller` / `brew install miller` (BSD-2) |
+| `bc` | arbitrary-precision math (timestamp arithmetic without overflow) | already in coreutils on most systems |
+| `parallel` | parallelize `jq` over sharded files | `apt install parallel` / `brew install parallel` (GNU, GPL) |
+| `dateutils` | date math (bucket timestamps, diff times) | `apt install dateutils` / `brew install dateutils` (BSD-3) |
+
+Notable inclusions:
+
+- **`datamash`** — turns "compute p50/p95/p99 per service" from a
+  ~15-line `awk` script into one pipeline. Without it, expect
+  models to either lose points on #3 / #11 or burn a turn
+  writing manual percentile code. Recommended baseline.
+- **`mlr` (Miller)** — group-by over JSON without round-tripping
+  to TSV. `mlr --ijson stats1 -a p95,p99 -f duration_ms -g
+  service` is a strong alternative to a `jq` + `datamash`
+  pipeline. Worth including because it's idiomatic for the
+  problem shape, and a capable model will reach for it.
+
+Notable **exclusions**:
+
+- **`q` / `csvkit` / `osquery`** — language runtimes attached
+  (Python), inflate the "what's installed" surface.
+- **`xsv`** — fine, but `mlr` covers the same ground with more
+  range; pick one.
+- **Anything network-attached** (HTTPie, curl-with-cribl) —
+  defeats the point of the harness.
+
+### Tooling × difficulty rankings
+
+Allowing `datamash` and `mlr` shifts the hard end:
+
+- **#3 `adManualGc`** — bimodality detection becomes feasible.
+  `mlr --ijson put '$bucket = int($timeNs/60e9)' then stats1 -a
+  p50,p95,p99 -f duration_ms -g service,bucket` produces a
+  per-minute percentile table that surfaces the sawtooth. Still
+  hard to *RCA* (needs runtime data) but the domain
+  identification step is cleanly within reach.
+- **#11 `emailMemoryLeak`** — time-bucketed slope detection
+  becomes feasible. With per-minute p95 from `datamash`, the
+  model can ask "is `email`'s p95 monotonically increasing?"
+  with a simple `sort -n` + visual inspection of the column.
+
+The other rankings don't move materially — surfacing is
+already feasible with the minimum toolset; RCA limits are
+structural, not tooling-limited.
+
+### Decision recommendation
+
+Default to **minimum toolset + `jq` + `datamash` + `mlr`**. It
+keeps the eval focused on reasoning rather than `awk` golf,
+covers every detection step the harness needs, and stays small
+enough that "what tools do you have" fits on one screen in the
+model's system prompt. Reserve the `awk`-only version as a
+harder variant if you want to measure resourcefulness under
+constraint separately.
 
 ## Summary table
 
