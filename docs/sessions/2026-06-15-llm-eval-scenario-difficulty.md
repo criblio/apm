@@ -411,6 +411,182 @@ model's system prompt. Reserve the `awk`-only version as a
 harder variant if you want to measure resourcefulness under
 constraint separately.
 
+## Capturing the data from the OTel demo
+
+Recommended path: OTel Collector's `file` exporter writing OTLP
+JSON, **one exporter per signal type** so the harness gets
+pre-separated `traces.ndjson` / `logs.ndjson` / `metrics.ndjson`
+files without filtering.
+
+### Collector config
+
+```yaml
+exporters:
+  file/traces:
+    path: /data/eval/traces.ndjson
+    rotation:
+      max_megabytes: 100
+      max_days: 7
+      max_backups: 10
+      localtime: true
+    format: json           # OTLP JSON, one batch per line
+    compression: ""        # leave uncompressed for easy jq/grep
+
+  file/logs:
+    path: /data/eval/logs.ndjson
+    rotation: { max_megabytes: 100, max_days: 7, max_backups: 10, localtime: true }
+    format: json
+
+  file/metrics:
+    path: /data/eval/metrics.ndjson
+    rotation: { max_megabytes: 100, max_days: 7, max_backups: 10, localtime: true }
+    format: json
+
+service:
+  pipelines:
+    traces/eval:
+      receivers: [otlp]
+      processors: [batch]   # NO tail sampler on the eval branch
+      exporters: [file/traces]
+    logs/eval:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [file/logs]
+    metrics/eval:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [file/metrics]
+```
+
+Key choices and why:
+
+- **Separate `eval` pipelines, not just separate exporters.**
+  Lets you bypass any tail sampling, rate-limiting, or transforms
+  applied to the production pipeline. The eval needs every span —
+  sampling 10% of `adFailure`'s already-rare errors loses the
+  scenario.
+- **OTLP JSON format** preserves status codes, exemplars,
+  histogram buckets, log severities, span links. Don't use
+  `proto` — `jq` can't read it.
+- **Rotation** keeps disk bounded; `max_days: 7` is enough
+  headroom for any single eval run.
+- **No compression** — biggest tooling win. `jq -c
+  'select(.resourceSpans)' /data/eval/traces.ndjson` works
+  without a decompress step.
+
+### Receivers that affect scenario difficulty
+
+Two scenarios change RCA difficulty based on which receivers
+are enabled:
+
+```yaml
+receivers:
+  kafkametrics:                  # enables RCA-easy for #2 kafkaQueueProblems
+    brokers: ["kafka:9092"]
+    protocol_version: 3.0.0
+    scrapers: [consumers, brokers, topics]
+    collection_interval: 15s
+
+  k8sobjects:                    # enables RCA-easy for #12 failedReadinessProbe
+    objects:
+      - name: events
+        mode: watch
+```
+
+Wire `kafkametrics` into the metrics pipeline, `k8sobjects` into
+the logs pipeline. **Leave them out** if you want #2 and #12 as
+honest "what would you need" tests of epistemic discipline.
+
+### Deployment
+
+The OTel demo's Helm values expose the collector config under
+`opentelemetry-collector.config`. Patch in the three eval
+exporters + pipelines as an overlay value rather than forking
+the upstream chart, so updates stay clean. Mount `/data/eval` as
+a `hostPath` (single-node kind/k3d) or a small
+`PersistentVolume` claim.
+
+Zero-cluster-touch alternative: run a **second standalone
+collector** as a sidecar that receives OTLP from the in-cluster
+collector via OTLP-HTTP-forward and writes to a local path on
+your eval host. More moving parts but zero risk of breaking the
+demo's production pipeline.
+
+### Pre-flattening for the harness
+
+The file exporter writes one *batch* per line — each line
+contains an array of resources × scopes × records. For the LLM
+you almost certainly want one record per line:
+
+```bash
+# Spans — flatten + promote service.name to a top-level field
+jq -c '
+  .resourceSpans[]
+  | .resource as $r
+  | .scopeSpans[].spans[]
+  | . + { service: ($r.attributes[] | select(.key=="service.name") | .value.stringValue) }
+' traces.ndjson > traces.flat.ndjson
+
+# Logs — same shape with .resourceLogs[].scopeLogs[].logRecords[]
+# Metrics — .resourceMetrics[].scopeMetrics[].metrics[], then
+#           expand dataPoints[] to one row per data point
+```
+
+Promoting `service.name` to a top-level field is the single
+highest-value transform — every harness query keys on it.
+
+### Capture window per scenario test
+
+The simplest pattern that doesn't require collector restarts:
+
+1. Run the collector continuously with rotation on.
+2. For each scenario:
+   - Record `t_flag_on`, wait 5 min for a clean baseline window
+   - Flip the flag, wait the scenario's observation window
+     (5–15 min depending on type — bimodal ones like
+     `adManualGc` need longer to surface)
+   - Record `t_test_end`, flip the flag off
+3. Slice the captured files by `timeUnixNano` between
+   `t_flag_on - 5min` (baseline) and `t_test_end + 1min`.
+
+The 5-minute pre-flip baseline gives the model a reference
+window for comparison — important for any chip-vs-baseline
+reasoning, and for fair scoring on the "is this normal?"
+question.
+
+### Volume estimate
+
+The OTel demo at baseline emits roughly:
+
+- **Traces**: ~2–5k spans/min, ~5–15 MB/min uncompressed
+- **Logs**: ~1–3k records/min, ~2–5 MB/min
+- **Metrics**: ~500 data points/min, ~1 MB/min
+
+Per hour, ~1–2 GB total across signals. A 30-minute eval window
+per scenario is ~500–800 MB, well within `jq` / `mlr` /
+`datamash` working sizes.
+
+### Things to verify on a first capture
+
+Before scoring any models, do a manual `jq` pass on a clean
+capture to confirm:
+
+- `process.runtime.jvm.gc.duration` appears in `metrics.ndjson`
+  with non-empty data points during the window
+- `process.runtime.jvm.cpu.utilization` (or
+  `process.cpu.utilization` from hostmetrics) is present for
+  `ad`
+- Error logs from `payment` / `cart` carry stack traces in
+  `body` (not stripped by a processor)
+- If you enabled `kafkametrics`, confirm
+  `messaging.kafka.consumer.lag` exists
+- If you enabled `k8sobjects`, confirm a "Readiness probe failed"
+  log appears when you flip `failedReadinessProbe`
+
+A single missing emission silently turns one of the harness's
+RCA-easy scenarios into RCA-hard — worth catching before you
+discover it via model score variance.
+
 ## Summary table
 
 Ranks reflect the full traces + logs + metrics dataset described
