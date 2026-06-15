@@ -23,24 +23,72 @@ memory, k8s control plane).
 
 ## Assumptions
 
-- OTel demo data ingested as NDJSON spans (one JSON object per
-  line) — or a `jq -c '.resourceSpans[].scopeSpans[].spans[]'`
-  pre-step has been done. Each span exposes `service.name`,
-  `name`, `kind`, `traceId`, `spanId`, `parentSpanId`,
-  `startTimeUnixNano`, `endTimeUnixNano`, `attributes`,
-  `status.code`.
-- Logs and metrics are *not* in scope (matches what the demo
-  ships out-of-the-box for traces).
+All three OTel signal types are available — **traces, logs,
+metrics** — ingested as NDJSON (one OTLP record per line, or
+pre-flattened to one span / log / metric data point per line).
+This matches what the OTel demo emits by default once the
+collector is configured for all three pipelines.
+
+- **Spans** expose `service.name`, `name`, `kind`, `traceId`,
+  `spanId`, `parentSpanId`, `startTimeUnixNano`,
+  `endTimeUnixNano`, `attributes`, `status.code`.
+- **Logs** expose `service.name`, `severityNumber`,
+  `severityText`, `body` (text or structured), `timeUnixNano`,
+  `attributes`, often `traceId` / `spanId` for trace correlation.
+- **Metrics** expose `name`, `dataPoints[].asDouble` (or
+  `asInt`), `dataPoints[].timeUnixNano`,
+  `dataPoints[].attributes`, and metric type
+  (gauge / sum / histogram). Standard OTel demo emissions
+  include:
+  - **HTTP / RPC server**: `http.server.request.duration`,
+    `http.server.active_requests`, `rpc.server.duration`
+  - **JVM runtime** (ad, fraud-detection, accounting):
+    `process.runtime.jvm.gc.duration`,
+    `process.runtime.jvm.memory.usage`,
+    `process.runtime.jvm.cpu.utilization`,
+    `process.runtime.jvm.threads.count`
+  - **Go runtime** (checkout, product-catalog, frontend, etc.):
+    `process.runtime.go.gc.count`,
+    `process.runtime.go.mem.heap_alloc`,
+    `process.runtime.go.goroutines`
+  - **Node.js runtime** (frontend, payment): equivalents under
+    `process.runtime.nodejs.*`
+  - **Process**: `process.cpu.utilization`,
+    `process.memory.usage` (when collector hostmetrics receiver
+    is enabled)
+  - **Kafka**:
+    `messaging.kafka.client.consumer.records.consumed`,
+    `messaging.kafka.consumer.lag` (presence depends on collector
+    config — discussed in scenario #2)
+  - **Custom business metrics** (small set in the demo, e.g.
+    `app.frontend.recommendations_counter`)
 - A reasonable lookback (15–60 min) is provided. The LLM can run
-  multiple `jq` passes within a token/turn budget.
+  multiple passes within a token/turn budget.
 - Duration is `(endTimeUnixNano − startTimeUnixNano) / 1e6` ms,
-  computed in `jq` or `awk`.
+  computed in `jq` or `awk`. Histogram-based duration metrics
+  (`http.server.request.duration`) carry bucket counts —
+  percentiles can be derived from them without going to spans.
+- **What signal is and isn't in the demo matters for the harness
+  authors to verify.** Two emissions worth confirming before
+  finalizing the scenario set:
+  - `messaging.kafka.consumer.lag` — emitted only if the
+    collector's kafka receiver is configured. Without it,
+    scenario #2 stays RCA-hard.
+  - **k8s events** as OTel logs — emitted only if the collector
+    has the `k8sobjects` receiver or `k8sevents` receiver wired.
+    Without it, scenario #12 stays RCA-hard.
 
 ## Problem-domain identification (where is the problem?)
 
+With logs and metrics added, the **rate-spike** and **chronic
+low-rate-error** scenarios get cleaner signal paths (HTTP request
+count metrics, error counter metrics) but the domain-identification
+ranks don't move much — the fastest path to "which service" is
+still usually error-span counts. The shifts show up in RCA.
+
 ### Easy — first natural query finds it
 
-Shape is "many error spans on one service." A `jq 'select(.status.code==2) | .resource.attributes["service.name"]' | sort | uniq -c` pass lights up the answer.
+Shape is "many error spans on one service." A `jq 'select(.status.code==2) | .resource.attributes["service.name"]' | sort | uniq -c` pass lights up the answer. Equivalently for logs: `severityNumber >= 17` (ERROR) grouped by service.
 
 - **1. paymentFailure (50%)** — 50% of `payment.Charge` spans error.
 - **5. cartFailure** — same pattern, `cart` service.
@@ -69,30 +117,106 @@ Shape is "many error spans on one service." A `jq 'select(.status.code==2) | .re
 
 ## Root-cause analysis (why is it happening?)
 
-The RCA axis splits scenarios very differently. Cases where the cause is feature-flag-injected error behavior visible in messages or status codes stay easy; cases where the real cause is an off-platform resource (JVM, kernel, k8s, broker) become hard or impossible from traces alone.
+The RCA axis is where logs + metrics matter most. Scenarios
+whose root cause lives in **JVM, Go-runtime, or process
+metrics** (CPU, memory, GC, goroutines) move from
+"trace-impossible" to "metric-easy" — if the harness's data
+set includes those emissions. Scenarios whose cause lives in
+**logs** (error messages with embedded context like product IDs
+or rate-limit codes) get cleaner signal paths than digging
+through span attributes.
 
-### RCA feasible from traces
+What stays hard is anything off the OTel pipeline entirely —
+kafka broker internals (without the collector's kafka receiver)
+and k8s control-plane events (without the `k8sobjects` /
+`k8sevents` receiver).
 
-- **1. paymentFailure / 5. cartFailure / 9. paymentUnreachable** — best the model can correctly say: "intermittent (or 100%) errors on `payment.Charge` / `cart.*` with no upstream caller-side anomaly; cause is local to that service." That **is** the right RCA conclusion — the actual cause (feature-flag injection) is unknowable from telemetry, and the model should not invent more.
-- **7. productCatalogFailure** — strong RCA test. All error spans share `attributes."app.product.id" = "OLJCESPC7Z"`. A model that finds the cluster nails RCA: "errors are scoped to one product ID." Models that stop at "product-catalog is erroring" miss the cause.
-- **4. loadGeneratorFloodHomepage** — root cause visible in the trace mix: a new trace class like `user_flood_home` appears; the load generator is the source. Reasonable RCA.
-- **14. llmRateLimitError** — if the error message text contains "rate limit" / `429`, RCA is essentially read off the message. Otherwise generic "LLM call failing."
-- **6. adFailure** — error message + operation path (`GetAds` → `UNAVAILABLE`) is identifiable. Same RCA shape as #1: "intermittent errors at ad.GetAds, no upstream cause."
+### RCA feasible — symptom → cause is a direct read
 
-### RCA hard or impossible from traces alone
+- **1. paymentFailure / 5. cartFailure / 9. paymentUnreachable** —
+  Logs almost certainly include the injected exception stack
+  trace, which names the throwing class and (often) the
+  feature-flag check. A model with logs in scope can usually
+  say "service is throwing a flag-gated exception at call site
+  X" — a much stronger RCA than the trace-only conclusion of
+  "local errors with no upstream cause."
+- **7. productCatalogFailure** — Two RCA paths now: span attribute
+  drill-down on `app.product.id`, **or** error log body grep
+  for the product ID. Logs likely produce the cleaner one-liner.
+- **4. loadGeneratorFloodHomepage** — Best RCA signal is now the
+  HTTP request count metric on `frontend` showing the step
+  change, plus the new `user_flood_home` trace class — two
+  corroborating signals beat one.
+- **14. llmRateLimitError** — Logs trivially carry "rate limit" /
+  `429` and which provider returned it. Stronger than the
+  trace-only path.
+- **6. adFailure** — Error logs identify the `GetAds` handler;
+  the operation-level error counter metric quantifies the rate
+  cleanly without per-span counting.
 
-The cause lives off the telemetry path. The model should characterize the symptom and explicitly say "additional data needed."
+### RCA newly feasible because logs/metrics surface the cause
 
-- **2. kafkaQueueProblems** — consumer spans are slow; inferring "kafka queue backed up" requires broker lag metrics or producer→consumer span links. From spans alone: "fraud-detection / accounting consumer processing time has multi-second tail."
-- **3. adManualGc** — bimodality alone doesn't say "GC." Could be batch processing, lock contention, periodic background work. Honest RCA: "intermittent pauses on ad — could be GC, periodic flush, lock contention; would need JVM or runtime metrics to distinguish."
-- **8. recommendationCacheFailure** — "cache failing" is only diagnosable if Redis spans, cache hit/miss attributes, or error messages mentioning cache are present. Otherwise: "recommendation is degraded on both latency and errors."
-- **10. adHighCpu** — distribution shifts right uniformly. Possible causes: CPU saturation, downstream blocking, GC tuning, lock contention. Honest RCA: "ad is uniformly slower — would need CPU / runtime metrics to distinguish saturation from contention."
-- **11. emailMemoryLeak** — latency drift + periodic restart-shaped error bursts. "Memory leak" is a guess. Honest RCA: "email latency drifts upward over minutes with periodic recovery events — consistent with leak / queue buildup / GC pressure; would need memory metrics or restart events to confirm."
-- **12. failedReadinessProbe** — root cause is in k8s events. From traces: "cart is intermittently unreachable from its callers; pattern is consistent with pod removed from service endpoints or rolling restart — would need k8s events to confirm."
+These were trace-only-hard and become **directly diagnosable**
+once metrics are in scope. They are no longer good
+discriminators against confabulation — instead, they test
+whether the model knows **which signal to look at**.
 
-### RCA impossible — by design
+- **3. adManualGc** — `process.runtime.jvm.gc.duration` histogram
+  shows the GC pause spikes with timestamps that correlate to
+  the p99 sawtooth. A model that pulls JVM GC metrics nails RCA
+  in one step. Tests *knowing JVM metric names exist*.
+- **10. adHighCpu** — `process.runtime.jvm.cpu.utilization` (or
+  `process.cpu.utilization` from hostmetrics) sustained near 1.0
+  on `ad` is unambiguous. Combined with the latency shift this
+  is a textbook CPU-bound diagnosis.
+- **11. emailMemoryLeak** — `process.runtime.python.memory` /
+  `process.runtime.nodejs.heap_used` (whichever the email service
+  emits) shows monotonic growth followed by a reset — the
+  characteristic leak-then-OOM-restart shape. Combined with
+  trace latency drift and a brief error burst at restart, the
+  diagnosis is direct.
+- **8. recommendationCacheFailure** — Redis client spans (the demo
+  emits these) and/or cache hit/miss attributes on
+  `recommendation` spans surface the cache failure. Error logs
+  likely contain "cache" / "redis" terms. Multiple
+  corroborating signals.
 
-- **13. llmInaccurateResponse / 15. imageSlowLoad** — same as domain identification. The harness should reward "I don't see a signal that explains this" and penalize confabulation.
+### RCA conditionally feasible — depends on collector config
+
+- **2. kafkaQueueProblems** — IF the collector's kafka receiver
+  is enabled and emitting `messaging.kafka.consumer.lag`, the
+  metric tells the story directly (lag growing on
+  `fraud-detection` / `accounting` consumer groups). IF NOT,
+  RCA stays at the trace-only level ("consumer processing has
+  multi-second tail; would need broker lag metrics to confirm
+  kafka congestion"). **Verify what your demo cluster emits
+  before scoring** — answer to "is this scenario a discriminator"
+  changes entirely with collector config.
+- **12. failedReadinessProbe** — IF the collector's `k8sobjects`
+  or `k8sevents` receiver is wired, the readiness-probe failure
+  appears as a structured log event ("Readiness probe failed"
+  for `cart-*` pod). RCA becomes a one-line grep. IF NOT, the
+  symptom side (intermittent connection-refused to cart) is the
+  best the model can offer, and "consistent with k8s removing
+  the pod from endpoints — would need k8s events to confirm" is
+  the right honest answer.
+
+### RCA structurally impossible — keep as negative controls
+
+- **13. llmInaccurateResponse** — Logs and metrics don't help.
+  The service that returned the wrong answer doesn't know it's
+  wrong. No telemetry path. Correct answer: "no signal anywhere
+  that explains this; would need response-content evaluation
+  against a known-answer baseline."
+- **15. imageSlowLoad** — Potentially a borderline case worth
+  verifying. The OTel demo's Next.js frontend ships with
+  `@opentelemetry/sdk-trace-web` and *may* emit browser-side
+  spans with `http.url` referencing image endpoints. If those
+  reach the dataset, the model could find a frontend-origin
+  span with seconds-long duration on an image URL — moving this
+  from "undetectable" to "medium." **Verify what the demo
+  actually emits client-side.** If browser telemetry isn't in
+  the dataset, this stays a true negative control.
 
 ## How RCA changes harness design
 
@@ -120,30 +244,97 @@ For each scenario, three independent judgments:
 - **All flags off** — true-negative baseline. A model that "finds" an issue is hallucinating.
 - **#13 llmInaccurateResponse and #15 imageSlowLoad** — telemetry shows nothing. The correct answer is "no backend trace signal; would need response-content inspection / RUM." Scoring them out of the test inflates apparent accuracy; keeping them in measures hallucination rate.
 
-### Domain-easy / RCA-hard scenarios are the most valuable discriminators
+### Discriminators shift when logs and metrics are in scope
 
-The biggest model-vs-model gaps will appear on scenarios where **domain identification is straightforward but RCA tempts confabulation**:
+With traces-only, the best discriminators were scenarios that
+tempted confabulation: #3 (GC), #10 (CPU), #11 (memory leak),
+#12 (readiness probe) — each had a "first plausible label" that
+the data didn't actually support, and good models got rewarded
+for saying so.
 
-- **2 kafkaQueueProblems** — domain easy, RCA needs honesty about kafka opacity
-- **3 adManualGc** — domain medium, RCA tempts "GC!" without runtime data
-- **10 adHighCpu** — domain medium, RCA tempts "CPU!" without resource metrics
-- **11 emailMemoryLeak** — domain hard, RCA tempts "memory leak!" with no memory signal
-- **12 failedReadinessProbe** — domain medium, RCA tempts "readiness probe!" with no k8s events
+With **logs + metrics in scope**, three of those (#3, #10, #11)
+become directly diagnosable from JVM / process metrics. They no
+longer test epistemic discipline — they test **multi-signal
+literacy**: does the model know to leave the traces and look at
+runtime metrics?
 
-Each of these has a sharp correct answer ("symptom is X; cause is consistent with Y, Z, or W; would need additional telemetry of type T to distinguish"). Models that produce that shape of answer are notably better than models that pick the first plausible label.
+The new discriminator clusters:
+
+**Multi-signal literacy** — model has to switch signal types
+to RCA, not stay in spans:
+
+- **3. adManualGc** — model must look at JVM GC duration
+  histogram, not stop at trace bimodality
+- **10. adHighCpu** — model must look at process / JVM CPU
+  utilization metric
+- **11. emailMemoryLeak** — model must look at runtime memory
+  metric AND notice the periodic reset
+- **8. recommendationCacheFailure** — model must look at Redis
+  client spans or cache hit/miss attributes
+
+These distinguish "models that reflexively grep error spans"
+from "models that pick the right signal type for the question."
+
+**Epistemic discipline remaining** — scenarios where the right
+answer is still "telemetry insufficient":
+
+- **2. kafkaQueueProblems** — only if collector lacks kafka
+  receiver. If lag metrics are present, this becomes a
+  multi-signal-literacy test instead.
+- **12. failedReadinessProbe** — only if k8s events are not
+  ingested. Same caveat.
+- **13. llmInaccurateResponse** — no telemetry can fix this.
+  Hard negative control.
+
+The honest correct answer for the conditional ones changes
+depending on what your harness's data actually contains. Decide
+which version of #2 and #12 you want — and if you want a clean
+epistemic-discipline test, deliberately exclude the receivers
+that make them easy.
+
+**Cross-signal correlation** — scenarios where the strongest
+RCA combines two or more signals:
+
+- **1, 5, 9** — error span + log stack trace is a much stronger
+  answer than either alone
+- **4. loadGeneratorFloodHomepage** — HTTP request count metric
+  step + new trace class
+- **7. productCatalogFailure** — span attribute cluster + error
+  log substring on the product ID
+
+Reward models that synthesize across signals; penalize models
+that report a single-signal answer when a richer one was
+trivially available.
 
 ## Tooling considerations
 
-### Volume
+### Volume and signal separation
 
-`jq` over many GB of NDJSON is slow but workable. If the data
-set is large, pre-shard by service or pre-extract
-`(service, name, status, duration_ms, time_min)` into TSV.
-That tooling choice effectively shifts the medium/hard line —
-pre-extracted duration columns make #3 (`adManualGc`) and #11
-(`emailMemoryLeak`) substantially more tractable. Decide
-deliberately whether you're testing the model's *reasoning*
-or its *`jq` / `awk` fluency*.
+With three signal types in scope, **shard the dataset by signal
+type at minimum**: separate NDJSON files (or directories) for
+spans, logs, and metrics. A model that has to filter the right
+signal out of a single mixed file burns turns on plumbing. The
+files-on-disk should answer "where do I look for X?" without a
+turn.
+
+Within each signal type, also consider pre-flattening:
+
+- **Spans** → one span per line (`jq -c
+  '.resourceSpans[].scopeSpans[].spans[]'`)
+- **Logs** → one log record per line
+- **Metrics** → one data point per line, with `metric_name`
+  flattened to a top-level field and `dataPoints[].attributes`
+  promoted onto the row. Histograms expand to one row per
+  bucket boundary, or keep the histogram array intact if you
+  expect the model to compute percentiles from buckets directly.
+
+Pre-extraction matters more with all three signals than with
+spans alone — `jq` over GB-scale logs is genuinely slow.
+Pre-extracting `(service, ts_min, severity, body_summary)` for
+logs and `(service, ts_min, metric_name, value, attrs)` for
+metrics into TSV makes the harness reasoning-bound rather than
+plumbing-bound. Decide deliberately whether you're testing the
+model's *reasoning* or its *`jq` / `awk` fluency*.
 
 ### Recommended toolset
 
@@ -186,22 +377,29 @@ Notable **exclusions**:
 
 ### Tooling × difficulty rankings
 
-Allowing `datamash` and `mlr` shifts the hard end:
+Allowing `datamash` and `mlr` shifts the hard end of the
+tracing-only ranks for #3 and #11, but with logs and metrics in
+scope, those scenarios are now already-tractable from runtime
+metrics — the tooling shift matters less for them.
 
-- **#3 `adManualGc`** — bimodality detection becomes feasible.
-  `mlr --ijson put '$bucket = int($timeNs/60e9)' then stats1 -a
-  p50,p95,p99 -f duration_ms -g service,bucket` produces a
-  per-minute percentile table that surfaces the sawtooth. Still
-  hard to *RCA* (needs runtime data) but the domain
-  identification step is cleanly within reach.
-- **#11 `emailMemoryLeak`** — time-bucketed slope detection
-  becomes feasible. With per-minute p95 from `datamash`, the
-  model can ask "is `email`'s p95 monotonically increasing?"
-  with a simple `sort -n` + visual inspection of the column.
+Where the extended tools matter most with full signals:
 
-The other rankings don't move materially — surfacing is
-already feasible with the minimum toolset; RCA limits are
-structural, not tooling-limited.
+- **Time-bucketed metric analysis** is `mlr`'s sweet spot.
+  Detecting a memory-leak ramp in `process.runtime.python.memory`
+  is `mlr --ijson filter '$name=="process.runtime.python.memory"'
+  then stats1 -a max,min -f value -g service,ts_bucket` followed
+  by visual inspection of the delta — clean.
+- **Histogram → percentile** on `http.server.request.duration`
+  buckets requires either `mlr`'s histogram support or manual
+  bucket math. Models without the extended toolset will reach
+  for spans instead, which works but is more expensive.
+- **Cross-signal joins** — correlating a metric spike to a
+  trace error burst by time bucket is a one-liner in `mlr` and
+  a multi-step pipeline in `jq` + `awk`.
+
+The other rankings still don't move materially — surfacing is
+already feasible with the minimum toolset; RCA limits remain
+structural (collector config for #2 and #12), not tooling-limited.
 
 ### Decision recommendation
 
@@ -215,22 +413,53 @@ constraint separately.
 
 ## Summary table
 
-| # | Scenario | Domain rank | RCA rank | Notes |
-|---|---|---|---|---|
-| 1 | paymentFailure | Easy | Easy* | RCA = "local errors, no upstream cause" |
-| 2 | kafkaQueueProblems | Easy/Med | Hard | Domain: slow consumers. RCA: kafka opaque from spans |
-| 3 | adManualGc | Hard | Hard | Bimodal p99; cause not distinguishable from runtime data |
-| 4 | loadGeneratorFloodHomepage | Easy | Medium | New trace class names the source |
-| 5 | cartFailure | Easy | Easy* | Mirror of #1 |
-| 6 | adFailure | Medium | Medium | Low-rate, but error message identifies operation |
-| 7 | productCatalogFailure | Medium | Medium | Attribute clustering is the RCA |
-| 8 | recommendationCacheFailure | Medium | Hard | Two signals, cause depends on cache-layer telemetry |
-| 9 | paymentUnreachable | Easy | Easy* | 100% errors localized to one service |
-| 10 | adHighCpu | Medium | Hard | Uniform latency shift; cause needs resource metrics |
-| 11 | emailMemoryLeak | Hard | Hard | Drift + burst; cause needs memory/restart data |
-| 12 | failedReadinessProbe | Medium | Hard | Cause in k8s events, off-platform |
-| 13 | llmInaccurateResponse | None | None | Negative control |
-| 14 | llmRateLimitError | Easy | Medium | Message text carries the cause |
-| 15 | imageSlowLoad | None | None | Negative control |
+Ranks reflect the full traces + logs + metrics dataset described
+in Assumptions. Where collector configuration meaningfully
+changes the answer, both ranks are shown as
+"present / absent."
 
-\* "Easy" RCA = correct answer is "local errors with no upstream cause; the actual cause (flag injection) is unknowable from telemetry, and that should be stated."
+| # | Scenario | Domain | RCA | Best signal for RCA | Notes |
+|---|---|---|---|---|---|
+| 1 | paymentFailure | Easy | Easy | Error logs (stack trace) | Logs name the throwing class / flag check |
+| 2 | kafkaQueueProblems | Easy | Easy / Hard | Kafka consumer lag metric, if emitted | Conditional on collector kafka receiver |
+| 3 | adManualGc | Hard (traces) / Easy (metrics) | Easy | `process.runtime.jvm.gc.duration` | Tests multi-signal literacy |
+| 4 | loadGeneratorFloodHomepage | Easy | Easy | HTTP request count metric + new trace class | Two corroborating signals |
+| 5 | cartFailure | Easy | Easy | Error logs | Mirror of #1 |
+| 6 | adFailure | Medium | Easy | Error logs + error counter metric | Low-rate, but signals are clean |
+| 7 | productCatalogFailure | Medium | Easy | Error log substring (product ID) | Logs likely shorter path than span attrs |
+| 8 | recommendationCacheFailure | Medium | Easy | Redis client spans + cache-related logs | Multi-signal corroboration |
+| 9 | paymentUnreachable | Easy | Easy | Error logs (connection refused) | 100% errors localized to one service |
+| 10 | adHighCpu | Medium | Easy | `process.runtime.jvm.cpu.utilization` | Tests multi-signal literacy |
+| 11 | emailMemoryLeak | Medium | Easy | `process.runtime.*.memory.*` series | Tests multi-signal literacy + time-series reasoning |
+| 12 | failedReadinessProbe | Medium | Easy / Hard | k8s event log, if ingested | Conditional on collector k8s receiver |
+| 13 | llmInaccurateResponse | None | None | — | Hard negative control |
+| 14 | llmRateLimitError | Easy | Easy | Error logs (429 / rate limit text) | Message text carries the cause |
+| 15 | imageSlowLoad | None / Medium | None / Medium | Browser-side spans, if emitted | Conditional on frontend OTel JS reaching dataset |
+
+### What got easier — and what that means for the harness
+
+Compared to the traces-only baseline, six scenarios got
+substantially easier on RCA: **#3, #8, #10, #11** (via runtime
+metrics), and **#1, #5, #9** (via error log stack traces). The
+implication is that the harness's measurement of "epistemic
+discipline" has narrowed — most scenarios now have a clear
+signal somewhere. The shift is from "does the model know when
+the data is insufficient?" toward "does the model know which
+signal to look at?"
+
+That's a worthwhile thing to measure on its own — model
+**signal-type discrimination** (logs vs metrics vs traces for a
+given question) is a distinct capability and a real-world
+debugging skill. But if you also want to preserve a strong
+epistemic-discipline track, the cleanest path is:
+
+1. Run **two variants** of the harness: a full-signals run and
+   a traces-only run. Models that score similarly on both have
+   broad signal literacy; models that crater on traces-only
+   either depend on the easy path or lack signal-type
+   discrimination.
+2. Deliberately exclude the kafka receiver and k8s events
+   receiver to keep #2 and #12 as honest "what would you need"
+   tests under the full-signals condition.
+3. Keep #13 (and probably #15) as negative controls under
+   either condition.
