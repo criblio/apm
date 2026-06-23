@@ -21,6 +21,7 @@ import {
   type KeyboardEvent,
 } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { Button } from '@capra/core';
 import { runInvestigation, type LoopEvent } from '../api/agentLoop';
 import {
   buildSeedPrompt,
@@ -522,14 +523,14 @@ export default function InvestigatePage() {
             </>
           )}
           {running ? (
-            <button className={s.btn} onClick={handleStop}>
+            <Button variant="secondary" size="sm" appearance="danger" onClick={handleStop}>
               Stop
-            </button>
+            </Button>
           ) : (
             !isEmpty && (
-              <button className={s.btn} onClick={handleNew}>
+              <Button variant="secondary" size="sm" onClick={handleNew}>
                 New investigation
-              </button>
+              </Button>
             )
           )}
         </div>
@@ -580,7 +581,7 @@ export default function InvestigatePage() {
             <div className={s.exportHeader}>
               <span className={s.exportTitle}>Investigation snapshot</span>
               <span className={s.exportHint}>Right-click the image → Save image as...</span>
-              <button className={s.btn} onClick={() => setExportedPng(null)}>Close</button>
+              <Button variant="tertiary" size="sm" onClick={() => setExportedPng(null)}>Close</Button>
             </div>
             <div className={s.exportBody}>
               <img src={exportedPng} alt="Investigation export" className={s.exportImg} />
@@ -606,9 +607,9 @@ function EmptyState({ onPick }: { onPick: (prompt: string) => void }) {
       </div>
       <div className={s.suggestions}>
         {EMPTY_SUGGESTIONS.map((sg) => (
-          <button key={sg} className={s.suggestion} onClick={() => onPick(sg)}>
+          <Button key={sg} variant="tertiary" size="sm" FORCE__className={s.suggestion} onClick={() => onPick(sg)}>
             {sg}
-          </button>
+          </Button>
         ))}
       </div>
     </div>
@@ -755,12 +756,12 @@ function SearchCard({
         </div>
         {entry.status === 'pending' && entry.needsApproval && (
           <div className={s.toolCallActions}>
-            <button className={`${s.btn} ${s.btnDanger}`} onClick={onSkip}>
+            <Button variant="secondary" size="sm" appearance="danger" onClick={onSkip}>
               Skip
-            </button>
-            <button className={`${s.btn} ${s.btnPrimary}`} onClick={onApprove}>
+            </Button>
+            <Button variant="primary" size="sm" onClick={onApprove}>
               Run Query
-            </button>
+            </Button>
           </div>
         )}
       </div>

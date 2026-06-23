@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
+import { Button } from '@capra/core';
 import { listServices, listOperations } from '../api/search';
 import { LOOKBACK_OPTIONS, type SearchFormState } from './searchFormState';
 import s from './SearchForm.module.css';
@@ -167,9 +168,14 @@ export default function SearchForm({ state, onSubmit, loading }: Props) {
         />
       </div>
 
-      <button type="submit" className={s.primaryBtn} disabled={loading || !draft.service}>
+      <Button
+        type="submit"
+        variant="primary"
+        pending={loading}
+        disabled={!draft.service}
+      >
         {loading ? 'Searching…' : 'Find Traces'}
-      </button>
+      </Button>
     </form>
   );
 }
