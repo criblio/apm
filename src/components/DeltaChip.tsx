@@ -25,7 +25,7 @@
  * mode is for: blue surge, red drop ≥50%.
  */
 import { memo } from 'react';
-import s from './DeltaChip.module.css';
+import { Tag, type TagColor } from '@capra/core';
 
 export type DeltaMode = 'rel' | 'points' | 'relNeutral' | 'rateDrop';
 
@@ -77,23 +77,23 @@ function DeltaChipImpl({ curr, prev, mode, threshold, title }: Props) {
   //   rateDrop:     increase neutral blue (load spikes are informative,
   //                 not bad), decrease ≤50% = red (service stopped
   //                 reaching its callers), other decreases = neutral
-  let toneClass = s.neutral;
+  let color: TagColor = 'default';
   if (mode === 'rel' || mode === 'points') {
-    toneClass = delta > 0 ? s.worse : s.better;
+    color = delta > 0 ? 'danger' : 'success';
   } else if (mode === 'rateDrop') {
     // ratio = curr/prev; drops below the threshold are red.
     const ratio = curr / prev;
     if (delta < 0 && ratio <= RATE_DROP_THRESHOLD) {
-      toneClass = s.worse;
+      color = 'danger';
     }
-    // surges and small drops stay neutral
+    // surges and small drops stay neutral (`default`).
   }
   const arrow = delta > 0 ? '▲' : '▼';
 
   return (
-    <span className={`${s.chip} ${toneClass}`} title={title ?? `vs previous window: ${text}`}>
-      {arrow} {text}
-    </span>
+    <Tag color={color} aria-label={title ?? `vs previous window: ${text}`}>
+      {`${arrow} ${text}`}
+    </Tag>
   );
 }
 
