@@ -202,6 +202,15 @@ users.
   `criblapm_trace_originators`; cost us a day. Same family as the
   mv-expand/export incompatibility. Bug report pending; P0.1 guards
   against reintroduction on our side.
+- **Lookup-join flap across consecutive queries** — found 2026-06-23
+  via the P0.2 canary. The same identical KQL against
+  `criblapm_trace_originators` returns `joined=50` and then
+  `joined=0` seconds apart, with no scheduled-search run in between.
+  The write side reports success (`totalEventsOut: 6`,
+  `totalEventsDropped: 0`). Suspected worker-cache or read-during-
+  overwrite race on the lookup CSV. The canary correctly fires
+  when this happens; users see the trace-originator-based error
+  filter wash in and out. Bug report pending.
 - **Metrics: `_metric_name` in wide-column format** — dimensions
   indistinguishable from metric values; we use a blocklist
   workaround. Feature request submitted.
