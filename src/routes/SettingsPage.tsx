@@ -8,6 +8,7 @@ import { loadAppSettings, saveAppSettings } from '../api/appSettings';
 import { listNotificationTargets, type NotificationTarget } from '../api/notificationTargets';
 import { setCurrentDataset, useDataset } from '@cribl/app-utils/dataset';
 import { setStreamFilterEnabled } from '../api/streamFilter';
+import { setLowVolumeMode } from '../api/lowVolumeMode';
 import { setSearchCadence, CADENCE_OPTIONS, type CadenceOption } from '@cribl/app-utils/cadence';
 import {
   CRIBLAPM_PREFIX,
@@ -17,6 +18,7 @@ import {
 import { DEFAULT_FILTER_RULES } from '../api/errorFilter';
 import { listTraceOriginators, type TraceOriginatorRow } from '../api/search';
 import { useStreamFilterEnabled } from '../hooks/useStreamFilter';
+import { useLowVolumeMode } from '../hooks/useLowVolumeMode';
 import { useSearchCadence } from '../hooks/useSearchCadence';
 import s from './SettingsPage.module.css';
 
@@ -41,12 +43,14 @@ const DATASET_NAME_PATTERN = /^[a-zA-Z0-9_-]+$/;
 export default function SettingsPage() {
   const currentDataset = useDataset();
   const currentStreamFilter = useStreamFilterEnabled();
+  const currentLowVolume = useLowVolumeMode();
   const currentCadence = useSearchCadence();
   const [draft, setDraft] = useState<string>(currentDataset);
   const [saving, setSaving] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [streamFilterSaving, setStreamFilterSaving] = useState(false);
+  const [lowVolumeSaving, setLowVolumeSaving] = useState(false);
   const [cadenceSaving, setCadenceSaving] = useState(false);
   const [notifTargets, setNotifTargets] = useState<NotificationTarget[]>([]);
   const [selectedTargets, setSelectedTargets] = useState<string[]>([]);
@@ -66,6 +70,9 @@ export default function SettingsPage() {
       }
       if (s?.disabledFilterRules) {
         setDisabledRules(s.disabledFilterRules);
+      }
+      if (s?.lowVolumeMode === true) {
+        setLowVolumeMode(true);
       }
     }).catch(() => {});
     listTraceOriginators()
@@ -148,6 +155,23 @@ export default function SettingsPage() {
     setFlash(null);
   }
 
+  async function handleLowVolumeToggle(next: boolean) {
+    if (lowVolumeSaving) return;
+    setLowVolumeSaving(true);
+    setError(null);
+    try {
+      setLowVolumeMode(next);
+      await saveAppSettings({ lowVolumeMode: next });
+      setFlash(`Low-volume mode ${next ? 'on' : 'off'}. Re-provision below to apply the new alert thresholds.`);
+      setTimeout(() => setFlash(null), 6000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setLowVolumeMode(!next);
+    } finally {
+      setLowVolumeSaving(false);
+    }
+  }
+
   async function handleStreamFilterToggle(next: boolean) {
     if (streamFilterSaving) return;
     setStreamFilterSaving(true);
@@ -198,6 +222,7 @@ export default function SettingsPage() {
       items: [
         { id: 'dataset', label: 'Dataset' },
         { id: 'cadence', label: 'Detection cadence' },
+        { id: 'low-volume', label: 'Low-volume mode' },
         { id: 'notifications', label: 'Notification targets' },
       ],
     },
@@ -395,6 +420,40 @@ export default function SettingsPage() {
         </div>
 
         {flash && <span className={s.successFlash}>{flash}</span>}
+      </div>
+
+      <div id="low-volume" className={s.card}>
+        <h2 className={s.sectionTitle}>Low-volume mode</h2>
+        <p className={s.sectionHelp}>
+          The default alert thresholds are tuned for production-shaped
+          traffic — ≥5% error rate with ≥20 spans, or a 3× deviation
+          above a stable baseline with ≥100 prior requests, or a
+          catastrophic ramp on a previously-clean service. Services
+          with very thin traffic (homelab, demo workloads, rarely-called
+          endpoints) won't clear those thresholds even when broken.
+          Enabling this restores an older arm that fires on as little as
+          2 errors at ≥1% rate — useful for catching things like an LLM
+          rate-limit blowup on a low-RPS endpoint at the cost of more
+          background noise on noisier workloads.
+        </p>
+
+        <label className={s.toggleRow}>
+          <input
+            type="checkbox"
+            checked={currentLowVolume}
+            disabled={lowVolumeSaving}
+            onChange={(e) => void handleLowVolumeToggle(e.target.checked)}
+          />
+          <div>
+            <div className={s.toggleTitle}>Enable low-volume detection arm (≥2 errors AND ≥1% rate)</div>
+            <div className={s.toggleSub}>
+              Off by default. Toggling requires a re-provision below to
+              take effect — the alert search bakes in its KQL at
+              scheduled-search creation time, so the new arm only
+              becomes active after the next deploy or "Reconcile".
+            </div>
+          </div>
+        </label>
       </div>
 
       <div id="notifications" className={s.card}>

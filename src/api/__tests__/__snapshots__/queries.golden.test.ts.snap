@@ -40,8 +40,9 @@ exports[`queries.ts — golden snapshots + invariants > alertEvaluator > snapsho
     //      service just broke" from low-volume background noise.
     // Tradeoff: silences chaos scenarios on ultra-low-volume
     // services (llmRateLimit / recommendationCache product-reviews).
-    // Reintroducing those would need an explicit "low-volume mode"
-    // toggle in settings rather than default-on for everyone.
+    // The low-volume-mode setting (P1.2) re-enables an older arm
+    // for those — opt-in only since it costs precision on noisier
+    // workloads.
     | extend signal_type=case(
                curr_requests == 0 and prev_requests >= 50, "silent",
                curr_err_pct >= 5 and curr_requests >= 20, "error_rate",
@@ -187,8 +188,9 @@ exports[`queries.ts — golden snapshots + invariants > alertEvaluatorExportStat
     //      service just broke" from low-volume background noise.
     // Tradeoff: silences chaos scenarios on ultra-low-volume
     // services (llmRateLimit / recommendationCache product-reviews).
-    // Reintroducing those would need an explicit "low-volume mode"
-    // toggle in settings rather than default-on for everyone.
+    // The low-volume-mode setting (P1.2) re-enables an older arm
+    // for those — opt-in only since it costs precision on noisier
+    // workloads.
     | extend signal_type=case(
                curr_requests == 0 and prev_requests >= 50, "silent",
                curr_err_pct >= 5 and curr_requests >= 20, "error_rate",
@@ -339,8 +341,9 @@ exports[`queries.ts — golden snapshots + invariants > alertHistorySend > snaps
     //      service just broke" from low-volume background noise.
     // Tradeoff: silences chaos scenarios on ultra-low-volume
     // services (llmRateLimit / recommendationCache product-reviews).
-    // Reintroducing those would need an explicit "low-volume mode"
-    // toggle in settings rather than default-on for everyone.
+    // The low-volume-mode setting (P1.2) re-enables an older arm
+    // for those — opt-in only since it costs precision on noisier
+    // workloads.
     | extend signal_type=case(
                curr_requests == 0 and prev_requests >= 50, "silent",
                curr_err_pct >= 5 and curr_requests >= 20, "error_rate",

@@ -34,6 +34,12 @@ export interface AppSettings {
    *  value `true` means "disable this rule on Home". Missing/false
    *  means "rule is enabled" (the default). */
   disabledFilterRules?: Record<string, boolean>;
+  /** Low-volume mode: when true, the alert evaluator includes an
+   *  additional `>=2 errors AND >=1% rate` arm for services whose
+   *  traffic is too thin to clear the production thresholds. Off by
+   *  default; re-provision after toggling so the alert search picks
+   *  up the new KQL. See ROADMAP §P1.2. */
+  lowVolumeMode?: boolean;
   [k: string]: unknown;
 }
 
