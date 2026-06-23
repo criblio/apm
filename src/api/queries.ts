@@ -661,6 +661,41 @@ export function alertHistorySend(): string {
 }
 
 /**
+ * Noise-budget aggregation (P1.1) — per-service fire counts read
+ * from the alert-history events already in the dataset. Powers the
+ * "is this threshold causing too many false alarms?" question that
+ * every detection change should answer.
+ *
+ * Output schema: one row per (svc, day) with counts of how many
+ * times an alert fired AND how many alerts were "persistent" (the
+ * `is_persistent` flag set by alertEvaluator means the current and
+ * prior windows were both elevated — usually a real problem, not
+ * a noise event). A high fires count with low persistent count is
+ * the signature of an over-sensitive threshold.
+ *
+ * The query lives here (not in provisionedSearches.ts) because
+ * other surfaces — the eval harness, an admin-only debug page —
+ * may want to run it ad-hoc against a shorter window.
+ *
+ * Window: 7d. Day bucket is `bin(_time, 1d)`. The default scheduled
+ * cadence in provisionedSearches.ts runs this daily and exports to
+ * $vt_results for later reads.
+ */
+export function noiseBudgetByService(): string {
+  return `${datasetClause()}
+    | where datatype == "criblapm_alert"
+    | where event_type == "firing"
+    | extend day=bin(_time, 1d)
+    | summarize fires=count(),
+                persistent_fires=countif(tostring(is_persistent)=="true"),
+                services_distinct_alerts=dcount(alert_id)
+      by svc, day
+    | extend noisy_fires=fires - persistent_fires
+    | project svc, day, fires, persistent_fires, noisy_fires, services_distinct_alerts
+    | sort by day desc, fires desc`;
+}
+
+/**
  * Time-bucketed request count + p95 per service. Powers service-row
  * sparklines on the Home page and the RED charts on the Service detail page.
  *

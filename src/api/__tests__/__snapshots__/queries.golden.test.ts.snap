@@ -695,6 +695,20 @@ exports[`queries.ts — golden snapshots + invariants > metricTimeSeries (groupe
     | sort by bucket asc"
 `;
 
+exports[`queries.ts — golden snapshots + invariants > noiseBudgetByService > snapshot stable 1`] = `
+"dataset="otel"
+    | where datatype == "criblapm_alert"
+    | where event_type == "firing"
+    | extend day=bin(_time, 1d)
+    | summarize fires=count(),
+                persistent_fires=countif(tostring(is_persistent)=="true"),
+                services_distinct_alerts=dcount(alert_id)
+      by svc, day
+    | extend noisy_fires=fires - persistent_fires
+    | project svc, day, fires, persistent_fires, noisy_fires, services_distinct_alerts
+    | sort by day desc, fires desc"
+`;
+
 exports[`queries.ts — golden snapshots + invariants > operationAnomaliesFromLookup > snapshot stable 1`] = `
 "dataset="otel" | where isnotnull(end_time_unix_nano)
     | extend svc=tostring(resource.attributes['service.name']),
