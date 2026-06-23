@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Button, Menu } from '@capra/core';
+import { Button, Menu, Tag, type TagColor } from '@capra/core';
 import { ChevronDown } from '@capra/icons';
 import StatusBanner from '../components/StatusBanner';
 import AlertTimeline from '../components/AlertTimeline';
@@ -36,11 +36,11 @@ function parseAlertRows(rows: Record<string, unknown>[]): CachedAlertRow[] {
   }));
 }
 
-const STATUS_STYLE: Record<string, { label: string; className: string }> = {
-  ok: { label: 'OK', className: s.statusOk },
-  pending: { label: 'Pending', className: s.statusPending },
-  firing: { label: 'Firing', className: s.statusFiring },
-  resolving: { label: 'Resolving', className: s.statusResolving },
+const STATUS_STYLE: Record<string, { label: string; color: TagColor }> = {
+  ok: { label: 'OK', color: 'success' },
+  pending: { label: 'Pending', color: 'warning' },
+  firing: { label: 'Firing', color: 'danger' },
+  resolving: { label: 'Resolving', color: 'info' },
 };
 
 const SIGNAL_LABELS: Record<string, string> = {
@@ -271,7 +271,7 @@ export default function AlertsPage() {
                   <td style={{ whiteSpace: 'nowrap' }}>{new Date(inc.startTime).toLocaleString()}</td>
                   <td style={{ whiteSpace: 'nowrap' }}>
                     {inc.endTime ? new Date(inc.endTime).toLocaleString() : (
-                      <span className={`${s.statusBadge} ${s.statusFiring}`}>Active</span>
+                      <Tag color="danger">Active</Tag>
                     )}
                   </td>
                   <td>
@@ -319,7 +319,7 @@ export default function AlertsPage() {
                 const ss = STATUS_STYLE[a.alertStatus] ?? STATUS_STYLE.ok;
                 return (
                   <tr key={a.alertId}>
-                    <td><span className={`${s.statusBadge} ${ss.className}`}>{ss.label}</span></td>
+                    <td><Tag color={ss.color}>{ss.label}</Tag></td>
                     <td>
                       <Link to={`/service/${encodeURIComponent(a.service)}?range=-1h`} className={s.svcLink} style={{ color: serviceColor(a.service) }}>
                         {a.service}
