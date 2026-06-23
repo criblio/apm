@@ -10,8 +10,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Clone shared framework
-        run: git clone --depth 1 https://github.com/criblio/cribl-search-app-framework.git ../cribl-search-app-framework
+      # Pin the framework to a SHA recorded in-repo (.framework-sha).
+      # PR #66 shipped a latent break through green CI because we
+      # cloned --depth 1 of framework master with no record of which
+      # SHA we'd built against. Bumping the framework is now a
+      # deliberate one-line PR (see CLAUDE.md "Framework SHA pin").
+      - name: Clone shared framework at pinned SHA
+        run: |
+          set -euo pipefail
+          SHA=$(tr -d '[:space:]' < .framework-sha)
+          test -n "$SHA" || { echo "::error::.framework-sha is empty"; exit 1; }
+          git clone https://github.com/criblio/cribl-search-app-framework.git ../cribl-search-app-framework
+          git -C ../cribl-search-app-framework checkout "$SHA"
+          echo "Framework pinned to $SHA"
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
