@@ -501,7 +501,7 @@ export function getProvisioningPlan(): ProvisionedSearch[] {
     // for the "what changed?" RCA question without taxing workers.
     {
       id: 'criblapm__deploy_events',
-      name: 'Cribl APM - deploy/change correlation events',
+      name: 'Cribl APM - deploy change correlation events',
       description:
         'Cribl APM: detects new (service.name, service.version) tuples in the last hour and emits criblapm_deploy events via | send group="search" so the deploy history is searchable from the dataset. Read by Investigator context and (eventually) Service Detail RED-chart markers.',
       query: Q.deployEventsSend(),
@@ -522,7 +522,7 @@ export function getProvisioningPlan(): ProvisionedSearch[] {
     // day has passed.
     {
       id: 'criblapm__noise_budget',
-      name: 'Cribl APM - alert noise budget (per-svc, per-day fires)',
+      name: 'Cribl APM - alert noise budget',
       description:
         'Cribl APM: counts alert-firing events per (service, day) over the last 7 days, separating persistent fires (real problems) from noisy fires (over-sensitive thresholds). Read by the eval harness as the acceptance metric for threshold changes (P1.1). Output in $vt_results; runs daily at 00:35 UTC.',
       query: Q.noiseBudgetByService(),
