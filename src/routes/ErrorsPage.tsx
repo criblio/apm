@@ -1,5 +1,6 @@
 import { Fragment, useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { Card } from '@capra/core';
 import TimeRangePicker from '../components/TimeRangePicker';
 import StatusBanner from '../components/StatusBanner';
 import InvestigateButton from '../components/InvestigateButton';
@@ -147,21 +148,21 @@ export default function ErrorsPage() {
       {error && <StatusBanner kind="error">{error}</StatusBanner>}
 
       {loading ? (
-        <div className={s.card}>
+        <Card className={s.card}>
           <div className={s.skeleton}>
             {[85, 70, 90, 65, 80].map((w, i) => (
               <div key={i} className={s.skeletonBar} style={{ width: `${w}%` }} />
             ))}
           </div>
-        </div>
+        </Card>
       ) : filtered.length === 0 ? (
-        <div className={s.card}>
+        <Card className={s.card}>
           <div className={s.empty}>
             {filter ? 'No errors match your filter.' : 'No errors in this time range.'}
           </div>
-        </div>
+        </Card>
       ) : (
-        <div className={s.card}>
+        <Card className={s.card}>
           <table className={s.table}>
             <thead>
               <tr>
@@ -254,7 +255,7 @@ export default function ErrorsPage() {
               })}
             </tbody>
           </table>
-        </div>
+        </Card>
       )}
     </div>
   );
