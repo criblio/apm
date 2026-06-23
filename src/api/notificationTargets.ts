@@ -29,7 +29,12 @@ export async function listNotificationTargets(): Promise<NotificationTarget[]> {
       name: t.name ?? t.id,
       type: t.type ?? 'unknown',
     }));
-  } catch {
+  } catch (err) {
+    // Network / parse failure fetching notification targets. Returning
+    // [] lets Settings render "no targets configured" rather than
+    // crash, but the empty state was indistinguishable from a real
+    // empty list — log so failures show up in dev tools.
+    console.error('[notificationTargets] listNotificationTargets failed:', err);
     return [];
   }
 }

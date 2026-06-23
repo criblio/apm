@@ -99,7 +99,13 @@ export async function runPreflight(
       listServiceSummaries(earliest, latest),
       listServiceSummaries(prev.earliest, prev.latest),
     ]);
-  } catch {
+  } catch (err) {
+    // Preflight feeds the Investigator's anomaly hints. Swallowing
+    // the failure silently lets the agent run with an empty signal
+    // list — looks like "nothing wrong" instead of "we couldn't
+    // check." Log so dev tools / pack logs show the cause while
+    // preserving the agent-can-still-run fallback.
+    console.error('[agentPreflight] anomaly probe failed:', err);
     return empty;
   }
 
