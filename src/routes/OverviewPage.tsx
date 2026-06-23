@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Button } from '@capra/core';
+import { Button, Tag, type TagColor } from '@capra/core';
 import TimeRangePicker from '../components/TimeRangePicker';
 import StatusBanner from '../components/StatusBanner';
 import DetectedIssuesPanel from '../components/DetectedIssuesPanel';
@@ -26,6 +26,28 @@ import type {
 import s from './OverviewPage.module.css';
 
 const DEFAULT_RANGE = '-1h';
+
+/** Health-bucket → Capra Tag color. Matches the SIGNAL_TAG_COLOR
+ *  map in DetectedIssuesPanel so the home table + the issues panel
+ *  speak the same color vocabulary for the same conditions. */
+const HEALTH_TAG_COLOR: Record<string, TagColor> = {
+  healthy: 'success',
+  watch: 'warning',
+  warn: 'warning',
+  critical: 'danger',
+  idle: 'default',
+  silent: 'danger',
+  traffic_drop: 'purple',
+  latency_anomaly: 'cyan',
+};
+
+/** Alert event-type → Tag color. Recent alerts table on the home. */
+const ALERT_EVENT_TAG_COLOR: Record<string, TagColor> = {
+  firing: 'danger',
+  resolved: 'success',
+  pending: 'warning',
+  resolving: 'info',
+};
 
 function fmtRate(rpm: number): string {
   if (rpm >= 1000) return `${(rpm / 1000).toFixed(1)}k/min`;
@@ -256,9 +278,9 @@ export default function OverviewPage() {
                     </Link>
                   </td>
                   <td>
-                    <span className={s.healthBadge} style={{ background: health.color + '20', color: health.color }}>
+                    <Tag color={HEALTH_TAG_COLOR[health.bucket] ?? 'default'}>
                       {health.bucket.replace('_', ' ')}
-                    </span>
+                    </Tag>
                   </td>
                   <td className={s.num}>{(svc.errorRate * 100).toFixed(2)}%</td>
                   <td className={s.num}>{svc.requests.toLocaleString()}</td>
@@ -302,9 +324,9 @@ export default function OverviewPage() {
                 <tr key={i}>
                   <td style={{ whiteSpace: 'nowrap' }}>{new Date(a.time).toLocaleString()}</td>
                   <td>
-                    <span className={`${s.eventBadge} ${a.eventType === 'firing' ? s.eventFiring : s.eventResolved}`}>
+                    <Tag color={ALERT_EVENT_TAG_COLOR[a.eventType] ?? 'default'}>
                       {a.eventType}
-                    </span>
+                    </Tag>
                   </td>
                   <td>
                     <Link to={`/service/${encodeURIComponent(a.service)}?range=-1h`} className={s.svcLink} style={{ color: serviceColor(a.service) }}>

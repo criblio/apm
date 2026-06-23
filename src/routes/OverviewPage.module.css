@@ -142,26 +142,6 @@
 }
 .svcLink:hover { text-decoration: underline; }
 
-.healthBadge {
-  display: inline-flex;
-  padding: 2px 8px;
-  border-radius: var(--cds-radius-sm);
-  font-size: var(--cds-font-size-xs);
-  font-weight: var(--cds-font-weight-semibold);
-  text-transform: capitalize;
-}
-
-.eventBadge {
-  display: inline-flex;
-  padding: 2px 6px;
-  border-radius: var(--cds-radius-sm);
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-}
-.eventFiring { background: rgba(220,38,38,0.12); color: #dc2626; }
-.eventResolved { background: rgba(16,185,129,0.12); color: #059669; }
-
 /* Quick links */
 .quickLinks {
   display: grid;
