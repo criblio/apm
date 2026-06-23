@@ -65,6 +65,7 @@ const BUILDERS: Array<{ id: string; call: () => string }> = [
   { id: 'alertEvaluator',                call: () => Q.alertEvaluator() },
   { id: 'alertEvaluatorExportState',     call: () => Q.alertEvaluatorExportState() },
   { id: 'alertHistorySend',              call: () => Q.alertHistorySend() },
+  { id: 'deployEventsSend',              call: () => Q.deployEventsSend() },
   { id: 'noiseBudgetByService',          call: () => Q.noiseBudgetByService() },
   { id: 'serviceTimeSeries',             call: () => Q.serviceTimeSeries(60) },
   { id: 'serviceStatusCodeMix',          call: () => Q.serviceStatusCodeMix(60, 'test-svc') },

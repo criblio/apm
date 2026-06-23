@@ -696,6 +696,59 @@ export function noiseBudgetByService(): string {
 }
 
 /**
+ * Deploy / change correlation detector (P2.2 phase 1).
+ *
+ * "What changed?" is the first RCA question — for an alert at 14:32
+ * on payment, the most useful one-line context is "payment deployed
+ * 12m before this alert." OTel resources already carry
+ * `service.version`; this scheduled search detects when a new
+ * (svc, version) tuple first appears in the recent window and emits
+ * a `criblapm_deploy` event to the dataset via the same
+ * `| send group="search"` pattern as alertHistorySend.
+ *
+ * Window / cadence (see provisionedSearches.ts): scheduled every
+ * 30 min over a -1h window. `first_seen` filter selects only
+ * versions whose earliest observed span is within the last ~30 min,
+ * so a stable version doesn't re-emit every cycle. Initial run on
+ * a fresh install emits every currently-active version once —
+ * that's fine, it gives the Investigator a baseline of "what's
+ * deployed right now."
+ *
+ * Event schema:
+ *   _time           : emission timestamp (= now() at search run)
+ *   dataset         : the lakehouse dataset name (current store)
+ *   datatype        : "criblapm_deploy" (matches alertHistorySend's
+ *                     convention so | search datatype=="criblapm_*"
+ *                     covers both)
+ *   svc             : service.name
+ *   version         : service.version
+ *   first_seen      : min(_time) of spans carrying this (svc, version)
+ *                     in the search window
+ *   n_spans         : count of spans for that tuple in the window
+ *
+ * Read-side: a follow-up PR adds the Investigator context hook
+ * ("deployed Nm before this alert") and Service Detail RED-chart
+ * markers. This PR ships only the data pipeline.
+ */
+export function deployEventsSend(): string {
+  const ds = quoteDataset();
+  return `${spansBase()}
+    | extend svc=tostring(resource.attributes['service.name']),
+             version=tostring(resource.attributes['service.version'])
+    | where isnotempty(svc) and isnotempty(version)
+    | summarize first_seen=min(_time), n_spans=count() by svc, version
+    // Emit only newly-appeared (svc, version) tuples. The
+    // 30-minute window is intentionally narrower than the search's
+    // cadence so a stable version's first_seen (≈ start-of-window,
+    // ~ -1h) never trips this filter again after its first emission.
+    | where first_seen >= datetime_add('minute', -30, now())
+    | project _time=now(), dataset="${ds}",
+              datatype="criblapm_deploy",
+              svc, version, first_seen, n_spans
+    | send group="search"`;
+}
+
+/**
  * Time-bucketed request count + p95 per service. Powers service-row
  * sparklines on the Home page and the RED charts on the Service detail page.
  *

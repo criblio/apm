@@ -537,6 +537,23 @@ exports[`queries.ts — golden snapshots + invariants > dependencies > snapshot 
     | sort by callCount desc"
 `;
 
+exports[`queries.ts — golden snapshots + invariants > deployEventsSend > snapshot stable 1`] = `
+"dataset="otel" | where isnotnull(end_time_unix_nano)
+    | extend svc=tostring(resource.attributes['service.name']),
+             version=tostring(resource.attributes['service.version'])
+    | where isnotempty(svc) and isnotempty(version)
+    | summarize first_seen=min(_time), n_spans=count() by svc, version
+    // Emit only newly-appeared (svc, version) tuples. The
+    // 30-minute window is intentionally narrower than the search's
+    // cadence so a stable version's first_seen (≈ start-of-window,
+    // ~ -1h) never trips this filter again after its first emission.
+    | where first_seen >= datetime_add('minute', -30, now())
+    | project _time=now(), dataset="otel",
+              datatype="criblapm_deploy",
+              svc, version, first_seen, n_spans
+    | send group="search""
+`;
+
 exports[`queries.ts — golden snapshots + invariants > errorPropagationRollup > snapshot stable 1`] = `
 "dataset="otel" | where isnotnull(end_time_unix_nano)
     | where tostring(status.code) == "2"
