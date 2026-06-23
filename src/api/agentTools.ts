@@ -104,7 +104,13 @@ interface EditNotebookArgs {
 function parseArgs<T>(raw: string): T {
   try {
     return JSON.parse(raw) as T;
-  } catch {
+  } catch (err) {
+    // Malformed tool_call.function.arguments — most likely a model
+    // hallucination of valid JSON. Returning {} keeps the call
+    // moving (the tool itself will reject required-field misses),
+    // but logging makes the model's mistake visible instead of
+    // silently lossy.
+    console.error('[agentTools] parseArgs failed; raw:', raw, 'err:', err);
     return {} as T;
   }
 }
