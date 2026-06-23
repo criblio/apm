@@ -145,6 +145,29 @@ npm run provision          # reconcile
 npm run provision -- --dry # dry-run (show plan without applying)
 ```
 
+### Framework SHA pin
+
+The shared framework (`cribl-search-app-framework`) is consumed
+via a local `file:..` reference in `package.json`. CI clones it
+at the SHA recorded in `.framework-sha`. PR #66 shipped a latent
+break through green CI because we cloned master with no SHA
+record; the pin makes framework bumps deliberate.
+
+**To bump the framework:**
+
+1. Check out the framework repo locally and pull the SHA you
+   want to ship.
+2. In this repo, replace the contents of `.framework-sha` with
+   that 40-char SHA (one line, trailing newline OK).
+3. Run `npm run lint && npm test && npx tsc --noEmit` to confirm
+   the new framework still builds against APM master.
+4. Open a small PR titled `chore: bump framework SHA to <short>`
+   with the framework PRs included in the bump listed in the body.
+
+Local devs are expected to keep their framework checkout at the
+recorded SHA. If your local is divergent, expect to see lint or
+type errors CI won't reproduce.
+
 ### Cutting a release
 
 Releases are triggered by pushing a `vX.Y.Z` tag — the `.github/
