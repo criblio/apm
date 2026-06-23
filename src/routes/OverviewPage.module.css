@@ -10,14 +10,16 @@
   justify-content: space-between;
 }
 .title {
-  font-size: var(--cds-font-size-xxl);
-  font-weight: var(--cds-font-weight-semibold);
-  color: var(--cds-color-fg);
+  /* Capra design-system typography token. Encodes the font shorthand
+     (family, size, weight, line-height) so the page heading matches
+     the rest of Cribl's chrome. */
+  font: var(--cds2-typography-heading-xl);
+  color: var(--cds2-color-foreground-default);
   margin: 0;
 }
 .subtitle {
-  font-size: var(--cds-font-size-sm);
-  color: var(--cds-color-fg-muted);
+  font: var(--cds2-typography-body-sm-normal);
+  color: var(--cds2-color-foreground-muted);
   margin: var(--cds-space-xs) 0 0;
 }
 .controls {

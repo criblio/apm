@@ -11,14 +11,13 @@
   gap: var(--cds-space-lg);
 }
 .title {
-  font-size: var(--cds-font-size-xxl);
-  font-weight: var(--cds-font-weight-semibold);
-  color: var(--cds-color-fg);
+  font: var(--cds2-typography-heading-xl);
+  color: var(--cds2-color-foreground-default);
   margin: 0;
 }
 .subtitle {
-  font-size: var(--cds-font-size-sm);
-  color: var(--cds-color-fg-muted);
+  font: var(--cds2-typography-body-sm-normal);
+  color: var(--cds2-color-foreground-muted);
   margin: var(--cds-space-xs) 0 0;
 }
 .controls {

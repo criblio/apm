@@ -71,14 +71,13 @@
 }
 .heroTitle {
   margin: 0;
-  font-size: 22px;
-  font-weight: var(--cds-font-weight-semibold);
-  color: var(--cds-color-fg);
+  font: var(--cds2-typography-heading-xl);
+  color: var(--cds2-color-foreground-default);
 }
 .heroSubtitle {
   margin-top: 4px;
-  font-size: 12px;
-  color: var(--cds-color-fg-muted);
+  font: var(--cds2-typography-body-sm-normal);
+  color: var(--cds2-color-foreground-muted);
 }
 .heroSubtitle code {
   background: var(--cds-color-bg-subtle);
