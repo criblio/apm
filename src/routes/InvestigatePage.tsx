@@ -21,7 +21,7 @@ import {
   type KeyboardEvent,
 } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Button } from '@capra/core';
+import { Button, Modal } from '@capra/core';
 import { runInvestigation, type LoopEvent } from '../api/agentLoop';
 import {
   buildSeedPrompt,
@@ -575,20 +575,20 @@ export default function InvestigatePage() {
         </div>
       </div>
 
-      {exportedPng && (
-        <div className={s.exportOverlay} onClick={() => setExportedPng(null)}>
-          <div className={s.exportModal} onClick={(e) => e.stopPropagation()}>
-            <div className={s.exportHeader}>
-              <span className={s.exportTitle}>Investigation snapshot</span>
-              <span className={s.exportHint}>Right-click the image → Save image as...</span>
-              <Button variant="tertiary" size="sm" onClick={() => setExportedPng(null)}>Close</Button>
-            </div>
-            <div className={s.exportBody}>
-              <img src={exportedPng} alt="Investigation export" className={s.exportImg} />
-            </div>
-          </div>
+      <Modal
+        isOpen={exportedPng !== null}
+        onIsOpenChange={(open) => { if (!open) setExportedPng(null); }}
+        title="Investigation snapshot"
+        size="lg"
+        footer={null}
+      >
+        <div className={s.exportHint}>
+          Right-click the image → Save image as...
         </div>
-      )}
+        {exportedPng && (
+          <img src={exportedPng} alt="Investigation export" className={s.exportImg} />
+        )}
+      </Modal>
     </div>
   );
 }
