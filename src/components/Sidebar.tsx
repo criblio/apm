@@ -11,7 +11,7 @@
  * once we've mapped each one (Capra uses `<SvgIcon>` components
  * from a fixed catalog — not 1:1 with our current set).
  */
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { VerticalNavigation } from '@capra/core';
 
 interface NavItem {
@@ -165,27 +165,40 @@ function pathMatches(pathname: string, item: NavItem): boolean {
 
 export default function Sidebar() {
   const location = useLocation();
+  const navigate = useNavigate();
+
+  // VerticalNavigation.Item renders a plain <a> when given `href` —
+  // it does NOT participate in the Capra RouterProvider bridge, so
+  // a raw `href={item.to}` does full-page navigation and the iframe
+  // ends up at a route the platform doesn't recognize (= blank
+  // page). Drive clicks through React Router explicitly; visual +
+  // active state are already correct via `isActive`.
+  //
+  // All items live in a single ItemList — each ItemList container
+  // ships its own margin, so stacking them per logical section
+  // produced ~40px gaps between groups (visually broken). The
+  // section grouping was purely cosmetic and is dropped here in
+  // favor of Capra's uniform spacing.
+  const allItems = sections.flat();
   return (
     <VerticalNavigation defaultCollapsed={false}>
-      {sections.map((section, si) => (
-        <VerticalNavigation.ItemList key={si}>
-          {section.map((item) => (
-            <VerticalNavigation.Item
-              key={item.to}
-              label={item.label}
-              href={item.to}
-              icon={item.icon}
-              isActive={pathMatches(location.pathname, item)}
-            />
-          ))}
-        </VerticalNavigation.ItemList>
-      ))}
+      <VerticalNavigation.ItemList>
+        {allItems.map((item) => (
+          <VerticalNavigation.Item
+            key={item.to}
+            label={item.label}
+            icon={item.icon}
+            isActive={pathMatches(location.pathname, item)}
+            onClick={() => navigate(item.to)}
+          />
+        ))}
+      </VerticalNavigation.ItemList>
       <VerticalNavigation.Footer>
         <VerticalNavigation.Item
           label={settingsItem.label}
-          href={settingsItem.to}
           icon={settingsItem.icon}
           isActive={pathMatches(location.pathname, settingsItem)}
+          onClick={() => navigate(settingsItem.to)}
         />
       </VerticalNavigation.Footer>
     </VerticalNavigation>
