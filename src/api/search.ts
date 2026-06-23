@@ -636,11 +636,37 @@ export interface RecentDeploy {
  * Window defaults to -2h — wide enough to surface a deploy that
  * happened just before the alert that triggered the investigation,
  * narrow enough that we're not paging through hours of history.
+ *
+ * Cached in-memory for {@link RECENT_DEPLOYS_CACHE_MS}. The
+ * upstream scheduled search emits at most every 30 min, so a 60s
+ * read-side cache is well below the data's natural change rate
+ * and saves a query each time a user kicks off back-to-back
+ * investigations.
  */
+const RECENT_DEPLOYS_CACHE_MS = 60_000;
+const recentDeploysCache = new Map<
+  string,
+  { at: number; rows: RecentDeploy[] }
+>();
+
 export async function listRecentDeploys(
   earliest = '-2h',
   latest = 'now',
 ): Promise<RecentDeploy[]> {
+  const cacheKey = `${earliest}|${latest}`;
+  const cached = recentDeploysCache.get(cacheKey);
+  const now = Date.now();
+  if (cached && now - cached.at < RECENT_DEPLOYS_CACHE_MS) {
+    // Recompute ageMinutes against `now` even when serving cached
+    // rows — firstSeenMs is wall-clock, ageMinutes is derived.
+    return cached.rows.map((r) => ({
+      ...r,
+      ageMinutes:
+        r.firstSeenMs > 0
+          ? Math.max(0, (now - r.firstSeenMs) / 60000)
+          : Infinity,
+    }));
+  }
   const kql = `dataset="${getCurrentDataset().replace(/[^a-zA-Z0-9_-]/g, '')}"
     | where datatype == "criblapm_deploy"
     | extend svc=tostring(svc), version=tostring(version),
@@ -652,10 +678,10 @@ export async function listRecentDeploys(
     | sort by first_seen_ms desc
     | limit 25`;
   const rows = await runQuery(kql, earliest, latest, 50);
-  const nowMs = Date.now();
-  return rows.map((r) => {
+  const mapped: RecentDeploy[] = rows.map((r) => {
     const firstSeenMs = Number(r.first_seen_ms ?? 0);
-    const ageMinutes = firstSeenMs > 0 ? Math.max(0, (nowMs - firstSeenMs) / 60000) : Infinity;
+    const ageMinutes =
+      firstSeenMs > 0 ? Math.max(0, (now - firstSeenMs) / 60000) : Infinity;
     return {
       service: String(r.svc ?? 'unknown'),
       version: String(r.version ?? 'unknown'),
@@ -664,6 +690,8 @@ export async function listRecentDeploys(
       nSpans: Number(r.n_spans_total ?? 0),
     };
   });
+  recentDeploysCache.set(cacheKey, { at: now, rows: mapped });
+  return mapped;
 }
 
 export async function listTraceOriginators(
