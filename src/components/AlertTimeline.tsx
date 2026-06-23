@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { scaleTime } from 'd3-scale';
 import { timeFormat } from 'd3-time-format';
+import { Button } from '@capra/core';
 import { serviceColor } from '../utils/spans';
 import s from './AlertTimeline.module.css';
 
@@ -108,7 +109,9 @@ export default function AlertTimeline({ intervals, onRangeSelect, onRangeClear, 
       <div className={s.header}>
         <span className={s.title}>Alert Timeline</span>
         {selection && (
-          <button className={s.clearBtn} onClick={clearSelection}>Clear selection</button>
+          <Button variant="tertiary" size="sm" onClick={clearSelection}>
+            Clear selection
+          </Button>
         )}
       </div>
       <svg width={width} height={height}>

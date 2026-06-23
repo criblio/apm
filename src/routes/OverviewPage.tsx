@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { Button } from '@capra/core';
 import TimeRangePicker from '../components/TimeRangePicker';
 import StatusBanner from '../components/StatusBanner';
 import DetectedIssuesPanel from '../components/DetectedIssuesPanel';
@@ -190,9 +191,9 @@ export default function OverviewPage() {
         </div>
         <div className={s.controls}>
           <TimeRangePicker value={range} onChange={setRange} />
-          <button className={s.refreshBtn} onClick={() => void fetchAll()} disabled={refreshing}>
+          <Button variant="secondary" size="sm" pending={refreshing} onClick={() => void fetchAll()}>
             {refreshing ? 'Refreshing...' : 'Refresh'}
-          </button>
+          </Button>
         </div>
       </div>
 

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { Button } from '@capra/core';
 import TimeRangePicker from '../components/TimeRangePicker';
 import { binSecondsFor } from '../components/timeRanges';
 import Sparkline from '../components/Sparkline';
@@ -382,7 +383,7 @@ export default function ServicesListPage() {
               ))}
             </select>
           </div>
-          <button type="button" className={s.refreshBtn} onClick={() => void fetchAll()}>Refresh now</button>
+          <Button variant="secondary" size="sm" onClick={() => void fetchAll()}>Refresh now</Button>
         </div>
       </div>
 

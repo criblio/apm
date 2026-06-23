@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { Button } from '@capra/core';
 import StatusBanner from '../components/StatusBanner';
 import AlertTimeline from '../components/AlertTimeline';
 import InvestigateButton from '../components/InvestigateButton';
@@ -215,9 +216,9 @@ export default function AlertsPage() {
               <option key={r.value} value={r.value}>{r.label}</option>
             ))}
           </select>
-          <button className={s.refreshBtn} onClick={() => void fetchAlerts()} disabled={loading}>
+          <Button variant="secondary" size="sm" pending={loading} onClick={() => void fetchAlerts()}>
             {loading ? 'Loading...' : 'Refresh'}
-          </button>
+          </Button>
         </div>
       </div>
 
