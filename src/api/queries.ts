@@ -9,6 +9,7 @@
  */
 import { getCurrentDataset } from '@cribl/app-utils/dataset';
 import { streamFilterKqlClause, streamFilterSpanKqlClause } from './streamFilter';
+import { getLowVolumeMode } from './lowVolumeMode';
 import { DEFAULT_FILTER_RULES, compileFilterRulesToKql } from './errorFilter';
 
 function quoteDataset(): string {
@@ -452,6 +453,17 @@ export function prevWindowSummary(): string {
 export function alertEvaluator(): string {
   const FIRE_AFTER = 2;
   const CLEAR_AFTER = 3;
+  // Low-volume mode (P1.2): when on, inject a fourth detection
+  // arm matching the older chaos-eval thresholds. Read at query-
+  // build time so toggling requires a re-provision (the alert
+  // search bakes in its KQL at scheduled-search creation).
+  const lowVol = getLowVolumeMode();
+  const lowVolArm = lowVol
+    ? 'curr_errors >= 2 and curr_err_pct >= 1, "error_rate",\n               '
+    : '';
+  const lowVolBoolArm = lowVol
+    ? 'or (curr_errors >= 2 and curr_err_pct >= 1)\n               '
+    : '';
 
   // curr_* are computed DIRECTLY from spans over the search's
   // earliest window (-15m), NOT from home_service_summary's -1h
@@ -501,8 +513,9 @@ export function alertEvaluator(): string {
     //      service just broke" from low-volume background noise.
     // Tradeoff: silences chaos scenarios on ultra-low-volume
     // services (llmRateLimit / recommendationCache product-reviews).
-    // Reintroducing those would need an explicit "low-volume mode"
-    // toggle in settings rather than default-on for everyone.
+    // The low-volume-mode setting (P1.2) re-enables an older arm
+    // for those — opt-in only since it costs precision on noisier
+    // workloads.
     | extend signal_type=case(
                curr_requests == 0 and prev_requests >= 50, "silent",
                curr_err_pct >= 5 and curr_requests >= 20, "error_rate",
@@ -510,7 +523,7 @@ export function alertEvaluator(): string {
                  and prev_requests >= 100, "error_rate",
                curr_errors >= 10 and prev_errors < 1
                  and curr_requests >= 50, "error_rate",
-               traffic_ratio <= 0.5 and prev_requests >= 50, "traffic_drop",
+               ${lowVolArm}traffic_ratio <= 0.5 and prev_requests >= 50, "traffic_drop",
                "none"),
              is_bad=(
                (curr_requests == 0 and prev_requests >= 50)
@@ -519,7 +532,7 @@ export function alertEvaluator(): string {
                    and prev_requests >= 100)
                or (curr_errors >= 10 and prev_errors < 1
                    and curr_requests >= 50)
-               or (traffic_ratio <= 0.5 and prev_requests >= 50))
+               ${lowVolBoolArm}or (traffic_ratio <= 0.5 and prev_requests >= 50))
     // alert_id is STABLE per service (doesn't include signal_type).
     // Why: when a service recovers, signal_type rotates from
     // "error_rate" → "none", so an signal_type-keyed alert_id

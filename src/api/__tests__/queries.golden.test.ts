@@ -27,11 +27,14 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import * as Q from '../queries';
 import { validateQuery } from '../provisionGuard';
 import { setCurrentDataset } from '@cribl/app-utils/dataset';
+import { setLowVolumeMode, getLowVolumeMode } from '../lowVolumeMode';
 
 beforeAll(() => {
-  // Anchor every builder against a known dataset name so snapshots
-  // don't depend on whatever state the framework store was left in.
+  // Anchor every builder against a known dataset name + lowVolume
+  // off so snapshots don't depend on whatever state the framework
+  // stores were left in by a prior test file.
   setCurrentDataset('otel');
+  setLowVolumeMode(false);
 });
 
 /**
@@ -154,6 +157,21 @@ describe('queries.ts — June 2026 outage regressions', () => {
       | export mode=overwrite to lookup criblapm_trace_originators`;
     const errs = validateQuery('hand-rolled-bad', broken);
     expect(errs.some((e) => e.includes('(?i)'))).toBe(true);
+  });
+
+  it('low-volume mode (P1.2) injects a 4th detection arm when on', () => {
+    expect(getLowVolumeMode()).toBe(false);
+    const off = Q.alertEvaluator();
+    expect(off.includes('curr_errors >= 2 and curr_err_pct >= 1')).toBe(false);
+    setLowVolumeMode(true);
+    try {
+      const on = Q.alertEvaluator();
+      expect(on.includes('curr_errors >= 2 and curr_err_pct >= 1')).toBe(true);
+      // Invariants still hold with the extra arm
+      expect(validateQuery('alertEvaluator (low-vol)', on)).toEqual([]);
+    } finally {
+      setLowVolumeMode(false);
+    }
   });
 
   it('current traceOriginators builder does NOT regress the (?i) shape', () => {

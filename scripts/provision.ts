@@ -31,6 +31,7 @@ import {
 } from '../src/api/datasetProvisioner.js';
 import { setSearchCadence } from '@cribl/app-utils/cadence';
 import { setCurrentDataset } from '@cribl/app-utils/dataset';
+import { setLowVolumeMode } from '../src/api/lowVolumeMode.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..');
@@ -76,6 +77,9 @@ async function loadAppSettingsFromKV(http: HttpClient): Promise<void> {
       }
       if (settings.dataset && typeof settings.dataset === 'string' && settings.dataset.trim()) {
         setCurrentDataset(settings.dataset.trim());
+      }
+      if (settings.lowVolumeMode === true) {
+        setLowVolumeMode(true);
       }
     }
   } catch {
