@@ -1,4 +1,6 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useHref, useNavigate } from 'react-router-dom';
+import { RouterProvider as AriaRouterProvider } from '@capra/core';
+import type { ReactNode } from 'react';
 import AppShell from './components/AppShell';
 import DatasetProvider from './components/DatasetProvider';
 import OverviewPage from './routes/OverviewPage';
@@ -15,10 +17,27 @@ import ServicesListPage from './routes/ServicesListPage';
 import AlertsPage from './routes/AlertsPage';
 import ErrorsPage from './routes/ErrorsPage';
 
+/**
+ * Bridges React Router's navigate/useHref into the Capra (react-aria-
+ * components) router context so Capra primitives with `href` props —
+ * VerticalNavigation.Item, Link, ButtonLink, etc. — do client-side
+ * navigation through React Router instead of full-page transitions.
+ * Must live INSIDE BrowserRouter so useNavigate is callable.
+ */
+function CapraRouterBridge({ children }: { children: ReactNode }) {
+  const navigate = useNavigate();
+  return (
+    <AriaRouterProvider navigate={navigate} useHref={useHref}>
+      {children}
+    </AriaRouterProvider>
+  );
+}
+
 export default function App() {
   return (
     <DatasetProvider>
       <BrowserRouter basename={window.CRIBL_BASE_PATH ?? '/'}>
+        <CapraRouterBridge>
         <Routes>
           <Route element={<AppShell />}>
             <Route index element={<OverviewPage />} />
@@ -44,6 +63,7 @@ export default function App() {
             <Route path="/services/architecture" element={<Navigate to="/map" replace />} />
           </Route>
         </Routes>
+        </CapraRouterBridge>
       </BrowserRouter>
     </DatasetProvider>
   );
