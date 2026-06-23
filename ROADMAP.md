@@ -1,9 +1,11 @@
 # Cribl APM — Roadmap
 
 This document is the canonical priority list for the Cribl APM
-Search App. Rewritten 2026-06-11 from the full repo audit
-(`docs/sessions/` has the history) plus the competitive gap analysis
-against Datadog, New Relic, Dynatrace, Honeycomb, and Grafana Cloud.
+Search App. Rewritten 2026-06-23 after v0.10.0 closed out all of
+P0 (platform integrity) and the first half of P2 (adoption); the
+new top priority is the per-signal-dataset abstraction that
+unblocks shipping metrics + logs against datasets distinct from
+the trace dataset.
 
 > **Refer to this doc as `ROADMAP.md`** (or `/ROADMAP.md` from the repo
 > root). Companion docs: `FAILURE-SCENARIOS.md` for the flagd flag
@@ -24,170 +26,182 @@ A second principle joined the first after the June outages:
 can corrupt quietly — KQL generation, provisioning, lookup exports —
 gets a tripwire. We cannot sell detection we can't trust ourselves.
 
-## Strategic posture
+## Strategic posture (revised 2026-06-23)
 
 Three moves, in order:
 
-1. **Tripwires first (P0)** — one focused effort so silent outages
-   stop burning days.
-2. **Adoption features (P1–P2)** — detection quality measured on
-   both precision and recall, then user alerts, SLOs, and change
-   correlation. These convert "impressive demo" into "daily driver"
-   for the first external users (arriving soon).
-3. **Moat (P3)** — the Investigator and Cribl-native capabilities
-   (field mapping, telemetry cost analytics) that competitors
+1. **Per-signal datasets, then field mapping (P0 / P1)** — the
+   forcing function: metrics support is landing now and metrics /
+   logs may live in different datasets than traces. The single
+   `getCurrentDataset()` everywhere is the blocker. Once per-signal
+   resolution lands, field mapping is the natural next step toward
+   schema-agnostic APM.
+2. **Adoption finishers (P2-P3)** — detection-quality follow-ons,
+   user alerts, SLOs, deploy correlation UI surfaces, flame graph.
+   v0.10.0 shipped the platform-integrity floor and the alert /
+   deploy pipelines; v0.11.0–v0.12.0 should make all of that user-
+   facing.
+3. **Moat (P4)** — Investigator v2, telemetry cost & noise
+   analytics. Cribl-native capabilities that competitors
    structurally cannot copy because they don't sit on the pipeline.
 
 ---
 
-## P0 — Platform integrity (do first, ~1 week)
+## P0 — Per-signal datasets
 
-Rationale: the 2026-06-09/10 outage chain. A latent framework change
-(dataset store defaulting to `""`) shipped through green CI, the
-provisioner pushed `dataset=""` into 17 saved searches and reported
-success, `mode=overwrite` exports wiped two lookups, and a separate
-latent bug (`(?i)` regex upstream of `export to lookup` writes an
-unjoinable CSV while reporting success) prevented self-healing.
-Three silent-failure layers, zero tripwires, all found in production.
+Replace the single `getCurrentDataset()` with per-signal resolution
+so traces, logs, and metrics can each live in a different dataset
+without forking the query builders. This is the precondition for
+the metrics work landing now — a Cribl Cloud workspace may emit
+spans into `otel` while metrics arrive in `default_metrics` and
+logs into `default_logs`. Today the app pins all three to one
+dataset name in Settings, which is wrong.
 
-- **P0.1 Provisioning guard** (S) — before reconcile, assert every
-  plan query: non-empty `dataset="…"` clause, no `(?i)` upstream of
-  `export to lookup`, non-empty lookup names. Exit 1 loudly.
-  `scripts/provision.ts`; upstream to `@cribl/app-utils` after.
-- **P0.2 Post-reconcile canary** (M) — after apply, read one row
-  from `$vt_results` for sentinel searches and join-test one lookup.
-  Tolerate empty only with `--first-install`.
-- **P0.3 Golden-file KQL tests** (M) — snapshot every exported
-  builder in `src/api/queries.ts` (40+, zero tests today) with
-  invariant assertions (dataset clause present, escaping applied,
-  no `(?i)` in export queries). The June outages become 3-line
-  negative tests. Also regression-tests the dataset-default bug.
-- **P0.4 Alert state-machine tests** (M) — extract the transition
-  table (`ok → pending → firing → resolving → ok`, FIRE_AFTER=2,
-  CLEAR_AFTER=3) to a pure TS function mirroring the KQL `case()`;
-  test all transitions; keep KQL in sync via snapshot.
-- **P0.5 Framework SHA pin** (S) — CI clones
-  `cribl-search-app-framework` at a SHA recorded in-repo, bumped
-  deliberately. PR #66's latent break is the rationale.
+- **P0.1 `datasetFor(signal)` abstraction** (M) — introduce
+  `datasetFor('traces' | 'logs' | 'metrics')` in the framework's
+  dataset module. Default behavior: return `getCurrentDataset()`
+  for all three signals (no behavior change). Settings grows three
+  fields (traces / logs / metrics dataset), with the existing
+  single-dataset field as a fallback.
+- **P0.2 Thread through queries.ts** (M) — replace
+  `datasetClause()` in `spansBase()`, `logsBase()`, `metricsBase()`
+  with their signal-specific equivalents. Golden snapshot tests
+  catch any builder that still reads the old store.
+- **P0.3 Thread through the provisioner** (S) — every
+  `dataset="…"` baked into `provisionedSearches.ts` must use the
+  signal-specific store. The provision-guard (already shipped)
+  fences `dataset=""` so a missing signal binding fails fast.
+- **P0.4 Migration path for existing single-dataset deploys** (S)
+  — on first load of v0.11.0, if only the legacy `dataset` field
+  is set, populate all three signal-specific fields with the same
+  value. Zero-config upgrade.
 
-Quick wins alongside: delete dead `spanmetrics*` builders
-(queries.ts ~1739-1962) and legacy `HomePage.tsx` (~1,000 lines
-total); surface the three swallowed exceptions
-(`agentPreflight.ts:102`, `agentTools.ts:107`,
-`notificationTargets.ts:32`); add a check for backticks inside
-template-literal comments (bit us twice).
+**Done =** the same app installs cleanly on a Cribl Cloud
+workspace where `service.name` rows arrive across three distinct
+datasets, without any builder being modified beyond its choice of
+which signal it queries.
 
-**Done =** the June outage chain, replayed, fails the deploy loudly
-at the first step.
+## P1 — Field mapping
 
-## P1 — Detection quality, two-sided
+The second forcing function: not every Cribl Cloud workspace
+follows OTel naming conventions exactly. A customer's `service.name`
+may land at `app.svc` or `resource.service`. Field mapping makes
+the app schema-agnostic on top of the per-signal-dataset work.
+Pairs with the long-term schema-agnostic APM vision.
+
+- **P1.1 `fieldResolver(signal, logicalName)` primitive** (M) —
+  exact same shape as `datasetFor` but for fields. Each logical
+  field (`service.name`, `status.code`, `duration_us`, etc.) maps
+  to a per-signal physical-field expression. Default mapping
+  matches OTel attribute names so the abstraction is a no-op for
+  the common case.
+- **P1.2 One builder behind it as the proof point** (M) — pick
+  `serviceSummary()` or `spansBase()` and route every field access
+  through `fieldResolver`. Verify against staging that the existing
+  workspace continues to work identically; then mark the migration
+  pattern as the template for the rest.
+- **P1.3 Mapping editor UI** (L) — Settings page lets users
+  override the default field mappings, scoped per signal. The
+  workspace's actual schema is discovered via a sampling query
+  (already exists for the metric-name catalog — generalize it).
+- **P1.4 LLM-assisted mapping suggestions** (L) — the agent reads
+  a sample of dataset rows and proposes a mapping. User accepts or
+  edits before save. Reduces onboarding from a 30-minute exercise
+  to one click for the common case.
+- **P1.5 `create_field_mapping` Investigator tool** (S) — when
+  the agent encounters an unmapped field during investigation, it
+  proposes the mapping inline rather than failing. Closes the loop
+  on workspace onboarding.
+
+## P2 — Detection quality (remaining)
 
 The eval harness optimizes recall on chaos scenarios; production
-needs precision on real traffic. Thresholds whiplashed from
-"fires at 1% background noise" to production-tuned (PR #67/#69)
-because only one side was measured. Detection changes now ship with
-both numbers.
+needs precision on real traffic. v0.10.0 shipped the noise-budget
+aggregation (P1.1 in the old numbering) so threshold changes can
+now be evaluated on both axes. Remaining items address gradual-
+onset detection and CI live-smoke.
 
-- **P1.1 Noise budget** (M) — scheduled search counting
-  firing-hours per service per week on flag-off traffic; publish
-  alongside eval recall in every eval report. This is the
-  acceptance metric for all threshold changes.
-- **P1.2 Low-volume mode** (S) — Settings toggle re-enabling the
-  ≥2-error path per service, for low-traffic environments where
-  chaos-level sensitivity is wanted. Off by default. Restores
-  llmRateLimit / recommendationCache detection without taxing
-  everyone (the old 1f debate, resolved as opt-in).
-- **P1.3 Slope-based latency detection** (L) — the real fix for
-  gradual-onset scenarios (emailMemoryLeak stuck at 0.30 across
+- **P2.1 Slope-based latency detection** (L) — the real fix for
+  gradual-onset scenarios (`emailMemoryLeak` stuck at 0.30 across
   four evals; threshold loosening provably insufficient). Alert
   when p95 is above baseline AND the slope over the last 3-5
   buckets is positive.
-- **P1.4 Seasonality-aware baselines** (L) — day-of-week /
+- **P2.2 Seasonality-aware baselines** (L) — day-of-week /
   hour-of-day baselines instead of fixed prior-window. Needs the
   packed-row workaround for the lookup one-row-per-key limit
   (see Blocked on Cribl).
-- **P1.5 CI live smoke** (M) — on master merge: deploy to a
-  workspace, run `apm-smoke.spec.ts` + the P0.2 canary.
+- **P2.3 CI live smoke** (M) — on master merge: deploy to a
+  workspace, run `apm-smoke.spec.ts` + the post-reconcile canary.
   **Cribl will provision a dedicated CI workspace for this** —
   isolates CI from the demo cluster and unblocks eval-in-CI later.
-- **P1.6 Learned noise baseline (research)** — identify
+- **P2.4 Learned noise baseline (research)** — identify
   (svc, op, status, message-fingerprint) tuples that are a
   steady-state minority over N days and treat them as expected.
   Feeds both alert precision and the Investigator's "we're done"
   stopping rule. Design doc first; the space is large.
 
-## P2 — Adoption: the three trust gaps + trace depth
+## P3 — Adoption: the three trust gaps + trace depth
 
-Table-stakes features every competitor has, each a thin layer over
-Cribl primitives we already use. Ordered for the first external
-users.
+Table-stakes features every competitor has. v0.10.0 shipped the
+deploy-event detection + Investigator context (the foundation of
+the "what changed?" RCA story); remaining items finish that and
+add user alerts, SLOs, and trace depth.
 
-- **P2.1 User-created alerts + notification dispatch** (XL —
-  break down) — "Create alert" persists a saved search + alert
-  definition with notification targets (Slack/PagerDuty/email via
-  the product-level targets API). Design:
-  `docs/research/alerting-design.md`.
-- **P2.2 Deployment / change correlation** (L) — "what changed?"
-  is the first RCA question and we have nothing; `service.version`
-  is already on resource attributes. MVP: scheduled search detects
-  version transitions per service → `criblapm_deploy` events via
-  `| send` (same pattern as alert history) → markers on Service
-  Detail RED charts, "deployed 12m before this alert" chip in
-  Detected Issues, and injection into Investigator `knownSignals`.
-  No SCM integration needed for v1.
-- **P2.3 SLO budgets** (L) — SLO = saved search tracking
-  success/total over 28 days + burn-rate alerts at 1h/6h/24h
-  windows. The lingua franca of reliability conversations.
-- **P2.4 Flame graph + critical path** (L) — icicle/self-time view
-  and critical-path highlighting on Trace detail; latency histogram
-  per operation. Client-side over span data we already fetch.
+- **P3.1 User-created alerts + notification dispatch** (XL —
+  needs breakdown) — "Create alert" persists a saved search +
+  alert definition with notification targets (Slack / PagerDuty /
+  email via the product-level targets API). Design:
+  `docs/research/alerting-design.md`. Single biggest user-facing
+  gap.
+- **P3.2 Deploy correlation UI surfaces** (M) — the data pipeline
+  (`criblapm__deploy_events`) and Investigator context shipped in
+  v0.10.0. Remaining:
+  - Service Detail RED-chart markers (vertical lines on Duration
+    / Error charts at deploy timestamps).
+  - "Deployed Nm before this alert" chip on Detected Issues.
+  Both client-side over the already-emitted event stream.
+- **P3.3 SLO budgets** (L) — SLO = saved search tracking
+  success / total over 28 days + burn-rate alerts at 1h / 6h /
+  24h windows. The lingua franca of reliability conversations.
+- **P3.4 Flame graph + critical path** (L) — icicle / self-time
+  view and critical-path highlighting on Trace detail; latency
+  histogram per operation. Client-side over span data we already
+  fetch.
 
-## P3 — Moat: what only Cribl can build
+## P4 — Moat: what only Cribl can build
 
-- **P3.1 Field mapping + per-signal datasets** (near-term, elevated)
-  — two forcing functions arrived: (a) metrics support is landing
-  now and **metrics and logs may live in different datasets than
-  traces**, (b) schema-agnostic APM (the long-term vision) starts
-  with the same abstraction. Step 1: replace the single
-  `getCurrentDataset()` with per-signal resolution
-  (`datasetFor('traces' | 'logs' | 'metrics')`) threaded through
-  queries.ts and the provisioner; Settings grows one field per
-  signal type. Step 2: `fieldResolver(signal, 'service.name')`
-  behind one query builder to validate the abstraction. Step 3:
-  mapping editor UI + LLM-assisted mapping suggestions + an
-  Investigator `create_field_mapping` tool. Full vision retained
-  from the prior roadmap §11 — incremental rollout, one builder at
-  a time.
-- **P3.2 Investigator v2** (L) — auto-seed `knownSignals` when a
+- **P4.1 Investigator v2** (L) — auto-seed `knownSignals` when a
   prompt mentions a service (today only Service Detail's button
-  seeds them); a "done" criterion using the P1.6 noise baseline so
+  seeds them); a "done" criterion using the P2.4 noise baseline so
   the agent can conclude "remaining errors are background";
-  deployment events (P2.2) injected as context. **Design note:
-  Cribl's AI Platform will ship a server-side agent runtime soon —
-  keep the tool definitions and context builder
+  deployment events (P3.2) injected as context — **partially done
+  in v0.10.0 via the deploy-event preflight injection**. **Design
+  note: Cribl's AI Platform will ship a server-side agent runtime
+  soon — keep the tool definitions and context builder
   (`agentTools.ts`, `agentContext.ts`) transport-agnostic so the
   loop can migrate from the client to the platform runtime without
   a rewrite.**
-- **P3.3 Telemetry cost & noise analytics** (L) — we sit ON the
+- **P4.2 Telemetry cost & noise analytics** (L) — we sit ON the
   pipeline; Datadog sits at the end of it. Page answering: which
   services emit the most span volume, what fraction is idle-wait /
   health-check noise (we already classify it), and what the
   Cribl Stream pipeline change to trim it would be. No competitor
   can close that loop.
 
-## P4 — Breadth
+## P5 — Breadth
 
 - **Dashboards** via saved-search composition ("Save this view" on
-  Traces/Logs/Metrics/ServiceDetail; widgets composed into a page).
+  Traces / Logs / Metrics / ServiceDetail; widgets composed into a
+  page).
 - **Service catalog / ownership** — team, oncall, runbook URL per
   service in KV; route alerts by ownership.
 - **Database query performance** — top slow queries by fingerprint
   via `db.statement` / `db.system`, linked to traces.
-- **Live tail** — streaming logs/spans on the Logs page.
+- **Live tail** — streaming logs / spans on the Logs page.
 
 ## Future — new signal types
 
-- **Continuous profiling** (eBPF/pprof) · **Real User Monitoring**
+- **Continuous profiling** (eBPF / pprof) · **Real User Monitoring**
   (browser SDK, web vitals, session replay) · **Synthetics**
   (scheduled HTTP + browser checks). Deliberately parked until the
   core earns daily-driver trust.
@@ -200,13 +214,13 @@ users.
   the write** — stats report success (`totalEventsOut`,
   `lookupFile`) but the CSV is unjoinable. Found 2026-06-09 via
   `criblapm_trace_originators`; cost us a day. Same family as the
-  mv-expand/export incompatibility. Bug report pending; P0.1 guards
-  against reintroduction on our side.
-- **Lookup-join flap across consecutive queries** — found 2026-06-23
-  via the P0.2 canary. The same identical KQL against
-  `criblapm_trace_originators` returns `joined=50` and then
-  `joined=0` seconds apart, with no scheduled-search run in between.
-  The write side reports success (`totalEventsOut: 6`,
+  mv-expand/export incompatibility. Bug report pending; v0.10.0's
+  provision guard fences against reintroduction on our side.
+- **Lookup-join flap across consecutive queries** — found
+  2026-06-23 via the post-reconcile canary. The same identical KQL
+  against `criblapm_trace_originators` returns `joined=50` and
+  then `joined=0` seconds apart, with no scheduled-search run in
+  between. The write side reports success (`totalEventsOut: 6`,
   `totalEventsDropped: 0`). Suspected worker-cache or read-during-
   overwrite race on the lookup CSV. The canary correctly fires
   when this happens; users see the trace-originator-based error
@@ -218,7 +232,7 @@ users.
   Workaround: split into searches joined via lookups.
 - **`lookup` returns one row per key** — blocks every
   "read a series from a lookup" pattern (drift, daily history,
-  seasonality baselines → P1.4). Workaround: pack series into one
+  seasonality baselines → P2.2). Workaround: pack series into one
   row (N columns or JSON string). Real fix: return all matches.
 - **Dynamic field access `attributes[col]` rejected** — forces
   per-attribute KQL generation at provision time (cardinality
@@ -237,18 +251,77 @@ users.
 - **Embedded agentic RCA (Copilot Investigator)** — root-cause-
   correct on 10/11 eval scenarios, pre-filled topology context,
   one click from every surface. Nobody at this price point has it.
+  As of v0.10.0 the Investigator also reads recent deploys at
+  preflight time so "what changed?" is automatic context.
 - **Spotlight** — Honeycomb-BubbleUp-equivalent attribute analysis,
   embedded on Search, Errors, and Service Detail.
 - **Server-side alert state machine** — debounce, history in the
-  dataset, resolution events. Most cheaper APMs don't have this.
+  dataset, resolution events, opt-in low-volume mode for thin
+  workloads (v0.10.0). Pure-TS extraction + transition tests pin
+  the KQL behavior.
 - **Messaging edges + edge-level health** on the architecture graph.
-- **Noise filter** on trace aggregates (idle-wait/streaming spans).
+- **Noise filter** on trace aggregates (idle-wait / streaming spans).
 - **Baseline delta chips**, configurable detection cadence,
   trace-origin classification feeding error filtering.
+- **Platform integrity tripwires (v0.10.0)** — provisioning guard,
+  post-reconcile canary, golden-file KQL tests on all 40+ query
+  builders, framework SHA pin in CI. The June outage chain,
+  replayed, fails the deploy loudly at the first step.
 
 ---
 
 ## Completed (historical reference — see git log / PRs)
+
+### v0.10.0 (2026-06-23) — Platform integrity floor + adoption foundations
+
+The roadmap-rewrite session that closed all of P0 and the first
+half of P2 in one push. 12 PRs merged in a single loop. Master
+went from 122 tests to 252; ~1,000 lines of dead code removed.
+
+Platform integrity (the entire old P0):
+- **Provisioning guard** (PR #72) — pre-reconcile invariant check
+  refusing plans with empty datasets, `(?i)` upstream of
+  export-to-lookup, or empty lookup names.
+- **Post-reconcile canary** (PR #78) — verifies sentinel
+  `$vt_results` has rows and a known lookup is joinable.
+  **Caught a real Cribl-side lookup-flap bug** — documented in
+  PR #82.
+- **Golden-file KQL tests for all 42 builders** (PR #79) — snapshot
+  drift + provision-guard invariants per builder + coverage
+  meta-test that fails on unregistered new exports.
+- **Alert state-machine extracted to pure TS** (PR #77) — 14
+  transition tests pin the KQL `case()` behavior.
+- **Framework SHA pin in CI** (PR #75) — `.framework-sha` recorded
+  in-repo, deliberate bumps. Kills the PR #66-class silent
+  framework break.
+
+Detection quality:
+- **Low-volume mode opt-in** (PR #81) — Settings toggle adds a 4th
+  detection arm (`≥2 errors AND ≥1% rate`) for thin workloads.
+  Restores llmRateLimit / recommendationCache without taxing busier
+  services.
+- **Alert noise-budget aggregation** (PR #83) — daily scheduled
+  search counting per-(svc, day) fires + persistent vs noisy
+  splits. Feeds the eval harness so threshold changes are
+  evaluated on precision and recall.
+
+Adoption — deploy / change correlation:
+- **Deploy events pipeline** (PR #84) — `criblapm__deploy_events`
+  scheduled search detects `(svc, version)` transitions every
+  30 min and emits events via `| send` to the dataset.
+- **Investigator deploy context** (PR #85) — preflight reads recent
+  deploys (-2h) and seeds them as `knownSignals` so the LLM
+  reasons about deploy correlation alongside silent / rate-drop /
+  error-spike hypotheses.
+
+Quick wins:
+- **Surfaced 3 swallowed exceptions** (PR #74) — agentPreflight,
+  agentTools.parseArgs, notificationTargets no longer fail silently.
+- **Deleted dead `spanmetrics*` builders** (PR #76) — -198 lines,
+  zero callers.
+- **Deleted legacy `HomePage.tsx`** (PR #80) — -829 lines, never
+  routed.
+- **Documented lookup-flap as Blocked on Cribl** (PR #82).
 
 ### Detection-quality program, rounds 1–5 (v0.9.0 → v0.9.1) — DONE
 The 2026-05-30 → 06-01 eval grind (old roadmap items 1a–1i): -15m
@@ -260,7 +333,7 @@ thresholds — ≥5% absolute, or ≥3× baseline at ≥2%, or ≥10 errors
 on a previously-clean service (PRs #67/#69) after real-traffic
 noise proved the eval-driven floors over-sensitive. Eval mean
 0.66 → 0.78 reconstructed; fully-detected 1 → 6. Remaining gaps
-(slope detection, low-volume) carried into P1. Session logs:
+(slope detection, low-volume) carried into P2. Session logs:
 `docs/sessions/2026-05-30-eval-v0.9.0.md` through
 `2026-05-31-eval-fourth.md`.
 
@@ -277,7 +350,8 @@ Shared primitives moved to `cribl-search-app-framework`
 PRs #9–#13, APM #66). The dataset="" outage chain diagnosed and
 fixed: provision-time default (PR #68), browser-side race +
 threshold re-apply (PR #69), (?i)-export corruption (PR #70).
-P0 exists so this class can't recur silently.
+v0.10.0's platform-integrity work exists so this class can't
+recur silently.
 
 ### Faceted trace search + Spotlight (v0.9.0) — DONE
 PRs #46–#55: typed filter builder, facets panel, Spotlight engine
