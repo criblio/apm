@@ -1,9 +1,30 @@
 import { Link } from 'react-router-dom';
+import { Tag, type TagColor } from '@capra/core';
 import { serviceColor } from '../utils/spans';
 import InvestigateButton from './InvestigateButton';
 import type { InvestigationSeed } from '../api/agentContext';
 import type { DetectedIssue } from '../api/types';
 import s from './DetectedIssuesPanel.module.css';
+
+/** Map alert status → Capra Tag color. Used for the firing /
+ *  pending / resolving tags on the issue row. */
+const STATUS_TAG_COLOR: Record<string, TagColor> = {
+  firing: 'danger',
+  pending: 'warning',
+  resolving: 'info',
+  ok: 'success',
+};
+
+/** Map signal type → Capra Tag color so the per-issue type tag
+ *  ("Error Rate", "Traffic Drop", "Latency Anomaly", "Service Silent")
+ *  picks up Capra's palette instead of bespoke rgba(...) backgrounds. */
+const SIGNAL_TAG_COLOR: Record<DetectedIssue['signalType'], TagColor> = {
+  error_rate_critical: 'danger',
+  error_rate_warn: 'warning',
+  traffic_drop: 'purple',
+  latency_anomaly: 'cyan',
+  silent: 'danger',
+};
 
 interface Props {
   issues: DetectedIssue[];
@@ -125,14 +146,14 @@ export default function DetectedIssuesPanel({ issues, loading, lookback }: Props
                 />
                 <div className={s.mainCol}>
                   {issue.alertStatus && issue.alertStatus !== 'ok' && (
-                    <span className={`${s.alertStatusBadge} ${s[`alertStatus_${issue.alertStatus}`] ?? ''}`}>
+                    <Tag color={STATUS_TAG_COLOR[issue.alertStatus] ?? 'default'}>
                       {issue.alertStatus}
-                    </span>
+                    </Tag>
                   )}
                   {issue.isPersistent && (
-                    <span className={s.persistentBadge} title="Elevated in both current and previous window">
+                    <Tag color="info" aria-label="Elevated in both current and previous window">
                       persistent
-                    </span>
+                    </Tag>
                   )}
                   <span
                     className={s.svcName}
@@ -140,12 +161,9 @@ export default function DetectedIssuesPanel({ issues, loading, lookback }: Props
                   >
                     {issue.service}
                   </span>
-                  <span
-                    className={s.signalBadge}
-                    style={{ background: style.bg, color: style.fg }}
-                  >
+                  <Tag color={SIGNAL_TAG_COLOR[issue.signalType] ?? 'default'}>
                     {style.label}
-                  </span>
+                  </Tag>
                   <span className={s.detail}>{issue.detail}</span>
                   {issue.rootCauseHint && (
                     <span className={s.hintChip} title={issue.rootCauseHint}>
