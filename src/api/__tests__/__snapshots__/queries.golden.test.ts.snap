@@ -1,0 +1,1240 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`queries.ts — golden snapshots + invariants > alertEvaluator > snapshot stable 1`] = `
+"dataset="otel" | where isnotnull(end_time_unix_nano)
+    | extend svc=tostring(resource.attributes['service.name']),
+             is_error=(tostring(status.code)=="2")
+    | summarize curr_requests=toreal(count()),
+                curr_errors=toreal(countif(is_error)) by svc
+    | extend curr_error_rate=iff(curr_requests > 0, curr_errors/curr_requests, 0.0)
+    | lookup criblapm_alert_prev on svc
+    | extend prev_requests=iff(isnotnull(prev_req), toreal(prev_req), 0.0),
+             prev_errors=iff(isnotnull(prev_err), toreal(prev_err), 0.0),
+             prev_error_rate=iff(isnotnull(prev_err_rate), toreal(prev_err_rate), 0.0)
+    | extend curr_err_pct=curr_error_rate * 100,
+             prev_err_pct=prev_error_rate * 100,
+             // is_persistent is informational — used by notification
+             // logic to suppress repeat pings, NOT by detection.
+             // A 25% error rate that's been 25% for an hour is still
+             // a real problem that should be visible.
+             is_persistent=(prev_error_rate * 100 >= 1 and (curr_error_rate * 100 - prev_error_rate * 100) < 2),
+             // traffic_ratio normalizes to requests-per-minute so the
+             // -15m curr window and -60m prev window compare on the
+             // same scale. Without normalization a healthy service
+             // would look like it's at 25% of prior traffic (15/60).
+             traffic_ratio=iff(prev_requests >= 50,
+                               (curr_requests / 15.0) / (prev_requests / 60.0),
+                               1.0)
+    // Three error_rate paths, tuned for production noise tolerance.
+    // The prior ≥1% / ≥2-error floors were over-fit to chaos-
+    // engineered eval scenarios (llmRateLimit, recommendationCache)
+    // and fired on normal background error rates of real services.
+    //   1. High absolute rate — ≥5% with ≥20 spans. Paging-worthy
+    //      regardless of baseline.
+    //   2. Sharp deviation from a stable baseline — current rate
+    //      ≥3× prev AND ≥2% absolute AND prev window had ≥100
+    //      requests (baseline is statistically meaningful).
+    //   3. Catastrophic ramp on previously-clean service — ≥10
+    //      errors when the prior window had effectively zero,
+    //      gated on ≥50 current requests to distinguish "real
+    //      service just broke" from low-volume background noise.
+    // Tradeoff: silences chaos scenarios on ultra-low-volume
+    // services (llmRateLimit / recommendationCache product-reviews).
+    // Reintroducing those would need an explicit "low-volume mode"
+    // toggle in settings rather than default-on for everyone.
+    | extend signal_type=case(
+               curr_requests == 0 and prev_requests >= 50, "silent",
+               curr_err_pct >= 5 and curr_requests >= 20, "error_rate",
+               curr_err_pct >= 2 and curr_err_pct >= prev_err_pct * 3
+                 and prev_requests >= 100, "error_rate",
+               curr_errors >= 10 and prev_errors < 1
+                 and curr_requests >= 50, "error_rate",
+               traffic_ratio <= 0.5 and prev_requests >= 50, "traffic_drop",
+               "none"),
+             is_bad=(
+               (curr_requests == 0 and prev_requests >= 50)
+               or (curr_err_pct >= 5 and curr_requests >= 20)
+               or (curr_err_pct >= 2 and curr_err_pct >= prev_err_pct * 3
+                   and prev_requests >= 100)
+               or (curr_errors >= 10 and prev_errors < 1
+                   and curr_requests >= 50)
+               or (traffic_ratio <= 0.5 and prev_requests >= 50))
+    // alert_id is STABLE per service (doesn't include signal_type).
+    // Why: when a service recovers, signal_type rotates from
+    // "error_rate" → "none", so an signal_type-keyed alert_id
+    // would change too. The state export uses mode=overwrite, so
+    // the old "auto:error_rate:svc" row gets wiped before the
+    // state machine ever sees prev_status="firing" on the new
+    // "auto:none:svc" key — meaning the resolving→ok walk never
+    // fires, no "resolved" event is emitted, and the Alert Timeline
+    // shows the alert as "ongoing" forever. Stable key fixes this.
+    | extend alert_id=strcat("auto:health:", svc)
+    | lookup criblapm_alert_states on alert_id
+    | extend prev_status=iff(isnotnull(alert_status), tostring(alert_status), "ok"),
+             prev_bad=iff(isnotnull(consecutive_bad), tolong(consecutive_bad), 0),
+             prev_good=iff(isnotnull(consecutive_good), tolong(consecutive_good), 0),
+             prev_fire_count=iff(isnotnull(fire_count), tolong(fire_count), 0)
+    | extend new_bad=iff(is_bad, prev_bad + 1, 0),
+             new_good=iff(is_bad, 0, prev_good + 1)
+    | extend alert_status=case(
+               is_bad and prev_status == "ok", "pending",
+               is_bad and prev_status == "pending" and new_bad >= 2, "firing",
+               is_bad and prev_status == "pending", "pending",
+               is_bad and prev_status == "firing", "firing",
+               is_bad and prev_status == "resolving", "firing",
+               not(is_bad) and prev_status == "pending", "ok",
+               not(is_bad) and prev_status == "firing", "resolving",
+               not(is_bad) and prev_status == "resolving" and new_good >= 3, "ok",
+               not(is_bad) and prev_status == "resolving", "resolving",
+               "ok"),
+             consecutive_bad=new_bad,
+             consecutive_good=new_good,
+             fire_count=iff(is_bad and prev_status == "pending" and new_bad >= 2, prev_fire_count + 1, prev_fire_count),
+             transitioned_to=case(
+               is_bad and prev_status == "pending" and new_bad >= 2, "firing",
+               not(is_bad) and prev_status == "resolving" and new_good >= 3, "resolved",
+               "")
+    | project svc, curr_requests, curr_errors, curr_error_rate,
+              prev_requests, prev_errors, prev_error_rate,
+              alert_id, signal_type, is_bad, is_persistent,
+              alert_status, consecutive_bad, consecutive_good,
+              fire_count, transitioned_to
+    | union (
+        dataset="$vt_results"
+        | where jobName == "criblapm__svc_operations"
+        | project svc, op=name, curr_p95_us=toreal(p95_us), curr_requests=toreal(requests)
+        | lookup criblapm_op_baselines on svc, op
+        | extend prev_p95_us=iff(isnotnull(p95_us), toreal(p95_us), 0.0),
+                 prev_op_requests=iff(isnotnull(requests), toreal(requests), 0.0)
+        // Thresholds tuned for gradual-drift scenarios. The
+        // 2026-05-31 third eval scored emailMemoryLeak at 0.30
+        // with 5x ratio + 500ms floor — drift over 7 min didn't
+        // get there. Loosened to 3x ratio + 250ms floor with a
+        // 20-span volume gate to keep the noise tolerable. Item
+        // 1e in ROADMAP.
+        | where isnotnull(prev_p95_us) and prev_p95_us > 0
+                and curr_p95_us >= prev_p95_us * 3
+                and curr_p95_us >= 250000
+                and prev_op_requests >= 20
+        | extend alert_id=strcat("auto:latency:", svc, ":", op),
+                 signal_type="latency",
+                 is_bad=true,
+                 is_persistent=false,
+                 curr_errors=0.0, curr_error_rate=0.0,
+                 prev_requests=prev_op_requests, prev_errors=0.0, prev_error_rate=0.0
+        | lookup criblapm_alert_states on alert_id
+        | extend prev_status=iff(isnotnull(alert_status), tostring(alert_status), "ok"),
+                 prev_bad=iff(isnotnull(consecutive_bad), tolong(consecutive_bad), 0),
+                 prev_good=iff(isnotnull(consecutive_good), tolong(consecutive_good), 0),
+                 prev_fire_count=iff(isnotnull(fire_count), tolong(fire_count), 0)
+        | extend new_bad=prev_bad + 1, new_good=0
+        | extend alert_status=case(
+                   prev_status == "ok", "pending",
+                   prev_status == "pending" and new_bad >= 2, "firing",
+                   prev_status == "pending", "pending",
+                   prev_status == "firing", "firing",
+                   prev_status == "resolving", "firing",
+                   "ok"),
+                 consecutive_bad=new_bad,
+                 consecutive_good=0,
+                 fire_count=iff(prev_status == "pending" and new_bad >= 2, prev_fire_count + 1, prev_fire_count),
+                 transitioned_to=iff(prev_status == "pending" and new_bad >= 2, "firing", "")
+        | project svc, curr_requests, curr_errors, curr_error_rate,
+                  prev_requests, prev_errors, prev_error_rate,
+                  alert_id, signal_type, is_bad, is_persistent,
+                  alert_status, consecutive_bad, consecutive_good,
+                  fire_count, transitioned_to
+    )"
+`;
+
+exports[`queries.ts — golden snapshots + invariants > alertEvaluatorExportState > snapshot stable 1`] = `
+"dataset="otel" | where isnotnull(end_time_unix_nano)
+    | extend svc=tostring(resource.attributes['service.name']),
+             is_error=(tostring(status.code)=="2")
+    | summarize curr_requests=toreal(count()),
+                curr_errors=toreal(countif(is_error)) by svc
+    | extend curr_error_rate=iff(curr_requests > 0, curr_errors/curr_requests, 0.0)
+    | lookup criblapm_alert_prev on svc
+    | extend prev_requests=iff(isnotnull(prev_req), toreal(prev_req), 0.0),
+             prev_errors=iff(isnotnull(prev_err), toreal(prev_err), 0.0),
+             prev_error_rate=iff(isnotnull(prev_err_rate), toreal(prev_err_rate), 0.0)
+    | extend curr_err_pct=curr_error_rate * 100,
+             prev_err_pct=prev_error_rate * 100,
+             // is_persistent is informational — used by notification
+             // logic to suppress repeat pings, NOT by detection.
+             // A 25% error rate that's been 25% for an hour is still
+             // a real problem that should be visible.
+             is_persistent=(prev_error_rate * 100 >= 1 and (curr_error_rate * 100 - prev_error_rate * 100) < 2),
+             // traffic_ratio normalizes to requests-per-minute so the
+             // -15m curr window and -60m prev window compare on the
+             // same scale. Without normalization a healthy service
+             // would look like it's at 25% of prior traffic (15/60).
+             traffic_ratio=iff(prev_requests >= 50,
+                               (curr_requests / 15.0) / (prev_requests / 60.0),
+                               1.0)
+    // Three error_rate paths, tuned for production noise tolerance.
+    // The prior ≥1% / ≥2-error floors were over-fit to chaos-
+    // engineered eval scenarios (llmRateLimit, recommendationCache)
+    // and fired on normal background error rates of real services.
+    //   1. High absolute rate — ≥5% with ≥20 spans. Paging-worthy
+    //      regardless of baseline.
+    //   2. Sharp deviation from a stable baseline — current rate
+    //      ≥3× prev AND ≥2% absolute AND prev window had ≥100
+    //      requests (baseline is statistically meaningful).
+    //   3. Catastrophic ramp on previously-clean service — ≥10
+    //      errors when the prior window had effectively zero,
+    //      gated on ≥50 current requests to distinguish "real
+    //      service just broke" from low-volume background noise.
+    // Tradeoff: silences chaos scenarios on ultra-low-volume
+    // services (llmRateLimit / recommendationCache product-reviews).
+    // Reintroducing those would need an explicit "low-volume mode"
+    // toggle in settings rather than default-on for everyone.
+    | extend signal_type=case(
+               curr_requests == 0 and prev_requests >= 50, "silent",
+               curr_err_pct >= 5 and curr_requests >= 20, "error_rate",
+               curr_err_pct >= 2 and curr_err_pct >= prev_err_pct * 3
+                 and prev_requests >= 100, "error_rate",
+               curr_errors >= 10 and prev_errors < 1
+                 and curr_requests >= 50, "error_rate",
+               traffic_ratio <= 0.5 and prev_requests >= 50, "traffic_drop",
+               "none"),
+             is_bad=(
+               (curr_requests == 0 and prev_requests >= 50)
+               or (curr_err_pct >= 5 and curr_requests >= 20)
+               or (curr_err_pct >= 2 and curr_err_pct >= prev_err_pct * 3
+                   and prev_requests >= 100)
+               or (curr_errors >= 10 and prev_errors < 1
+                   and curr_requests >= 50)
+               or (traffic_ratio <= 0.5 and prev_requests >= 50))
+    // alert_id is STABLE per service (doesn't include signal_type).
+    // Why: when a service recovers, signal_type rotates from
+    // "error_rate" → "none", so an signal_type-keyed alert_id
+    // would change too. The state export uses mode=overwrite, so
+    // the old "auto:error_rate:svc" row gets wiped before the
+    // state machine ever sees prev_status="firing" on the new
+    // "auto:none:svc" key — meaning the resolving→ok walk never
+    // fires, no "resolved" event is emitted, and the Alert Timeline
+    // shows the alert as "ongoing" forever. Stable key fixes this.
+    | extend alert_id=strcat("auto:health:", svc)
+    | lookup criblapm_alert_states on alert_id
+    | extend prev_status=iff(isnotnull(alert_status), tostring(alert_status), "ok"),
+             prev_bad=iff(isnotnull(consecutive_bad), tolong(consecutive_bad), 0),
+             prev_good=iff(isnotnull(consecutive_good), tolong(consecutive_good), 0),
+             prev_fire_count=iff(isnotnull(fire_count), tolong(fire_count), 0)
+    | extend new_bad=iff(is_bad, prev_bad + 1, 0),
+             new_good=iff(is_bad, 0, prev_good + 1)
+    | extend alert_status=case(
+               is_bad and prev_status == "ok", "pending",
+               is_bad and prev_status == "pending" and new_bad >= 2, "firing",
+               is_bad and prev_status == "pending", "pending",
+               is_bad and prev_status == "firing", "firing",
+               is_bad and prev_status == "resolving", "firing",
+               not(is_bad) and prev_status == "pending", "ok",
+               not(is_bad) and prev_status == "firing", "resolving",
+               not(is_bad) and prev_status == "resolving" and new_good >= 3, "ok",
+               not(is_bad) and prev_status == "resolving", "resolving",
+               "ok"),
+             consecutive_bad=new_bad,
+             consecutive_good=new_good,
+             fire_count=iff(is_bad and prev_status == "pending" and new_bad >= 2, prev_fire_count + 1, prev_fire_count),
+             transitioned_to=case(
+               is_bad and prev_status == "pending" and new_bad >= 2, "firing",
+               not(is_bad) and prev_status == "resolving" and new_good >= 3, "resolved",
+               "")
+    | project svc, curr_requests, curr_errors, curr_error_rate,
+              prev_requests, prev_errors, prev_error_rate,
+              alert_id, signal_type, is_bad, is_persistent,
+              alert_status, consecutive_bad, consecutive_good,
+              fire_count, transitioned_to
+    | union (
+        dataset="$vt_results"
+        | where jobName == "criblapm__svc_operations"
+        | project svc, op=name, curr_p95_us=toreal(p95_us), curr_requests=toreal(requests)
+        | lookup criblapm_op_baselines on svc, op
+        | extend prev_p95_us=iff(isnotnull(p95_us), toreal(p95_us), 0.0),
+                 prev_op_requests=iff(isnotnull(requests), toreal(requests), 0.0)
+        // Thresholds tuned for gradual-drift scenarios. The
+        // 2026-05-31 third eval scored emailMemoryLeak at 0.30
+        // with 5x ratio + 500ms floor — drift over 7 min didn't
+        // get there. Loosened to 3x ratio + 250ms floor with a
+        // 20-span volume gate to keep the noise tolerable. Item
+        // 1e in ROADMAP.
+        | where isnotnull(prev_p95_us) and prev_p95_us > 0
+                and curr_p95_us >= prev_p95_us * 3
+                and curr_p95_us >= 250000
+                and prev_op_requests >= 20
+        | extend alert_id=strcat("auto:latency:", svc, ":", op),
+                 signal_type="latency",
+                 is_bad=true,
+                 is_persistent=false,
+                 curr_errors=0.0, curr_error_rate=0.0,
+                 prev_requests=prev_op_requests, prev_errors=0.0, prev_error_rate=0.0
+        | lookup criblapm_alert_states on alert_id
+        | extend prev_status=iff(isnotnull(alert_status), tostring(alert_status), "ok"),
+                 prev_bad=iff(isnotnull(consecutive_bad), tolong(consecutive_bad), 0),
+                 prev_good=iff(isnotnull(consecutive_good), tolong(consecutive_good), 0),
+                 prev_fire_count=iff(isnotnull(fire_count), tolong(fire_count), 0)
+        | extend new_bad=prev_bad + 1, new_good=0
+        | extend alert_status=case(
+                   prev_status == "ok", "pending",
+                   prev_status == "pending" and new_bad >= 2, "firing",
+                   prev_status == "pending", "pending",
+                   prev_status == "firing", "firing",
+                   prev_status == "resolving", "firing",
+                   "ok"),
+                 consecutive_bad=new_bad,
+                 consecutive_good=0,
+                 fire_count=iff(prev_status == "pending" and new_bad >= 2, prev_fire_count + 1, prev_fire_count),
+                 transitioned_to=iff(prev_status == "pending" and new_bad >= 2, "firing", "")
+        | project svc, curr_requests, curr_errors, curr_error_rate,
+                  prev_requests, prev_errors, prev_error_rate,
+                  alert_id, signal_type, is_bad, is_persistent,
+                  alert_status, consecutive_bad, consecutive_good,
+                  fire_count, transitioned_to
+    )
+    | where alert_status != "ok" or consecutive_good > 0
+    | project alert_id, alert_status, consecutive_bad, consecutive_good, fire_count
+    | export mode=overwrite
+             description="Cribl APM - alert state persistence"
+             to lookup criblapm_alert_states"
+`;
+
+exports[`queries.ts — golden snapshots + invariants > alertHistorySend > snapshot stable 1`] = `
+"dataset="otel" | where isnotnull(end_time_unix_nano)
+    | extend svc=tostring(resource.attributes['service.name']),
+             is_error=(tostring(status.code)=="2")
+    | summarize curr_requests=toreal(count()),
+                curr_errors=toreal(countif(is_error)) by svc
+    | extend curr_error_rate=iff(curr_requests > 0, curr_errors/curr_requests, 0.0)
+    | lookup criblapm_alert_prev on svc
+    | extend prev_requests=iff(isnotnull(prev_req), toreal(prev_req), 0.0),
+             prev_errors=iff(isnotnull(prev_err), toreal(prev_err), 0.0),
+             prev_error_rate=iff(isnotnull(prev_err_rate), toreal(prev_err_rate), 0.0)
+    | extend curr_err_pct=curr_error_rate * 100,
+             prev_err_pct=prev_error_rate * 100,
+             // is_persistent is informational — used by notification
+             // logic to suppress repeat pings, NOT by detection.
+             // A 25% error rate that's been 25% for an hour is still
+             // a real problem that should be visible.
+             is_persistent=(prev_error_rate * 100 >= 1 and (curr_error_rate * 100 - prev_error_rate * 100) < 2),
+             // traffic_ratio normalizes to requests-per-minute so the
+             // -15m curr window and -60m prev window compare on the
+             // same scale. Without normalization a healthy service
+             // would look like it's at 25% of prior traffic (15/60).
+             traffic_ratio=iff(prev_requests >= 50,
+                               (curr_requests / 15.0) / (prev_requests / 60.0),
+                               1.0)
+    // Three error_rate paths, tuned for production noise tolerance.
+    // The prior ≥1% / ≥2-error floors were over-fit to chaos-
+    // engineered eval scenarios (llmRateLimit, recommendationCache)
+    // and fired on normal background error rates of real services.
+    //   1. High absolute rate — ≥5% with ≥20 spans. Paging-worthy
+    //      regardless of baseline.
+    //   2. Sharp deviation from a stable baseline — current rate
+    //      ≥3× prev AND ≥2% absolute AND prev window had ≥100
+    //      requests (baseline is statistically meaningful).
+    //   3. Catastrophic ramp on previously-clean service — ≥10
+    //      errors when the prior window had effectively zero,
+    //      gated on ≥50 current requests to distinguish "real
+    //      service just broke" from low-volume background noise.
+    // Tradeoff: silences chaos scenarios on ultra-low-volume
+    // services (llmRateLimit / recommendationCache product-reviews).
+    // Reintroducing those would need an explicit "low-volume mode"
+    // toggle in settings rather than default-on for everyone.
+    | extend signal_type=case(
+               curr_requests == 0 and prev_requests >= 50, "silent",
+               curr_err_pct >= 5 and curr_requests >= 20, "error_rate",
+               curr_err_pct >= 2 and curr_err_pct >= prev_err_pct * 3
+                 and prev_requests >= 100, "error_rate",
+               curr_errors >= 10 and prev_errors < 1
+                 and curr_requests >= 50, "error_rate",
+               traffic_ratio <= 0.5 and prev_requests >= 50, "traffic_drop",
+               "none"),
+             is_bad=(
+               (curr_requests == 0 and prev_requests >= 50)
+               or (curr_err_pct >= 5 and curr_requests >= 20)
+               or (curr_err_pct >= 2 and curr_err_pct >= prev_err_pct * 3
+                   and prev_requests >= 100)
+               or (curr_errors >= 10 and prev_errors < 1
+                   and curr_requests >= 50)
+               or (traffic_ratio <= 0.5 and prev_requests >= 50))
+    // alert_id is STABLE per service (doesn't include signal_type).
+    // Why: when a service recovers, signal_type rotates from
+    // "error_rate" → "none", so an signal_type-keyed alert_id
+    // would change too. The state export uses mode=overwrite, so
+    // the old "auto:error_rate:svc" row gets wiped before the
+    // state machine ever sees prev_status="firing" on the new
+    // "auto:none:svc" key — meaning the resolving→ok walk never
+    // fires, no "resolved" event is emitted, and the Alert Timeline
+    // shows the alert as "ongoing" forever. Stable key fixes this.
+    | extend alert_id=strcat("auto:health:", svc)
+    | lookup criblapm_alert_states on alert_id
+    | extend prev_status=iff(isnotnull(alert_status), tostring(alert_status), "ok"),
+             prev_bad=iff(isnotnull(consecutive_bad), tolong(consecutive_bad), 0),
+             prev_good=iff(isnotnull(consecutive_good), tolong(consecutive_good), 0),
+             prev_fire_count=iff(isnotnull(fire_count), tolong(fire_count), 0)
+    | extend new_bad=iff(is_bad, prev_bad + 1, 0),
+             new_good=iff(is_bad, 0, prev_good + 1)
+    | extend alert_status=case(
+               is_bad and prev_status == "ok", "pending",
+               is_bad and prev_status == "pending" and new_bad >= 2, "firing",
+               is_bad and prev_status == "pending", "pending",
+               is_bad and prev_status == "firing", "firing",
+               is_bad and prev_status == "resolving", "firing",
+               not(is_bad) and prev_status == "pending", "ok",
+               not(is_bad) and prev_status == "firing", "resolving",
+               not(is_bad) and prev_status == "resolving" and new_good >= 3, "ok",
+               not(is_bad) and prev_status == "resolving", "resolving",
+               "ok"),
+             consecutive_bad=new_bad,
+             consecutive_good=new_good,
+             fire_count=iff(is_bad and prev_status == "pending" and new_bad >= 2, prev_fire_count + 1, prev_fire_count),
+             transitioned_to=case(
+               is_bad and prev_status == "pending" and new_bad >= 2, "firing",
+               not(is_bad) and prev_status == "resolving" and new_good >= 3, "resolved",
+               "")
+    | project svc, curr_requests, curr_errors, curr_error_rate,
+              prev_requests, prev_errors, prev_error_rate,
+              alert_id, signal_type, is_bad, is_persistent,
+              alert_status, consecutive_bad, consecutive_good,
+              fire_count, transitioned_to
+    | union (
+        dataset="$vt_results"
+        | where jobName == "criblapm__svc_operations"
+        | project svc, op=name, curr_p95_us=toreal(p95_us), curr_requests=toreal(requests)
+        | lookup criblapm_op_baselines on svc, op
+        | extend prev_p95_us=iff(isnotnull(p95_us), toreal(p95_us), 0.0),
+                 prev_op_requests=iff(isnotnull(requests), toreal(requests), 0.0)
+        // Thresholds tuned for gradual-drift scenarios. The
+        // 2026-05-31 third eval scored emailMemoryLeak at 0.30
+        // with 5x ratio + 500ms floor — drift over 7 min didn't
+        // get there. Loosened to 3x ratio + 250ms floor with a
+        // 20-span volume gate to keep the noise tolerable. Item
+        // 1e in ROADMAP.
+        | where isnotnull(prev_p95_us) and prev_p95_us > 0
+                and curr_p95_us >= prev_p95_us * 3
+                and curr_p95_us >= 250000
+                and prev_op_requests >= 20
+        | extend alert_id=strcat("auto:latency:", svc, ":", op),
+                 signal_type="latency",
+                 is_bad=true,
+                 is_persistent=false,
+                 curr_errors=0.0, curr_error_rate=0.0,
+                 prev_requests=prev_op_requests, prev_errors=0.0, prev_error_rate=0.0
+        | lookup criblapm_alert_states on alert_id
+        | extend prev_status=iff(isnotnull(alert_status), tostring(alert_status), "ok"),
+                 prev_bad=iff(isnotnull(consecutive_bad), tolong(consecutive_bad), 0),
+                 prev_good=iff(isnotnull(consecutive_good), tolong(consecutive_good), 0),
+                 prev_fire_count=iff(isnotnull(fire_count), tolong(fire_count), 0)
+        | extend new_bad=prev_bad + 1, new_good=0
+        | extend alert_status=case(
+                   prev_status == "ok", "pending",
+                   prev_status == "pending" and new_bad >= 2, "firing",
+                   prev_status == "pending", "pending",
+                   prev_status == "firing", "firing",
+                   prev_status == "resolving", "firing",
+                   "ok"),
+                 consecutive_bad=new_bad,
+                 consecutive_good=0,
+                 fire_count=iff(prev_status == "pending" and new_bad >= 2, prev_fire_count + 1, prev_fire_count),
+                 transitioned_to=iff(prev_status == "pending" and new_bad >= 2, "firing", "")
+        | project svc, curr_requests, curr_errors, curr_error_rate,
+                  prev_requests, prev_errors, prev_error_rate,
+                  alert_id, signal_type, is_bad, is_persistent,
+                  alert_status, consecutive_bad, consecutive_good,
+                  fire_count, transitioned_to
+    )
+    | where transitioned_to != ""
+    | project _time=now(), dataset="otel",
+              datatype="criblapm_alert",
+              event_type=transitioned_to,
+              alert_id, alert_status, svc,
+              signal_type, is_persistent,
+              curr_error_rate, prev_error_rate,
+              curr_requests, prev_requests,
+              fire_count, consecutive_bad
+    | send group="search""
+`;
+
+exports[`queries.ts — golden snapshots + invariants > allOperationsSummary > snapshot stable 1`] = `
+"dataset="otel" | where isnotnull(end_time_unix_nano)
+    | extend svc=tostring(resource.attributes['service.name']),
+            dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0
+    | where dur_us < 30000000
+    | summarize requests=count(),
+                p50_us=percentile(dur_us, 50),
+                p95_us=percentile(dur_us, 95),
+                p99_us=percentile(dur_us, 99)
+      by svc, op=name
+    | sort by requests desc
+    | limit 1000"
+`;
+
+exports[`queries.ts — golden snapshots + invariants > allServiceOperations > snapshot stable 1`] = `
+"dataset="otel" | where isnotnull(end_time_unix_nano)
+    | extend svc=tostring(resource.attributes['service.name']),
+            dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
+            is_error=(tostring(status.code)=="2")
+    | where dur_us < 30000000
+    | summarize requests=count(),
+                errors=countif(is_error),
+                p50_us=percentile(dur_us, 50),
+                p95_us=percentile(dur_us, 95),
+                p99_us=percentile(dur_us, 99)
+      by svc, name
+    | extend error_rate=toreal(errors)/toreal(requests)
+    | sort by svc asc, requests desc"
+`;
+
+exports[`queries.ts — golden snapshots + invariants > attrCatalog > snapshot stable 1`] = `
+"dataset="otel" | where isnotnull(end_time_unix_nano)
+    | limit 5000
+    | extend svc=tostring(resource.attributes['service.name']),
+             ks=bag_keys(attributes)
+    | mv-expand attr_name=ks
+    | extend attr_name=tostring(attr_name)
+    | where isnotempty(attr_name)
+    | summarize n_spans_with_key=count() by svc, attr_name
+    | where n_spans_with_key >= 5
+    | project svc, attr_name, n_spans_with_key"
+`;
+
+exports[`queries.ts — golden snapshots + invariants > attrValueDistribution > snapshot stable 1`] = `
+"dataset="otel" | where isnotnull(end_time_unix_nano)
+    | where status_code == "2"
+    | extend attr_value=tostring(attributes['http.method'])
+    | where isnotempty(attr_value)
+    | summarize n=count() by attr_value
+    | sort by n desc
+    | limit 20
+    | extend attr_name="http.method"
+    | project attr_name, attr_value, n"
+`;
+
+exports[`queries.ts — golden snapshots + invariants > dependencies > snapshot stable 1`] = `
+"dataset="otel" | where isnotnull(end_time_unix_nano)
+    | extend svc=tostring(resource.attributes['service.name']),
+            parent=tostring(parent_span_id),
+            dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
+            is_error=(tostring(status.code)=="2")
+    | where parent != "" and isnotempty(parent)
+    | where dur_us < 30000000
+    | project trace_id, parent, svc, dur_us, is_error
+    | join kind=inner (
+        dataset="otel" | where isnotnull(end_time_unix_nano)
+        | extend psvc=tostring(resource.attributes['service.name']),
+                psid=tostring(span_id)
+        | project trace_id, psid, psvc
+      ) on trace_id, $left.parent == $right.psid
+    | where svc != psvc
+    | summarize callCount=count(),
+                errorCount=countif(is_error),
+                p95DurUs=percentile(dur_us, 95)
+      by parent=psvc, child=svc
+    | sort by callCount desc"
+`;
+
+exports[`queries.ts — golden snapshots + invariants > errorPropagationRollup > snapshot stable 1`] = `
+"dataset="otel" | where isnotnull(end_time_unix_nano)
+    | where tostring(status.code) == "2"
+    | extend child_parent=tostring(parent_span_id)
+    | where isnotempty(child_parent)
+    | summarize n_error_children=count() by trace_id, child_parent"
+`;
+
+exports[`queries.ts — golden snapshots + invariants > errorRateHistory > snapshot stable 1`] = `
+"dataset="otel" | where isnotnull(end_time_unix_nano)
+    | extend svc=tostring(resource.attributes['service.name']),
+             is_error=(tostring(status.code)=="2")
+    | summarize total=count(), errs=countif(is_error) by svc, day=bin(_time, 1d)
+    | where total >= 100
+    | extend day_offset=tolong((toreal(bin(now(), 1d)) - toreal(day)) / 86400.0)
+    | where day_offset between (1 .. 6)
+    | summarize
+        d1_total=sum(iff(day_offset == 1, total, tolong(0))),
+        d1_errs=sum(iff(day_offset == 1, errs, tolong(0))),
+        d2_total=sum(iff(day_offset == 2, total, tolong(0))),
+        d2_errs=sum(iff(day_offset == 2, errs, tolong(0))),
+        d3_total=sum(iff(day_offset == 3, total, tolong(0))),
+        d3_errs=sum(iff(day_offset == 3, errs, tolong(0))),
+        d4_total=sum(iff(day_offset == 4, total, tolong(0))),
+        d4_errs=sum(iff(day_offset == 4, errs, tolong(0))),
+        d5_total=sum(iff(day_offset == 5, total, tolong(0))),
+        d5_errs=sum(iff(day_offset == 5, errs, tolong(0))),
+        d6_total=sum(iff(day_offset == 6, total, tolong(0))),
+        d6_errs=sum(iff(day_offset == 6, errs, tolong(0)))
+      by svc
+    | extend
+        d1_pct=iff(d1_total > 0, round(100.0 * todouble(d1_errs) / todouble(d1_total), 2), 0.0),
+        d2_pct=iff(d2_total > 0, round(100.0 * todouble(d2_errs) / todouble(d2_total), 2), 0.0),
+        d3_pct=iff(d3_total > 0, round(100.0 * todouble(d3_errs) / todouble(d3_total), 2), 0.0),
+        d4_pct=iff(d4_total > 0, round(100.0 * todouble(d4_errs) / todouble(d4_total), 2), 0.0),
+        d5_pct=iff(d5_total > 0, round(100.0 * todouble(d5_errs) / todouble(d5_total), 2), 0.0),
+        d6_pct=iff(d6_total > 0, round(100.0 * todouble(d6_errs) / todouble(d6_total), 2), 0.0)
+    | project svc,
+              d1_pct, d2_pct, d3_pct, d4_pct, d5_pct, d6_pct,
+              d1_total, d2_total, d3_total, d4_total, d5_total, d6_total
+    | sort by svc asc"
+`;
+
+exports[`queries.ts — golden snapshots + invariants > findTraces (full filters) > snapshot stable 1`] = `
+"dataset="otel" | where isnotnull(end_time_unix_nano)
+    | extend svc=tostring(resource.attributes['service.name'])
+    | where svc=="test-svc" and name=="test-op" and tostring(attributes['error'])=="true" and tostring(attributes['http.status_code'])=="500" and (status_code == "2")
+    | summarize first_seen=min(_time),
+                trace_start_ns=min(start_time_unix_nano),
+                trace_end_ns=max(end_time_unix_nano)
+      by trace_id
+    | extend trace_dur_us=(toreal(trace_end_ns)-toreal(trace_start_ns))/1000.0
+    | where trace_dur_us >= 1000 and trace_dur_us <= 2000000
+    | sort by first_seen desc
+    | limit 50"
+`;
+
+exports[`queries.ts — golden snapshots + invariants > findTraces (no filters) > snapshot stable 1`] = `
+"dataset="otel" | where isnotnull(end_time_unix_nano)
+    | extend svc=tostring(resource.attributes['service.name'])
+    
+    | summarize first_seen=min(_time),
+                trace_start_ns=min(start_time_unix_nano),
+                trace_end_ns=max(end_time_unix_nano)
+      by trace_id
+    | extend trace_dur_us=(toreal(trace_end_ns)-toreal(trace_start_ns))/1000.0
+    
+    | sort by first_seen desc
+    | limit 20"
+`;
+
+exports[`queries.ts — golden snapshots + invariants > listMetricNames > snapshot stable 1`] = `
+"dataset="otel" | where datatype == "generic_metrics"
+    | extend metric_name=extract("\\"([a-zA-Z][a-zA-Z0-9._]*)\\"\\\\s*:\\\\s*-?[0-9]", 1, _raw)
+    | where isnotempty(metric_name)
+        and metric_name != "_metric_type"
+        and metric_name != "_datatype_detection"
+        and metric_name != "http.status_code"
+        and metric_name != "http.flavor"
+        and metric_name != "net.host.port"
+        and metric_name != "net.peer.port"
+        and metric_name != "process.pid"
+        and metric_name != "rpc.grpc.status_code"
+        and metric_name != "net.sock.peer.port"
+        and metric_name != "net.sock.host.port"
+        and metric_name != "http.response.status_code"
+        and metric_name != "cpu"
+        and metric_name != "partition"
+    | extend svc=tostring(['service.name'])
+    | summarize samples=count(), services=dcount(svc),
+                metric_type=max(_metric_type)
+      by name=metric_name
+    | sort by name asc
+    | limit 500"
+`;
+
+exports[`queries.ts — golden snapshots + invariants > logServices > snapshot stable 1`] = `
+"dataset="otel"
+    | where isnotnull(body) and isnotnull(severity_number)
+    | extend svc=tostring(resource.attributes['service.name'])
+    | summarize by svc
+    | sort by svc asc"
+`;
+
+exports[`queries.ts — golden snapshots + invariants > messagingDependencies > snapshot stable 1`] = `
+"dataset="otel" | where isnotnull(end_time_unix_nano)
+    | extend svc=tostring(resource.attributes['service.name']),
+            dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
+            is_error=(tostring(status.code)=="2"),
+            msg_op=tostring(attributes['messaging.operation']),
+            msg_dest=tostring(attributes['messaging.destination.name']),
+            msg_system=tostring(attributes['messaging.system'])
+    | where isnotempty(msg_dest) and isnotempty(msg_op)
+    | where dur_us < 30000000
+    | summarize spans=count(),
+                errors=countif(is_error),
+                p95_us=percentile(dur_us, 95)
+      by svc, msg_dest, msg_op, msg_system
+    | sort by spans desc"
+`;
+
+exports[`queries.ts — golden snapshots + invariants > metricSampleRecords > snapshot stable 1`] = `"dataset="otel" | where datatype == "generic_metrics" | limit 500"`;
+
+exports[`queries.ts — golden snapshots + invariants > metricSampleRow > snapshot stable 1`] = `
+"dataset="otel" | where datatype == "generic_metrics"
+    | where isnotnull(['http.server.request.duration'])
+    | limit 1"
+`;
+
+exports[`queries.ts — golden snapshots + invariants > metricServices > snapshot stable 1`] = `
+"dataset="otel" | where datatype == "generic_metrics"
+    | where isnotnull(['http.server.request.duration'])
+    | extend svc=tostring(['service.name'])
+    | where isnotempty(svc)
+    | summarize by svc
+    | sort by svc asc"
+`;
+
+exports[`queries.ts — golden snapshots + invariants > metricTimeSeries (basic) > snapshot stable 1`] = `
+"dataset="otel" | where datatype == "generic_metrics"
+    | where isnotnull(['http.server.request.duration'])
+    | extend svc=tostring(['service.name'])
+    
+    | summarize val=percentile(toreal(['http.server.request.duration']), 95)
+      by bucket=bin(_time, 60s)
+    | sort by bucket asc"
+`;
+
+exports[`queries.ts — golden snapshots + invariants > metricTimeSeries (grouped) > snapshot stable 1`] = `
+"dataset="otel" | where datatype == "generic_metrics"
+    | where isnotnull(['http.server.request.duration'])
+    | extend svc=tostring(['service.name']), grp=tostring(['http.route'])
+    | where svc == "test-svc"
+    | summarize val=max(toreal(['http.server.request.duration']))
+      by bucket=bin(_time, 60s), grp
+    | sort by bucket asc"
+`;
+
+exports[`queries.ts — golden snapshots + invariants > operationAnomaliesFromLookup > snapshot stable 1`] = `
+"dataset="otel" | where isnotnull(end_time_unix_nano)
+    | extend svc=tostring(resource.attributes['service.name']),
+             dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0
+    | where dur_us < 30000000
+    | summarize curr_p95_us=percentile(dur_us, 95),
+                curr_count=count()
+      by svc, op=name
+    | lookup criblapm_op_baselines on svc, op
+    | extend prev_p95_us=toreal(p95_us),
+             prev_requests=toreal(requests)
+    | where isnotnull(prev_p95_us) and prev_p95_us > 0
+    | where curr_p95_us >= prev_p95_us * 3
+      and curr_p95_us >= 250000
+      and prev_requests >= 100
+    | project svc, op,
+              curr_p95_us,
+              prev_p95_us,
+              requests=curr_count,
+              ratio=curr_p95_us/prev_p95_us
+    | sort by ratio desc
+    | limit 50"
+`;
+
+exports[`queries.ts — golden snapshots + invariants > operations > snapshot stable 1`] = `
+"dataset="otel" | where isnotnull(end_time_unix_nano)
+    | extend svc=tostring(resource.attributes['service.name'])
+    | where svc=="test-svc"
+    | summarize by name
+    | sort by name asc"
+`;
+
+exports[`queries.ts — golden snapshots + invariants > podUptime > snapshot stable 1`] = `
+"dataset="otel" | where isnotnull(end_time_unix_nano)
+    | extend svc=tostring(resource.attributes['service.name']),
+             pod=tostring(resource.attributes['k8s.pod.name']),
+             start_iso=tostring(resource.attributes['k8s.pod.start_time'])
+    | where isnotempty(pod) and isnotempty(start_iso)
+    | where svc == "test-svc"
+    | summarize start_iso=max(start_iso), last_seen=max(_time) by svc, pod
+    | extend uptime_hours=abs(datetime_diff('hour', todatetime(start_iso), unixtime_seconds_todatetime(toreal(last_seen))))
+    | project svc, pod, start_iso, uptime_hours, last_seen
+    | sort by uptime_hours desc"
+`;
+
+exports[`queries.ts — golden snapshots + invariants > prevWindowSummary > snapshot stable 1`] = `
+"dataset="otel" | where isnotnull(end_time_unix_nano)
+    | extend svc=tostring(resource.attributes['service.name']),
+            dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
+            is_error=(tostring(status.code)=="2")
+    | where dur_us < 30000000
+    | summarize prev_req=count(),
+                prev_raw_err=countif(is_error),
+                prev_p95_us=percentile(dur_us, 95)
+      by svc
+    | join kind=leftouter (
+        dataset="otel" | where isnotnull(end_time_unix_nano)
+    | where tostring(status.code) == "2"
+    | extend svc=tostring(resource.attributes['service.name']),
+             span_kind=tostring(kind),
+             http_status=toint(attributes['http.response.status_code']),
+             grpc_status=toint(attributes['rpc.grpc.status_code']),
+             sid=tostring(span_id)
+    
+    
+    | join kind=leftouter (
+        dataset="otel" | where isnotnull(end_time_unix_nano)
+        | where tostring(parent_span_id) == ""
+        | extend root_svc=tostring(resource.attributes['service.name'])
+        | project trace_id, root_svc
+        | lookup criblapm_trace_originators on root_svc
+      ) on trace_id
+    | extend trace_origin=coalesce(type, "unknown")
+    | join kind=leftouter (
+        dataset="otel" | where isnotnull(end_time_unix_nano)
+    | where tostring(status.code) == "2"
+    | extend child_parent=tostring(parent_span_id)
+    | where isnotempty(child_parent)
+    | summarize n_error_children=count() by trace_id, child_parent
+      ) on trace_id, $left.sid == $right.child_parent
+    | extend has_error_child=isnotnull(n_error_children)
+    | extend counts_as_error = not((has_error_child == true) or (trace_origin == "user" and (isnotnull(http_status) and http_status >= 400 and http_status <= 499)) or (trace_origin == "user" and grpc_status in (3,5,6,7,11,16)))
+    | where counts_as_error
+    | summarize filtered_errors=count() by svc
+      ) on svc
+    | extend prev_err=coalesce(filtered_errors, tolong(0))
+    | extend prev_err_rate=iff(prev_req > 0, toreal(prev_err)/toreal(prev_req), 0.0)
+    | project svc, prev_req, prev_err, prev_raw_err, prev_p95_us, prev_err_rate
+    | export mode=overwrite
+             description="Cribl APM - previous window service summary"
+             to lookup criblapm_alert_prev"
+`;
+
+exports[`queries.ts — golden snapshots + invariants > rawRecentErrorSpans > snapshot stable 1`] = `
+"dataset="otel" | where isnotnull(end_time_unix_nano)
+    | where tostring(status.code) == "2"
+    | extend svc=tostring(resource.attributes['service.name']),
+             span_kind=tostring(kind),
+             msg=tostring(status.message),
+             http_status=toint(attributes['http.response.status_code']),
+             grpc_status=toint(attributes['rpc.grpc.status_code']),
+             sid=tostring(span_id)
+    | sort by _time desc
+    | limit 300
+    | project _time, svc, name, span_kind, http_status, grpc_status, msg, trace_id, sid
+    
+    | join kind=leftouter (
+        dataset="otel" | where isnotnull(end_time_unix_nano)
+        | where tostring(parent_span_id) == ""
+        | extend root_svc=tostring(resource.attributes['service.name'])
+        | project trace_id, root_svc
+        | lookup criblapm_trace_originators on root_svc
+      ) on trace_id
+    | extend trace_origin=coalesce(type, "unknown")
+    | join kind=leftouter (
+        dataset="otel" | where isnotnull(end_time_unix_nano)
+    | where tostring(status.code) == "2"
+    | extend child_parent=tostring(parent_span_id)
+    | where isnotempty(child_parent)
+    | summarize n_error_children=count() by trace_id, child_parent
+      ) on trace_id, $left.sid == $right.child_parent
+    | extend has_error_child=isnotnull(n_error_children)
+    | project _time, svc, name, span_kind, http_status, grpc_status,
+              msg, trace_id, root_svc, trace_origin, has_error_child"
+`;
+
+exports[`queries.ts — golden snapshots + invariants > rawSlowestTraces > snapshot stable 1`] = `
+"dataset="otel" | where isnotnull(end_time_unix_nano)
+    | extend svc=tostring(resource.attributes['service.name']),
+            parent=tostring(parent_span_id),
+            is_root=(parent=="" or isempty(parent)),
+            dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0
+    | summarize span_count=count(),
+                trace_start_ns=min(start_time_unix_nano),
+                trace_end_ns=max(end_time_unix_nano),
+                max_non_root_dur_us=maxif(dur_us, is_root == false),
+                root_svc=minif(svc, is_root),
+                root_op=minif(name, is_root)
+      by trace_id
+    | extend trace_dur_us=(toreal(trace_end_ns)-toreal(trace_start_ns))/1000.0
+    | where isnotnull(root_svc)
+    | extend max_child_us=iff(isnull(max_non_root_dur_us), 0.0, toreal(max_non_root_dur_us))
+    | where not (trace_dur_us > 30000000 and (span_count < 3 or (max_child_us / trace_dur_us) < 0.1) and not (root_op matches regex "[Cc]onsume[d]?|CONSUME[D]?"))
+    | sort by trace_dur_us desc
+    | limit 500"
+`;
+
+exports[`queries.ts — golden snapshots + invariants > recentErrorTraces (all) > snapshot stable 1`] = `
+"dataset="otel" | where isnotnull(end_time_unix_nano)
+    | extend svc=tostring(resource.attributes['service.name']),
+            is_error=(tostring(status.code)=="2")
+    | where is_error
+    
+    | summarize first_seen=max(_time),
+                error_count=count()
+      by trace_id
+    | sort by first_seen desc
+    | limit 20"
+`;
+
+exports[`queries.ts — golden snapshots + invariants > recentErrorTraces (scoped) > snapshot stable 1`] = `
+"dataset="otel" | where isnotnull(end_time_unix_nano)
+    | extend svc=tostring(resource.attributes['service.name']),
+            is_error=(tostring(status.code)=="2")
+    | where is_error
+    | where svc=="test-svc"
+    | summarize first_seen=max(_time),
+                error_count=count()
+      by trace_id
+    | sort by first_seen desc
+    | limit 20"
+`;
+
+exports[`queries.ts — golden snapshots + invariants > searchLogs > snapshot stable 1`] = `
+"dataset="otel"
+    | where isnotnull(body) and isnotnull(severity_number) and tostring(resource.attributes['service.name'])=="test-svc" and severity_number >= 17 and tostring(body) contains "connection refused"
+    | project _time, trace_id, span_id, body, severity_text, severity_number,
+              attributes,
+              service_name=tostring(resource.attributes['service.name']),
+              pod_name=tostring(resource.attributes['k8s.pod.name']),
+              code_file=tostring(attributes['code.file.path']),
+              code_function=tostring(attributes['code.function.name']),
+              code_line=attributes['code.line.number']
+    | sort by _time desc
+    | limit 100"
+`;
+
+exports[`queries.ts — golden snapshots + invariants > serviceInstances > snapshot stable 1`] = `
+"dataset="otel" | where isnotnull(end_time_unix_nano)
+    | extend svc=tostring(resource.attributes['service.name']),
+            instance_id=tostring(resource.attributes['service.instance.id']),
+            dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
+            is_error=(tostring(status.code)=="2")
+    | where svc=="test-svc"
+    | where dur_us < 30000000
+    | summarize requests=count(),
+                errors=countif(is_error),
+                p50_us=percentile(dur_us, 50),
+                p95_us=percentile(dur_us, 95),
+                p99_us=percentile(dur_us, 99)
+      by instance_id
+    | extend error_rate=toreal(errors)/toreal(requests)
+    | sort by requests desc"
+`;
+
+exports[`queries.ts — golden snapshots + invariants > serviceMetricDelta > snapshot stable 1`] = `
+"dataset="otel" | where datatype == "generic_metrics"
+    | where isnotnull(['k8s.container.restarts'])
+    | extend svc=tostring(['service.name']),
+             dep=tostring(['k8s.deployment.name']),
+             pod=tostring(['k8s.pod.name']),
+             container=tostring(['k8s.container.name'])
+    | where svc == "test-svc" or dep == "test-svc"
+    | summarize d=max(toreal(['k8s.container.restarts']))-min(toreal(['k8s.container.restarts']))
+      by pod, container
+    | summarize delta=sum(d)"
+`;
+
+exports[`queries.ts — golden snapshots + invariants > serviceMetricLatest > snapshot stable 1`] = `
+"dataset="otel" | where datatype == "generic_metrics"
+    | where isnotnull(['process.runtime.go.goroutines'])
+    | extend svc=tostring(['service.name']),
+             dep=tostring(['k8s.deployment.name'])
+    | where svc == "test-svc" or dep == "test-svc"
+    | sort by _time desc
+    | limit 1
+    | project val=toreal(['process.runtime.go.goroutines'])"
+`;
+
+exports[`queries.ts — golden snapshots + invariants > serviceMetricSampleRecords > snapshot stable 1`] = `
+"dataset="otel" | where datatype == "generic_metrics"
+    | extend svc=tostring(['service.name']),
+             dep=tostring(['k8s.deployment.name'])
+    | where svc == "test-svc" or dep == "test-svc"
+    | limit 500"
+`;
+
+exports[`queries.ts — golden snapshots + invariants > serviceMetricTimeSeries > snapshot stable 1`] = `
+"dataset="otel" | where datatype == "generic_metrics"
+    | where isnotnull(['http.server.request.duration'])
+    | extend svc=tostring(['service.name']),
+             dep=tostring(['k8s.deployment.name'])
+    | where svc == "test-svc" or dep == "test-svc"
+    | summarize val=percentile(toreal(['http.server.request.duration']), 95) by bucket=bin(_time, 60s)
+    | sort by bucket asc"
+`;
+
+exports[`queries.ts — golden snapshots + invariants > serviceMetricsBatch > snapshot stable 1`] = `
+"dataset="otel" | where datatype == "generic_metrics"
+    | where isnotnull(['m.a']) or isnotnull(['m.b'])
+    | extend svc=tostring(['service.name']),
+             dep=tostring(['k8s.deployment.name'])
+    | where svc == "test-svc" or dep == "test-svc"
+    | extend bucket=bin(_time, 60s)
+    | sort by bucket asc"
+`;
+
+exports[`queries.ts — golden snapshots + invariants > serviceOperations > snapshot stable 1`] = `
+"dataset="otel" | where isnotnull(end_time_unix_nano)
+    | extend svc=tostring(resource.attributes['service.name']),
+            dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
+            is_error=(tostring(status.code)=="2")
+    | where svc=="test-svc"
+    | where dur_us < 30000000
+    | summarize requests=count(),
+                errors=countif(is_error),
+                p50_us=percentile(dur_us, 50),
+                p95_us=percentile(dur_us, 95),
+                p99_us=percentile(dur_us, 99)
+      by name
+    | extend error_rate=toreal(errors)/toreal(requests)
+    | sort by requests desc
+    | limit 50"
+`;
+
+exports[`queries.ts — golden snapshots + invariants > serviceStatusCodeMix > snapshot stable 1`] = `
+"dataset="otel" | where isnotnull(end_time_unix_nano)
+    | extend svc=tostring(resource.attributes['service.name']),
+             dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
+             http_status=coalesce(toint(attributes['http.response.status_code']),
+                                  toint(attributes['http.status_code'])),
+             grpc_status=toint(attributes['rpc.grpc.status_code'])
+    | where svc=="test-svc"
+    | where dur_us < 30000000
+    | extend status_class=case(
+        http_status == 503, "503",
+        http_status == 504, "504",
+        http_status == 502, "502",
+        http_status == 500, "500",
+        http_status >= 500 and http_status < 600, "other_5xx",
+        http_status >= 400 and http_status < 500, "4xx",
+        isnotnull(grpc_status) and grpc_status != 0, "grpc_err",
+        "ok")
+    | summarize n=count() by status_class, bucket=bin(_time, 60s)
+    | sort by bucket asc, status_class asc"
+`;
+
+exports[`queries.ts — golden snapshots + invariants > serviceSummary (all) > snapshot stable 1`] = `
+"dataset="otel" | where isnotnull(end_time_unix_nano)
+    | extend svc=tostring(resource.attributes['service.name']),
+            dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
+            is_error=(tostring(status.code)=="2")
+    
+    | where dur_us < 30000000
+    | summarize requests=count(),
+                raw_errors=countif(is_error),
+                p50_us=percentile(dur_us, 50),
+                p95_us=percentile(dur_us, 95),
+                p99_us=percentile(dur_us, 99),
+                last_seen=max(_time)
+      by svc
+    | join kind=leftouter (
+        dataset="otel" | where isnotnull(end_time_unix_nano)
+    | where tostring(status.code) == "2"
+    | extend svc=tostring(resource.attributes['service.name']),
+             span_kind=tostring(kind),
+             http_status=toint(attributes['http.response.status_code']),
+             grpc_status=toint(attributes['rpc.grpc.status_code']),
+             sid=tostring(span_id)
+    
+    
+    | join kind=leftouter (
+        dataset="otel" | where isnotnull(end_time_unix_nano)
+        | where tostring(parent_span_id) == ""
+        | extend root_svc=tostring(resource.attributes['service.name'])
+        | project trace_id, root_svc
+        | lookup criblapm_trace_originators on root_svc
+      ) on trace_id
+    | extend trace_origin=coalesce(type, "unknown")
+    | join kind=leftouter (
+        dataset="otel" | where isnotnull(end_time_unix_nano)
+    | where tostring(status.code) == "2"
+    | extend child_parent=tostring(parent_span_id)
+    | where isnotempty(child_parent)
+    | summarize n_error_children=count() by trace_id, child_parent
+      ) on trace_id, $left.sid == $right.child_parent
+    | extend has_error_child=isnotnull(n_error_children)
+    | extend counts_as_error = not((has_error_child == true) or (trace_origin == "user" and (isnotnull(http_status) and http_status >= 400 and http_status <= 499)) or (trace_origin == "user" and grpc_status in (3,5,6,7,11,16)))
+    | where counts_as_error
+    | summarize filtered_errors=count() by svc
+      ) on svc
+    | extend errors=coalesce(filtered_errors, tolong(0))
+    | extend error_rate=iff(requests > 0, toreal(errors)/toreal(requests), 0.0)
+    | project svc, requests, errors, raw_errors,
+              p50_us, p95_us, p99_us, last_seen, error_rate
+    | sort by requests desc"
+`;
+
+exports[`queries.ts — golden snapshots + invariants > serviceSummary (scoped) > snapshot stable 1`] = `
+"dataset="otel" | where isnotnull(end_time_unix_nano)
+    | extend svc=tostring(resource.attributes['service.name']),
+            dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
+            is_error=(tostring(status.code)=="2")
+    | where svc=="test-svc"
+    | where dur_us < 30000000
+    | summarize requests=count(),
+                raw_errors=countif(is_error),
+                p50_us=percentile(dur_us, 50),
+                p95_us=percentile(dur_us, 95),
+                p99_us=percentile(dur_us, 99),
+                last_seen=max(_time)
+      by svc
+    | join kind=leftouter (
+        dataset="otel" | where isnotnull(end_time_unix_nano)
+    | where tostring(status.code) == "2"
+    | extend svc=tostring(resource.attributes['service.name']),
+             span_kind=tostring(kind),
+             http_status=toint(attributes['http.response.status_code']),
+             grpc_status=toint(attributes['rpc.grpc.status_code']),
+             sid=tostring(span_id)
+    | where svc=="test-svc"
+    
+    | join kind=leftouter (
+        dataset="otel" | where isnotnull(end_time_unix_nano)
+        | where tostring(parent_span_id) == ""
+        | extend root_svc=tostring(resource.attributes['service.name'])
+        | project trace_id, root_svc
+        | lookup criblapm_trace_originators on root_svc
+      ) on trace_id
+    | extend trace_origin=coalesce(type, "unknown")
+    | join kind=leftouter (
+        dataset="otel" | where isnotnull(end_time_unix_nano)
+    | where tostring(status.code) == "2"
+    | extend child_parent=tostring(parent_span_id)
+    | where isnotempty(child_parent)
+    | summarize n_error_children=count() by trace_id, child_parent
+      ) on trace_id, $left.sid == $right.child_parent
+    | extend has_error_child=isnotnull(n_error_children)
+    | extend counts_as_error = not((has_error_child == true) or (trace_origin == "user" and (isnotnull(http_status) and http_status >= 400 and http_status <= 499)) or (trace_origin == "user" and grpc_status in (3,5,6,7,11,16)))
+    | where counts_as_error
+    | summarize filtered_errors=count() by svc
+      ) on svc
+    | extend errors=coalesce(filtered_errors, tolong(0))
+    | extend error_rate=iff(requests > 0, toreal(errors)/toreal(requests), 0.0)
+    | project svc, requests, errors, raw_errors,
+              p50_us, p95_us, p99_us, last_seen, error_rate
+    | sort by requests desc"
+`;
+
+exports[`queries.ts — golden snapshots + invariants > serviceTimeSeries > snapshot stable 1`] = `
+"dataset="otel" | where isnotnull(end_time_unix_nano)
+    | extend svc=tostring(resource.attributes['service.name']),
+            dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
+            is_error=(tostring(status.code)=="2")
+    
+    | where dur_us < 30000000
+    | summarize requests=count(),
+                errors=countif(is_error),
+                p50_us=percentile(dur_us, 50),
+                p95_us=percentile(dur_us, 95),
+                p99_us=percentile(dur_us, 99)
+      by svc, bucket=bin(_time, 60s)
+    | sort by svc asc, bucket asc"
+`;
+
+exports[`queries.ts — golden snapshots + invariants > services > snapshot stable 1`] = `
+"dataset="otel" | where isnotnull(end_time_unix_nano)
+    | extend svc=tostring(resource.attributes['service.name'])
+    | summarize by svc
+    | sort by svc asc"
+`;
+
+exports[`queries.ts — golden snapshots + invariants > slowestTraces (all) > snapshot stable 1`] = `
+"dataset="otel" | where isnotnull(end_time_unix_nano)
+    | extend svc=tostring(resource.attributes['service.name']),
+            parent=tostring(parent_span_id),
+            is_root=(parent=="" or isempty(parent)),
+            dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0
+    
+    | summarize span_count=count(),
+                first_seen=min(_time),
+                trace_start_ns=min(start_time_unix_nano),
+                trace_end_ns=max(end_time_unix_nano),
+                max_non_root_dur_us=maxif(dur_us, is_root == false),
+                root_op=minif(name, is_root)
+      by trace_id
+    | extend trace_dur_us=(toreal(trace_end_ns)-toreal(trace_start_ns))/1000.0
+    | extend max_child_us=iff(isnull(max_non_root_dur_us), 0.0, toreal(max_non_root_dur_us))
+    | where not (trace_dur_us > 30000000 and (span_count < 3 or (max_child_us / trace_dur_us) < 0.1) and not (root_op matches regex "[Cc]onsume[d]?|CONSUME[D]?"))
+    | sort by trace_dur_us desc
+    | limit 20"
+`;
+
+exports[`queries.ts — golden snapshots + invariants > slowestTraces (scoped) > snapshot stable 1`] = `
+"dataset="otel" | where isnotnull(end_time_unix_nano)
+    | extend svc=tostring(resource.attributes['service.name']),
+            parent=tostring(parent_span_id),
+            is_root=(parent=="" or isempty(parent)),
+            dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0
+    | where svc=="test-svc"
+    | summarize span_count=count(),
+                first_seen=min(_time),
+                trace_start_ns=min(start_time_unix_nano),
+                trace_end_ns=max(end_time_unix_nano),
+                max_non_root_dur_us=maxif(dur_us, is_root == false),
+                root_op=minif(name, is_root)
+      by trace_id
+    | extend trace_dur_us=(toreal(trace_end_ns)-toreal(trace_start_ns))/1000.0
+    | extend max_child_us=iff(isnull(max_non_root_dur_us), 0.0, toreal(max_non_root_dur_us))
+    | where not (trace_dur_us > 30000000 and (span_count < 3 or (max_child_us / trace_dur_us) < 0.1) and not (root_op matches regex "[Cc]onsume[d]?|CONSUME[D]?"))
+    | sort by trace_dur_us desc
+    | limit 20"
+`;
+
+exports[`queries.ts — golden snapshots + invariants > spotlightAttrDiff > snapshot stable 1`] = `
+"dataset="otel" | where isnotnull(end_time_unix_nano)
+    
+    | extend attr_value=tostring(attributes['http.method']),
+             sel_match=status_code == "2"
+    | where isnotempty(attr_value)
+    | summarize sel_n=countif(sel_match==true),
+                base_n=countif(sel_match==false)
+      by attr_value
+    | extend total=sel_n+base_n
+    | sort by total desc
+    | limit 20
+    | extend attr_name="http.method"
+    | project attr_name, attr_value, sel_n, base_n"
+`;
+
+exports[`queries.ts — golden snapshots + invariants > traceLogs > snapshot stable 1`] = `
+"dataset="otel"
+    | where isnotnull(body) and isnotnull(severity_number)
+    | where trace_id=="t-abc"
+    | project _time, trace_id, span_id, body, severity_text, severity_number,
+              attributes,
+              service_name=tostring(resource.attributes['service.name']),
+              code_file=tostring(attributes['code.file.path']),
+              code_function=tostring(attributes['code.function.name']),
+              code_line=attributes['code.line.number']
+    | sort by _time asc
+    | limit 5000"
+`;
+
+exports[`queries.ts — golden snapshots + invariants > traceOriginators > snapshot stable 1`] = `
+"dataset="otel" | where isnotnull(end_time_unix_nano)
+    | where tostring(parent_span_id) == ""
+    | extend root_svc=tostring(resource.attributes['service.name']),
+             ua=tostring(attributes['http.user_agent']),
+             msg_sys=tostring(attributes['messaging.system']),
+             span_name=tostring(name)
+    // Character-class alternation instead of (?i): the inline flag
+    // upstream of export-to-lookup makes the func:store write stage
+    // emit a CSV that reports totalEventsOut correctly but is not
+    // joinable — lookup-on-root_svc returns no matches. Same bug
+    // family as the mv-expand/export incompatibility in
+    // attrCatalogComputeQuery. Found 2026-06-09 when the lookup
+    // never repopulated after the dataset-empty wipe.
+    | extend ua_browser=(ua matches regex "[Mm]ozilla|[Cc]hrome|[Ss]afari|[Ff]irefox|[Ee]dge|[Oo]pera"),
+             ua_loadtest=(ua matches regex "k6|[Ll]ocust|[Jj]meter|[Gg]atling|wrk|ab/|[Ll]oadgen"),
+             ua_probe=(ua matches regex "kube-probe|[Gg]o-http-client|[Hh]ealthcheck|[Ll]iveness|[Rr]eadiness"),
+             has_msg=isnotempty(msg_sys),
+             name_user=(span_name matches regex "(^|_)([Uu]ser|[Bb]rowse|[Vv]iew|[Cc]heckout|[Cc]art|[Ss]earch)(_|$)"),
+             name_service=(span_name matches regex "(^|_)([Tt]ick|[Cc]ron|[Cc]onsume|[Pp]rocess|[Pp]oll|[Ww]orker|[Jj]ob|[Tt]ask)(_|$)")
+    | summarize total=count(),
+                n_browser=countif(ua_browser),
+                n_loadtest=countif(ua_loadtest),
+                n_probe=countif(ua_probe),
+                n_msg=countif(has_msg),
+                n_name_user=countif(name_user),
+                n_name_service=countif(name_service)
+        by root_svc
+    | extend type=case(
+        todouble(n_browser+n_loadtest)/todouble(total) >= 0.5, "user",
+        todouble(n_probe)/todouble(total) >= 0.5, "service",
+        todouble(n_msg)/todouble(total) >= 0.5, "service",
+        todouble(n_name_user)/todouble(total) >= 0.5, "user",
+        todouble(n_name_service)/todouble(total) >= 0.5, "service",
+        "unknown")
+    | where total >= 10
+    | project root_svc, type, total,
+              n_browser, n_loadtest, n_probe, n_msg,
+              n_name_user, n_name_service"
+`;
+
+exports[`queries.ts — golden snapshots + invariants > traceSpans > snapshot stable 1`] = `
+"dataset="otel" | where isnotnull(end_time_unix_nano)
+    | where trace_id in ("t1", "t2")
+    | project _time, trace_id, span_id, parent_span_id, name, kind,
+              start_time_unix_nano, end_time_unix_nano,
+              attributes, events, links,
+              status_code=tostring(status.code), status_message=tostring(status.message),
+              service_name=tostring(resource.attributes['service.name']),
+              resource_attributes=resource.attributes
+    | sort by start_time_unix_nano asc"
+`;
