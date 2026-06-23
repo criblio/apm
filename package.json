@@ -59,5 +59,9 @@
   },
   "displayName": "Cribl APM",
   "description": "Application performance monitoring on top of Cribl Search — traces, logs, and metrics from the OpenTelemetry demo.",
-  "author": "Clint Sharp"
+  "author": "Clint Sharp",
+  "cribl": {
+    "type": "app",
+    "createAppScriptVersion": "0.3.0"
+  }
 }

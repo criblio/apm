@@ -15,7 +15,7 @@ Your app runs inside a sandboxed iframe. The platform **automatically intercepts
 
 **What the proxy does for you:**
 - Injects authentication headers (your app never sees or handles auth tokens)
-- Rewrites URLs to scope requests to your app's pack
+- Rewrites URLs to scope requests to your app
 - Streams responses back to your app
 
 **What this means for your code:**
@@ -30,12 +30,12 @@ The proxy applies these rewrites automatically:
 
 | What you call | What actually happens | Why |
 |---|---|---|
-| `fetch(CRIBL_API_URL + '/kvstore/my-key')` | Rewritten to `/api/v1/p/{yourPackId}/kvstore/my-key` | Scopes KV store access to your pack |
-| `fetch(CRIBL_API_URL + '/proxy/some/path')` | Rewritten to `/api/v1/p/{yourPackId}/proxy/some/path` | Scopes proxy calls to your pack |
-| `fetch('https://api.example.com/data')` | Rewritten to `/api/v1/p/{yourPackId}/proxy/api.example.com/data` | External calls are routed through the platform proxy |
+| `fetch(CRIBL_API_URL + '/kvstore/my-key')` | Rewritten to `/api/v1/a/{yourAppId}/kvstore/my-key` | Scopes KV store access to your app |
+| `fetch(CRIBL_API_URL + '/proxy/some/path')` | Rewritten to `/api/v1/a/{yourAppId}/proxy/some/path` | Scopes proxy calls to your app |
+| `fetch('https://api.example.com/data')` | Rewritten to `/api/v1/a/{yourAppId}/proxy/api.example.com/data` | External calls are routed through the platform proxy |
 | `fetch(CRIBL_API_URL + '/search/jobs')` | Passed through as-is | Standard API calls are not rewritten |
 
-**Important:** Your app cannot access other packs' resources. Any request targeting a different pack ID will be rejected.
+**Important:** Your app cannot access other apps' resources. Any request targeting a different app ID will be rejected.
 
 ### Request Timeout
 
@@ -66,7 +66,7 @@ When asked to build a feature, always inspect Cribl REST APIs and understand the
 
 ### External API Calls
 
-To call external APIs, just use `fetch()` with the full URL. The platform will automatically route these through your pack's proxy endpoint. The external domain must be declared in your app's `config/proxies.yml`.
+To call external APIs, just use `fetch()` with the full URL. The platform will automatically route these through your app's proxy endpoint. The external domain must be declared in your app's `config/proxies.yml`.
 
 ### proxies.yml — External Domain Configuration
 
@@ -109,7 +109,7 @@ api.openai.com:
 **Security notes:**
 - Sensitive headers (`cookie`, `authorization`, `proxy-authorization`, `host`, `connection`, `transfer-encoding`) are always stripped from the original request before forwarding — use `headers.inject` to set auth headers instead
 - The platform validates target domains against SSRF protections (private/reserved IPs are blocked)
-- Requests are rate-limited per pack (100 requests/minute)
+- Requests are rate-limited per app (100 requests/minute)
 - All proxied requests use HTTPS
 
 **Example — minimal config for a single API:**
@@ -145,7 +145,7 @@ hooks.slack.com:
       Content-Type: "'application/json'"
 ```
 
-**How it connects to fetch:** When your app calls `fetch('https://api.openai.com/v1/chat/completions', ...)`, the platform rewrites this to `/api/v1/p/{yourPackId}/proxy/api.openai.com/v1/chat/completions`, looks up `api.openai.com` in your `proxies.yml`, validates the path, injects headers, and forwards the request.
+**How it connects to fetch:** When your app calls `fetch('https://api.openai.com/v1/chat/completions', ...)`, the platform rewrites this to `/api/v1/a/{yourAppId}/proxy/api.openai.com/v1/chat/completions`, looks up `api.openai.com` in your `proxies.yml`, validates the path, injects headers, and forwards the request.
 
 ## React Router
 
