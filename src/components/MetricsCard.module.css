@@ -1,9 +1,11 @@
+/* Capra Card supplies background + border + radius. Zero its
+ * padding/gap so .header stays flush to the card edge and .rows
+ * renders edge-to-edge. */
 .card {
-  background: var(--cds-color-bg);
-  border: 1px solid var(--cds-color-border-subtle);
-  border-radius: var(--cds-radius-lg);
-  box-shadow: var(--cds-shadow-sm);
+  padding: 0;
+  gap: 0;
   overflow: hidden;
+  box-shadow: var(--cds-shadow-sm);
 }
 
 .header {

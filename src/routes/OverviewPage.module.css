@@ -83,13 +83,15 @@
   margin-top: var(--cds-space-xs);
 }
 
-/* Cards */
+/* Capra Card supplies background + border + radius. We zero its
+ * built-in padding/gap so the inner .cardHeader strip stays flush
+ * to the card edge and the table inside renders edge-to-edge —
+ * the same look the bespoke .card div produced before. */
 .card {
-  background: var(--cds-color-bg);
-  border: 1px solid var(--cds-color-border-subtle);
-  border-radius: var(--cds-radius-lg);
-  box-shadow: var(--cds-shadow-sm);
+  padding: 0;
+  gap: 0;
   overflow: hidden;
+  box-shadow: var(--cds-shadow-sm);
 }
 .cardHeader {
   display: flex;

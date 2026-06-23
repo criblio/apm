@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Button, Tag, type TagColor } from '@capra/core';
+import { Button, Card, Tag, type TagColor } from '@capra/core';
 import TimeRangePicker from '../components/TimeRangePicker';
 import StatusBanner from '../components/StatusBanner';
 import DetectedIssuesPanel from '../components/DetectedIssuesPanel';
@@ -254,7 +254,7 @@ export default function OverviewPage() {
 
       {/* Services with issues */}
       {issueServices.length > 0 && (
-        <div className={s.card}>
+        <Card className={s.card}>
           <div className={s.cardHeader}>
             <span className={s.cardTitle}>Services Needing Attention ({issueServices.length})</span>
             <Link to="/services" className={s.cardLink}>View all services →</Link>
@@ -300,12 +300,12 @@ export default function OverviewPage() {
               ))}
             </tbody>
           </table>
-        </div>
+        </Card>
       )}
 
       {/* Recent alert events */}
       {recentAlerts.length > 0 && (
-        <div className={s.card}>
+        <Card className={s.card}>
           <div className={s.cardHeader}>
             <span className={s.cardTitle}>Recent Alert Events</span>
             <Link to="/alerts" className={s.cardLink}>View all alerts →</Link>
@@ -338,7 +338,7 @@ export default function OverviewPage() {
               ))}
             </tbody>
           </table>
-        </div>
+        </Card>
       )}
 
       {/* Quick links */}

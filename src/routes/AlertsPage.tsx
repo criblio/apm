@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Button, Menu, Tag, type TagColor } from '@capra/core';
+import { Button, Card, Menu, Tag, type TagColor } from '@capra/core';
 import { ChevronDown } from '@capra/icons';
 import StatusBanner from '../components/StatusBanner';
 import AlertTimeline from '../components/AlertTimeline';
@@ -235,7 +235,7 @@ export default function AlertsPage() {
       />
 
       {/* Alert incidents — paired firing→resolved with duration */}
-      <div className={s.card}>
+      <Card className={s.card}>
         <h2 className={s.sectionTitle}>
           {timelineSelection
             ? `Incidents in selection (${filteredIncidents.length})`
@@ -298,11 +298,11 @@ export default function AlertsPage() {
             </tbody>
           </table>
         )}
-      </div>
+      </Card>
 
       {/* Currently active alerts */}
       {nonOk.length > 0 && (
-        <div className={s.card}>
+        <Card className={s.card}>
           <h2 className={s.sectionTitle}>Currently Active ({nonOk.length})</h2>
           <table className={s.table}>
             <thead>
@@ -333,7 +333,7 @@ export default function AlertsPage() {
               })}
             </tbody>
           </table>
-        </div>
+        </Card>
       )}
     </div>
   );

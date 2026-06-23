@@ -15,6 +15,7 @@
  * subset it emits.
  */
 import { useEffect, useMemo, useState } from 'react';
+import { Card } from '@capra/core';
 import Sparkline from './Sparkline';
 import { getServiceMetricDelta } from '../api/search';
 import s from './MetricsCard.module.css';
@@ -208,7 +209,7 @@ export default function MetricsCard({
 
   if (isLoading) {
     return (
-      <div className={s.card}>
+      <Card className={s.card}>
         <div className={s.header}>
           <div className={s.title}>{title}</div>
           {subtitle && <div className={s.subtitle}>{subtitle}</div>}
@@ -218,7 +219,7 @@ export default function MetricsCard({
             <div key={i} style={{ width: `${w}%` }} />
           ))}
         </div>
-      </div>
+      </Card>
     );
   }
 
@@ -241,7 +242,7 @@ export default function MetricsCard({
 
   if (resolvedRows.length === 0) {
     return (
-      <div className={s.card}>
+      <Card className={s.card}>
         <div className={s.header}>
           <div className={s.title}>{title}</div>
           {subtitle && <div className={s.subtitle}>{subtitle}</div>}
@@ -249,12 +250,12 @@ export default function MetricsCard({
         <div className={s.emptyState}>
           Not instrumented for this service.
         </div>
-      </div>
+      </Card>
     );
   }
   if (!rowData.some((r) => r.loading) && presentRows.length === 0) {
     return (
-      <div className={s.card}>
+      <Card className={s.card}>
         <div className={s.header}>
           <div className={s.title}>{title}</div>
           {subtitle && <div className={s.subtitle}>{subtitle}</div>}
@@ -262,12 +263,12 @@ export default function MetricsCard({
         <div className={s.emptyState}>
           No data in this range.
         </div>
-      </div>
+      </Card>
     );
   }
 
   return (
-    <div className={s.card}>
+    <Card className={s.card}>
       <div className={s.header}>
         <div className={s.title}>{title}</div>
         {subtitle && <div className={s.subtitle}>{subtitle}</div>}
@@ -308,6 +309,6 @@ export default function MetricsCard({
           );
         })}
       </div>
-    </div>
+    </Card>
   );
 }

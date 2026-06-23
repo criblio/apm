@@ -40,12 +40,14 @@
 .filterInput:focus { border-color: var(--cds-color-accent); }
 .filterInput::placeholder { color: var(--cds-color-fg-subtle); }
 
+/* Capra Card supplies background + border + radius. Zero its
+ * padding/gap so the table / empty / skeleton inside renders
+ * edge-to-edge — matches the visual flush we had with bespoke .card. */
 .card {
-  background: var(--cds-color-bg);
-  border: 1px solid var(--cds-color-border-subtle);
-  border-radius: var(--cds-radius-lg);
-  box-shadow: var(--cds-shadow-sm);
+  padding: 0;
+  gap: 0;
   overflow: hidden;
+  box-shadow: var(--cds-shadow-sm);
 }
 
 .table {
