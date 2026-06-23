@@ -13,18 +13,3 @@
   margin-right: var(--cds-space-xs);
 }
 
-.select {
-  height: 32px;
-  padding: 0 var(--cds-space-md);
-  font-size: var(--cds-font-size-sm);
-  color: var(--cds-color-fg);
-  background: var(--cds-color-bg);
-  border: 1px solid var(--cds-color-border);
-  border-radius: var(--cds-radius-md);
-  outline: none;
-  cursor: pointer;
-}
-.select:focus {
-  border-color: var(--cds-color-accent);
-  box-shadow: 0 0 0 2px var(--cds-color-accent-subtle);
-}

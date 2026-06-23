@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { Button, Menu } from '@capra/core';
+import { ChevronDown } from '@capra/icons';
 import { useRangeParam } from '../hooks/useRangeParam';
 import DependencyGraph from '../components/DependencyGraph';
 import IsometricGraph from '../components/IsometricGraph';
@@ -262,13 +264,17 @@ export default function SystemArchPage() {
           ))}
         </div>
         <span className={s.label}>Lookback</span>
-        <select className={s.select} value={lookback} onChange={(e) => setLookback(e.target.value)}>
+        <Menu
+          trigger={
+            <Button variant="secondary" size="sm" trailingIcon={ChevronDown}>
+              {LOOKBACKS.find((l) => l.value === lookback)?.label ?? lookback}
+            </Button>
+          }
+        >
           {LOOKBACKS.map((l) => (
-            <option key={l.value} value={l.value}>
-              {l.label}
-            </option>
+            <Menu.Item key={l.value} label={l.label} onClick={() => setLookback(l.value)} />
           ))}
-        </select>
+        </Menu>
         <div className={s.legend} title="Health is shown by the halo ring around each node">
           {HEALTH_LEGEND.map((h) => {
             const isHealthy = h.bucket === 'healthy';

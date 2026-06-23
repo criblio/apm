@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { Button } from '@capra/core';
+import { Button, Menu } from '@capra/core';
+import { ChevronDown } from '@capra/icons';
 import TimeRangePicker from '../components/TimeRangePicker';
 import { binSecondsFor } from '../components/timeRanges';
 import Sparkline from '../components/Sparkline';
@@ -377,11 +378,17 @@ export default function ServicesListPage() {
               title={refreshMs > 0 ? `Auto-refresh every ${refreshMs / 1000}s — last: ${lastRefreshText}` : `Auto-refresh off — last: ${lastRefreshText}`}
             />
             <span className={s.refreshLabel}>Refresh</span>
-            <select className={s.refreshSelect} value={refreshMs} onChange={(e) => setRefreshMs(Number(e.target.value))} aria-label="Auto-refresh interval">
+            <Menu
+              trigger={
+                <Button variant="secondary" size="sm" trailingIcon={ChevronDown} aria-label="Auto-refresh interval">
+                  {REFRESH_OPTIONS.find((o) => o.ms === refreshMs)?.label ?? `${refreshMs}ms`}
+                </Button>
+              }
+            >
               {REFRESH_OPTIONS.map((opt) => (
-                <option key={opt.ms} value={opt.ms}>{opt.label}</option>
+                <Menu.Item key={opt.ms} label={opt.label} onClick={() => setRefreshMs(opt.ms)} />
               ))}
-            </select>
+            </Menu>
           </div>
           <Button variant="secondary" size="sm" onClick={() => void fetchAll()}>Refresh now</Button>
         </div>
