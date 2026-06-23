@@ -445,6 +445,27 @@ export function getProvisioningPlan(): ProvisionedSearch[] {
       // are written.
       schedule: { ...hourly, cronSchedule: '2 * * * *' },
     },
+    // ── Noise budget (P1.1) ─────────────────────────────────
+    //
+    // Aggregates the alert-history events (criblapm__alert_history_send
+    // → datatype="criblapm_alert" rows in the dataset) into per-(svc,
+    // day) fire counts. Read at provision-time by `npm run eval` to
+    // include "fires-per-week on flag-off traffic" alongside scenario
+    // recall, so threshold changes are accepted only when both
+    // numbers move in the right direction. Daily cadence — the
+    // aggregation is over completed days and is immutable once the
+    // day has passed.
+    {
+      id: 'criblapm__noise_budget',
+      name: 'Cribl APM - alert noise budget (per-svc, per-day fires)',
+      description:
+        'Cribl APM: counts alert-firing events per (service, day) over the last 7 days, separating persistent fires (real problems) from noisy fires (over-sensitive thresholds). Read by the eval harness as the acceptance metric for threshold changes (P1.1). Output in $vt_results; runs daily at 00:35 UTC.',
+      query: Q.noiseBudgetByService(),
+      earliest: '-7d',
+      latest: 'now',
+      sampleRate: 1,
+      schedule: { ...hourly, cronSchedule: '35 0 * * *' },
+    },
     // ── 6-day per-service error-rate history (drift) ─────────
     {
       id: 'criblapm__error_rate_history',
