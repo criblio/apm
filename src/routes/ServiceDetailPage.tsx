@@ -61,7 +61,8 @@ const ALERT_STATUS_COLORS: Record<string, { bg: string; fg: string }> = {
   resolving: { bg: 'rgba(6,182,212,0.12)', fg: '#06b6d4' },
 };
 
-/** See HomePage — same rationale. */
+/** Minimum prior-window samples before we'll compute a delta chip;
+ *  fewer samples make the comparison too noisy to be useful. */
 const MIN_PREV_SAMPLES = 10;
 
 /**
