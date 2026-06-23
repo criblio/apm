@@ -445,6 +445,26 @@ export function getProvisioningPlan(): ProvisionedSearch[] {
       // are written.
       schedule: { ...hourly, cronSchedule: '2 * * * *' },
     },
+    // ── Deploy / change correlation events (P2.2 phase 1) ───
+    //
+    // Detects new (service.name, service.version) tuples and emits
+    // a criblapm_deploy event to the dataset via | send. Read-side
+    // surfaces (Investigator context, Service Detail markers,
+    // "deployed Nm before alert" chip in Detected Issues) land in
+    // follow-up PRs. Cadence: every 30 min so a fresh deploy
+    // becomes correlatable within at most 30 minutes — fast enough
+    // for the "what changed?" RCA question without taxing workers.
+    {
+      id: 'criblapm__deploy_events',
+      name: 'Cribl APM - deploy/change correlation events',
+      description:
+        'Cribl APM: detects new (service.name, service.version) tuples in the last hour and emits criblapm_deploy events via | send group="search" so the deploy history is searchable from the dataset. Read by Investigator context and (eventually) Service Detail RED-chart markers.',
+      query: Q.deployEventsSend(),
+      earliest: '-1h',
+      latest: 'now',
+      sampleRate: 1,
+      schedule: { ...hourly, cronSchedule: '*/30 * * * *' },
+    },
     // ── Noise budget (P1.1) ─────────────────────────────────
     //
     // Aggregates the alert-history events (criblapm__alert_history_send
