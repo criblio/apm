@@ -20,6 +20,7 @@ import {
 } from '@cribl/app-utils/provisioner';
 import { reconcile, planOnly } from '../src/api/provisioner.js';
 import { validateProvisionPlan } from '../src/api/provisionGuard.js';
+import { runCanary } from '../src/api/postReconcileCanary.js';
 import {
   getProvisioningPlan,
   SEED_LOOKUPS,
@@ -98,6 +99,7 @@ async function main(): Promise<void> {
   }
 
   const dryRun = process.argv.includes('--dry');
+  const firstInstall = process.argv.includes('--first-install');
   const http = await createNodeHttpClient({ baseUrl, clientId, clientSecret });
 
   await loadAppSettingsFromKV(http);
@@ -173,6 +175,21 @@ async function main(): Promise<void> {
   console.log(
     `✓  ${fieldsIcon} ${dsResult.acceleratedFields.action.padEnd(6)} dataset.acceleratedFields${dsResult.acceleratedFields.added.length > 0 ? ` (added: ${dsResult.acceleratedFields.added.join(', ')})` : ''}`,
   );
+
+  // P0.2 post-reconcile canary: verify a sentinel saved search
+  // produces $vt_results rows and a workspace lookup is still
+  // joinable. Catches the runtime equivalents of what the P0.1
+  // guard catches statically (dataset="" wipeouts, unjoinable
+  // lookup CSVs from the June (?i)-export bug).
+  console.log('▶ Post-reconcile canary …');
+  const canary = await runCanary(http, { firstInstall });
+  const tickFor = (ok: boolean) => (ok ? '✓' : '✗');
+  console.log(`${tickFor(canary.sentinel.ok)}   sentinel:    ${canary.sentinel.message}`);
+  console.log(`${tickFor(canary.lookupJoin.ok)}   lookup-join: ${canary.lookupJoin.message}`);
+  if (!canary.ok) {
+    console.error('▶ Canary FAILED — reconcile applied but workspace is unhealthy.');
+    process.exit(1);
+  }
 }
 
 main().catch((err) => {
