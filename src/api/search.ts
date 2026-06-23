@@ -3,6 +3,7 @@
  * into the verbs the UI calls.
  */
 import { runQuery } from './cribl';
+import { getCurrentDataset } from '@cribl/app-utils/dataset';
 import { listCachedMetricCatalog } from './panelCache';
 import { applyFilterRulesToRaw, DEFAULT_FILTER_RULES } from './errorFilter';
 import * as Q from './queries';
@@ -613,6 +614,56 @@ export interface TraceOriginatorRow {
     nameUser: number;
     nameService: number;
   };
+}
+
+/** One row per recent deploy event emitted by the
+ *  criblapm__deploy_events scheduled search (P2.2 phase 1). */
+export interface RecentDeploy {
+  service: string;
+  version: string;
+  firstSeenMs: number;
+  ageMinutes: number;
+  nSpans: number;
+}
+
+/**
+ * Read recent deploy events from the dataset. Reads
+ * datatype="criblapm_deploy" rows emitted by the criblapm__deploy_events
+ * scheduled search. Used by the Investigator preflight to enrich
+ * the seed context with "service X deployed Nm ago" lines so the
+ * agent considers deploy-correlation when investigating.
+ *
+ * Window defaults to -2h — wide enough to surface a deploy that
+ * happened just before the alert that triggered the investigation,
+ * narrow enough that we're not paging through hours of history.
+ */
+export async function listRecentDeploys(
+  earliest = '-2h',
+  latest = 'now',
+): Promise<RecentDeploy[]> {
+  const kql = `dataset="${getCurrentDataset().replace(/[^a-zA-Z0-9_-]/g, '')}"
+    | where datatype == "criblapm_deploy"
+    | extend svc=tostring(svc), version=tostring(version),
+             first_seen_num=toreal(first_seen),
+             n_spans_num=tolong(n_spans)
+    | summarize first_seen_ms=max(first_seen_num)*1000,
+                n_spans_total=max(n_spans_num)
+      by svc, version
+    | sort by first_seen_ms desc
+    | limit 25`;
+  const rows = await runQuery(kql, earliest, latest, 50);
+  const nowMs = Date.now();
+  return rows.map((r) => {
+    const firstSeenMs = Number(r.first_seen_ms ?? 0);
+    const ageMinutes = firstSeenMs > 0 ? Math.max(0, (nowMs - firstSeenMs) / 60000) : Infinity;
+    return {
+      service: String(r.svc ?? 'unknown'),
+      version: String(r.version ?? 'unknown'),
+      firstSeenMs,
+      ageMinutes,
+      nSpans: Number(r.n_spans_total ?? 0),
+    };
+  });
 }
 
 export async function listTraceOriginators(

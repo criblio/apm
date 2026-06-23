@@ -36,7 +36,7 @@
  * existing `signalsBlock` in `agentContext.ts` — no schema changes
  * to InvestigationSeed required.
  */
-import { listServiceSummaries } from './search';
+import { listServiceSummaries, listRecentDeploys, type RecentDeploy } from './search';
 import { previousWindow } from '../utils/timeRange';
 import { MIN_BASELINE_REQUESTS } from '../utils/health';
 import type { ServiceSummary } from './types';
@@ -60,7 +60,17 @@ export interface PreflightResult {
     priorErrorRate: number;
     deltaPp: number;
   }>;
+  /** Deploys in the last DEPLOY_LOOKBACK_MIN minutes, surfaced so the
+   *  Investigator considers "what changed" as a hypothesis. Sorted
+   *  most-recent first. */
+  recentDeploys: RecentDeploy[];
 }
+
+/** Window we look back for deploys when seeding the agent. Two
+ *  hours is wide enough to catch a deploy that preceded an alert
+ *  by an hour (typical for slow-burn issues) and narrow enough
+ *  that we don't surface stale changes. */
+const DEPLOY_LOOKBACK_MIN = 120;
 
 /**
  * Threshold for the rateDrops bucket. Mirrors the value
@@ -89,16 +99,29 @@ export async function runPreflight(
     silent: [],
     rateDrops: [],
     errorSpikes: [],
+    recentDeploys: [],
   };
 
   let current: ServiceSummary[];
   let prior: ServiceSummary[];
+  let recentDeploys: RecentDeploy[] = [];
   try {
     const prev = previousWindow(earliest);
-    [current, prior] = await Promise.all([
+    // Fetch summaries (required for the silent/rate/error buckets)
+    // alongside the deploys probe. listRecentDeploys's failure is
+    // tolerated separately — a missing deploy_events table on a
+    // fresh install shouldn't abort the whole preflight.
+    const [cur, pri, deploys] = await Promise.all([
       listServiceSummaries(earliest, latest),
       listServiceSummaries(prev.earliest, prev.latest),
+      listRecentDeploys(`-${DEPLOY_LOOKBACK_MIN}m`, 'now').catch((e) => {
+        console.error('[agentPreflight] deploys probe failed:', e);
+        return [] as RecentDeploy[];
+      }),
     ]);
+    current = cur;
+    prior = pri;
+    recentDeploys = deploys;
   } catch (err) {
     // Preflight feeds the Investigator's anomaly hints. Swallowing
     // the failure silently lets the agent run with an empty signal
@@ -118,6 +141,7 @@ export async function runPreflight(
     silent: [],
     rateDrops: [],
     errorSpikes: [],
+    recentDeploys,
   };
 
   // Silent + rate drops are computed by walking the union of names —
@@ -228,9 +252,27 @@ export function formatPreflightSignals(p: PreflightResult): string[] {
     }
   }
 
+  if (p.recentDeploys.length > 0) {
+    lines.push(
+      `**Recent deploys** (last ${DEPLOY_LOOKBACK_MIN} minutes): \`service.version\` transitions detected by the criblapm__deploy_events search. "What changed?" is the first RCA question — strongly consider whether any of these correlate with the symptoms you're investigating:`,
+    );
+    for (const d of p.recentDeploys.slice(0, 8)) {
+      // Round to nearest minute; deploys older than the lookback
+      // show as "≥Nm" so the agent doesn't reason from a too-precise
+      // value when the actual deploy event may have been from a
+      // prior aggregation cycle.
+      const ageStr = Number.isFinite(d.ageMinutes)
+        ? `${Math.round(d.ageMinutes)}m ago`
+        : 'unknown';
+      lines.push(
+        `  - \`${d.service}\` -> \`${d.version}\` (${ageStr}, first seen on ${d.nSpans.toLocaleString()} spans).`,
+      );
+    }
+  }
+
   if (lines.length === 0) {
     lines.push(
-      'No traffic-drop, silent-service, or error-spike anomalies detected in the current window vs the prior window. The user-reported problem (if any) may be subtle — proceed with per-minute histograms and edge-level inspection.',
+      'No traffic-drop, silent-service, error-spike, or recent-deploy signals detected in the current window vs the prior window. The user-reported problem (if any) may be subtle — proceed with per-minute histograms and edge-level inspection.',
     );
   }
 
