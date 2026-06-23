@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Button } from '@capra/core';
+import { Button, Menu } from '@capra/core';
+import { ChevronDown } from '@capra/icons';
 import StatusBanner from '../components/StatusBanner';
 import AlertTimeline from '../components/AlertTimeline';
 import InvestigateButton from '../components/InvestigateButton';
@@ -207,15 +208,17 @@ export default function AlertsPage() {
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <span className={s.subtitle}>History</span>
-          <select
-            className={s.refreshBtn}
-            value={historyRange}
-            onChange={(e) => setHistoryRange(e.target.value)}
+          <Menu
+            trigger={
+              <Button variant="secondary" size="sm" trailingIcon={ChevronDown}>
+                {HISTORY_RANGES.find((r) => r.value === historyRange)?.label ?? historyRange}
+              </Button>
+            }
           >
             {HISTORY_RANGES.map((r) => (
-              <option key={r.value} value={r.value}>{r.label}</option>
+              <Menu.Item key={r.value} label={r.label} onClick={() => setHistoryRange(r.value)} />
             ))}
-          </select>
+          </Menu>
           <Button variant="secondary" size="sm" pending={loading} onClick={() => void fetchAlerts()}>
             {loading ? 'Loading...' : 'Refresh'}
           </Button>
