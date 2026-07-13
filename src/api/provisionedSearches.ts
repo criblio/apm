@@ -422,7 +422,7 @@ export function getProvisioningPlan(): ProvisionedSearch[] {
       id: 'criblapm__metric_catalog',
       name: 'Cribl APM - metric name catalog',
       description:
-        'Cribl APM: pre-computed metric name catalog with sample counts and service coverage. Extracts metric field names from _raw via regex (wide-column schema). Read via $vt_results by the Metrics page picker. Hourly cadence — metric names rarely appear/disappear within an hour, and the regex pass costs ~4s per run.',
+        'Cribl APM: pre-computed metric name catalog with sample counts and service coverage. Reads the _metric field on each generic_metrics record and summarizes by name. Read via $vt_results by the Metrics page picker. Hourly cadence — metric names rarely appear/disappear within an hour.',
       query: Q.listMetricNames(),
       earliest: '-1h',
       latest: 'now',
