@@ -11,6 +11,7 @@ import {
 } from '../api/search';
 import { listCachedHomePanels } from '../api/panelCache';
 import { runQuery } from '../api/cribl';
+import { getCurrentDataset } from '@cribl/app-utils/dataset';
 import { serviceColor } from '../utils/spans';
 import { serviceHealth, healthRowBg } from '../utils/health';
 import { buildDetectedIssues, buildDetectedIssuesFromCache } from '../utils/detectedIssues';
@@ -84,6 +85,14 @@ export default function OverviewPage() {
   const streamFilterEnabled = useStreamFilterEnabled();
   const hasDataRef = useRef(false);
 
+  // Alert history panel — same query in the fast (cache-hit) and
+  // slow (live) branches below. Built once per call so we pick up
+  // the current dataset even if the user just changed it in Settings.
+  const recentAlertsQuery = () => {
+    const ds = getCurrentDataset().replace(/[^a-zA-Z0-9_-]/g, '');
+    return `dataset="${ds}" | where data_datatype == "criblapm_alert" | project _time, event_type, svc, signal_type | sort by _time desc | limit 5`;
+  };
+
   const fetchAll = useCallback(async () => {
     setRefreshing(true);
     setError(null);
@@ -117,7 +126,7 @@ export default function OverviewPage() {
 
           // Fetch recent alert events (lightweight)
           runQuery(
-            'dataset="otel" | where data_datatype == "criblapm_alert" | project _time, event_type, svc, signal_type | sort by _time desc | limit 5',
+            recentAlertsQuery(),
             '-24h', 'now', 5,
           ).then((rows) => setRecentAlerts(rows.map((r) => ({
             time: Number(r._time) * 1000,
@@ -143,7 +152,7 @@ export default function OverviewPage() {
     setRefreshing(false);
 
     runQuery(
-      'dataset="otel" | where data_datatype == "criblapm_alert" | project _time, event_type, svc, signal_type | sort by _time desc | limit 5',
+      recentAlertsQuery(),
       '-24h', 'now', 5,
     ).then((rows) => setRecentAlerts(rows.map((r) => ({
       time: Number(r._time) * 1000,

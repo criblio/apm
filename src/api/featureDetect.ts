@@ -17,7 +17,15 @@
  * detection avoids forcing every query call site to probe — they
  * just read a sync value.
  */
+import { getCurrentDataset } from '@cribl/app-utils/dataset';
 import { runQuery } from './cribl';
+
+/** Guard against injection when embedding the runtime dataset name
+ *  in a query literal. Same character-class the query builders use.
+ *  Empty string is not valid here — callers must check upstream. */
+function safeDataset(): string {
+  return getCurrentDataset().replace(/[^a-zA-Z0-9_-]/g, '');
+}
 
 let cached: Promise<boolean> | null = null;
 
@@ -36,7 +44,7 @@ export function flatFieldsAvailable(): Promise<boolean> {
     cached = (async () => {
       try {
         const rows = await runQuery(
-          `dataset="otel" | where isnotnull(end_time_unix_nano) | take 1 | project sn=service_name, sc=status_code`,
+          `dataset="${safeDataset()}" | where isnotnull(end_time_unix_nano) | take 1 | project sn=service_name, sc=status_code`,
           '-10m',
           'now',
           1,

@@ -30,6 +30,14 @@
  * passes a Node-backed HttpClient.
  */
 import type { HttpClient } from '@cribl/app-utils/provisioner';
+import { getCurrentDataset } from '@cribl/app-utils/dataset';
+
+/** Guard against injection when embedding the runtime dataset name
+ *  in a literal query. Character-class matches the query builders'
+ *  quoteDataset(). Callers must have set the dataset store upstream. */
+function safeDataset(): string {
+  return getCurrentDataset().replace(/[^a-zA-Z0-9_-]/g, '');
+}
 
 /**
  * Sentinel scheduled search ID. Picked because it runs every 5
@@ -209,7 +217,7 @@ export async function runCanary(
   // `total >= 10` so low-volume roots get dropped. Sampling lets
   // the canary work against any workspace that has enough traffic
   // to populate the lookup at all.
-  const lookupKql = `dataset="otel"
+  const lookupKql = `dataset="${safeDataset()}"
     | where tostring(parent_span_id) == ""
     | extend root_svc=tostring(resource.attributes['service.name'])
     | take 50

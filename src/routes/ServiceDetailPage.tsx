@@ -25,6 +25,7 @@ import {
   getServiceMetricsBatch,
 } from '../api/search';
 import { runQuery } from '../api/cribl';
+import { getCurrentDataset } from '@cribl/app-utils/dataset';
 import { listCachedSvcDetailPanels } from '../api/panelCache';
 import { serviceColor } from '../utils/spans';
 import { previousWindow } from '../utils/timeRange';
@@ -445,8 +446,9 @@ export default function ServiceDetailPage() {
     };
 
     const refreshAlertHistory = () => {
+      const ds = getCurrentDataset().replace(/[^a-zA-Z0-9_-]/g, '');
       runQuery(
-        `dataset="otel" | where data_datatype == "criblapm_alert" and svc == "${svcEsc}" | project _time, event_type, signal_type, curr_error_rate, prev_error_rate | sort by _time desc | limit 20`,
+        `dataset="${ds}" | where data_datatype == "criblapm_alert" and svc == "${svcEsc}" | project _time, event_type, signal_type, curr_error_rate, prev_error_rate | sort by _time desc | limit 20`,
         '-24h', 'now', 20,
       )
         .then((rows) => {

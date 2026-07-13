@@ -74,27 +74,37 @@ export const ERROR_RATE_HISTORY_LOOKUP = 'criblapm_error_rate_history';
 
 /** Lookup tables that must exist before scheduled searches that
  * `lookup` against them can be created. The framework provisioner
- * probes each by name and runs the seed query if absent. */
+ * probes each by name and runs the seed query if absent.
+ *
+ * Seeds start with `print` — not `dataset="otel" | limit 1 | project`
+ * — so they emit their sentinel row deterministically. The older
+ * dataset-derived pattern produced *zero* rows on a fresh install
+ * whose otel dataset had not yet received any events. When the
+ * export tail then ran on empty input, some Cribl versions wrote a
+ * header-only CSV (safe) and others did not create the file at all
+ * (fatal — downstream `| lookup <name> on <col>` fails with
+ * "Unknown lookup table name"). `print` sidesteps the branch by
+ * always producing exactly one row. */
 export const SEED_LOOKUPS: SeedLookup[] = [
   {
     name: ALERT_STATES_LOOKUP,
-    seedQuery: `dataset="otel" | limit 1 | project alert_id="__init__", alert_status="ok", consecutive_bad=0, consecutive_good=0, fire_count=0 | export mode=overwrite description="Cribl APM - alert state init" to lookup ${ALERT_STATES_LOOKUP}`,
+    seedQuery: `print alert_id="__init__", alert_status="ok", consecutive_bad=tolong(0), consecutive_good=tolong(0), fire_count=tolong(0) | export mode=overwrite description="Cribl APM - alert state init" to lookup ${ALERT_STATES_LOOKUP}`,
   },
   {
     name: ALERT_PREV_LOOKUP,
-    seedQuery: `dataset="otel" | limit 1 | project svc="__init__", prev_req=0, prev_err=0, prev_err_rate=0.0, prev_p95_us=0 | export mode=overwrite description="Cribl APM - prev window init" to lookup ${ALERT_PREV_LOOKUP}`,
+    seedQuery: `print svc="__init__", prev_req=tolong(0), prev_err=tolong(0), prev_err_rate=todouble(0.0), prev_p95_us=tolong(0) | export mode=overwrite description="Cribl APM - prev window init" to lookup ${ALERT_PREV_LOOKUP}`,
   },
   {
     name: TRACE_ORIGINATORS_LOOKUP,
-    seedQuery: `dataset="otel" | limit 1 | project root_svc="__init__", type="unknown", total=0, n_browser=0, n_loadtest=0, n_probe=0, n_msg=0, n_name_user=0, n_name_service=0 | export mode=overwrite description="Cribl APM - trace originators init" to lookup ${TRACE_ORIGINATORS_LOOKUP}`,
+    seedQuery: `print root_svc="__init__", type="unknown", total=tolong(0), n_browser=tolong(0), n_loadtest=tolong(0), n_probe=tolong(0), n_msg=tolong(0), n_name_user=tolong(0), n_name_service=tolong(0) | export mode=overwrite description="Cribl APM - trace originators init" to lookup ${TRACE_ORIGINATORS_LOOKUP}`,
   },
   {
     name: ATTR_CATALOG_LOOKUP,
-    seedQuery: `dataset="otel" | limit 1 | project svc="__init__", attr_name="__init__", n_spans_with_key=0 | export mode=overwrite description="Cribl APM - attr catalog init" to lookup ${ATTR_CATALOG_LOOKUP}`,
+    seedQuery: `print svc="__init__", attr_name="__init__", n_spans_with_key=tolong(0) | export mode=overwrite description="Cribl APM - attr catalog init" to lookup ${ATTR_CATALOG_LOOKUP}`,
   },
   {
     name: ERROR_RATE_HISTORY_LOOKUP,
-    seedQuery: `dataset="otel" | limit 1 | project svc="__init__", d1_pct=0.0, d2_pct=0.0, d3_pct=0.0, d4_pct=0.0, d5_pct=0.0, d6_pct=0.0, d1_total=0, d2_total=0, d3_total=0, d4_total=0, d5_total=0, d6_total=0 | export mode=overwrite description="Cribl APM - error rate history init" to lookup ${ERROR_RATE_HISTORY_LOOKUP}`,
+    seedQuery: `print svc="__init__", d1_pct=todouble(0.0), d2_pct=todouble(0.0), d3_pct=todouble(0.0), d4_pct=todouble(0.0), d5_pct=todouble(0.0), d6_pct=todouble(0.0), d1_total=tolong(0), d2_total=tolong(0), d3_total=tolong(0), d4_total=tolong(0), d5_total=tolong(0), d6_total=tolong(0) | export mode=overwrite description="Cribl APM - error rate history init" to lookup ${ERROR_RATE_HISTORY_LOOKUP}`,
   },
 ];
 

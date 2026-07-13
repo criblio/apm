@@ -41,10 +41,15 @@ export function validateQuery(id: string, rawQuery: string): string[] {
   // 1. Dataset clause must exist and be non-empty. An empty dataset
   //    (`dataset=""`) reads zero rows forever while every layer above
   //    reports success — a total outage of the panel/lookup it feeds.
+  //    Pure `print`-based seed queries never read a dataset — they
+  //    emit a hardcoded sentinel row — so the "must have dataset"
+  //    rule doesn't apply. The empty-dataset trap doesn't exist for
+  //    them because there's no dataset lookup to be empty.
   if (/dataset\s*=\s*""/.test(query)) {
     errors.push(`${id}: empty dataset clause (dataset="")`);
   }
-  if (!/dataset\s*=\s*"[^"]+"/.test(query)) {
+  const isPrintOnly = /^\s*print\s/.test(query);
+  if (!isPrintOnly && !/dataset\s*=\s*"[^"]+"/.test(query)) {
     errors.push(`${id}: no dataset="…" clause found`);
   }
 
