@@ -4,6 +4,7 @@ import StatusBanner from '../components/StatusBanner';
 import AlertTimeline from '../components/AlertTimeline';
 import InvestigateButton from '../components/InvestigateButton';
 import { runQuery } from '../api/cribl';
+import { getCurrentDataset } from '@cribl/app-utils/dataset';
 import { serviceColor } from '../utils/spans';
 import type { CachedAlertRow } from '../api/panelCache';
 import s from './AlertsPage.module.css';
@@ -140,11 +141,12 @@ export default function AlertsPage() {
   const hasData = useRef(false);
   const fetchAlerts = useCallback(async (silent = false) => {
     if (!silent) { setLoading(true); setError(null); }
+    const ds = getCurrentDataset().replace(/[^a-zA-Z0-9_-]/g, '');
     try {
       const [alertRows, historyRows] = await Promise.all([
         runQuery('dataset="$vt_results" | where jobName == "criblapm__home_alerts"', '-1h', 'now', 500),
         runQuery(
-          'dataset="otel" | where data_datatype == "criblapm_alert" | project _time, event_type, svc, signal_type, curr_error_rate, prev_error_rate | sort by _time asc | limit 500',
+          `dataset="${ds}" | where data_datatype == "criblapm_alert" | project _time, event_type, svc, signal_type, curr_error_rate, prev_error_rate | sort by _time asc | limit 500`,
           historyRange, 'now', 500,
         ),
       ]);
