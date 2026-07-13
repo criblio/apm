@@ -630,25 +630,11 @@ exports[`queries.ts — golden snapshots + invariants > findTraces (no filters) 
 
 exports[`queries.ts — golden snapshots + invariants > listMetricNames > snapshot stable 1`] = `
 "dataset="otel" | where datatype == "generic_metrics"
-    | extend metric_name=extract("\\"([a-zA-Z][a-zA-Z0-9._]*)\\"\\\\s*:\\\\s*-?[0-9]", 1, _raw)
-    | where isnotempty(metric_name)
-        and metric_name != "_metric_type"
-        and metric_name != "_datatype_detection"
-        and metric_name != "http.status_code"
-        and metric_name != "http.flavor"
-        and metric_name != "net.host.port"
-        and metric_name != "net.peer.port"
-        and metric_name != "process.pid"
-        and metric_name != "rpc.grpc.status_code"
-        and metric_name != "net.sock.peer.port"
-        and metric_name != "net.sock.host.port"
-        and metric_name != "http.response.status_code"
-        and metric_name != "cpu"
-        and metric_name != "partition"
+    | where isnotnull(_metric)
     | extend svc=tostring(['service.name'])
     | summarize samples=count(), services=dcount(svc),
                 metric_type=max(_metric_type)
-      by name=metric_name
+      by name=tostring(_metric)
     | sort by name asc
     | limit 500"
 `;

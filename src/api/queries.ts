@@ -1615,40 +1615,37 @@ export function spotlightAttrDiff(
 // ─────────────────────────────────────────────────────────────────
 
 /**
- * Discover all metric names in the window by extracting the numeric
- * field name from each record's _raw JSON. In the wide-column schema
- * each metric is a top-level field; this regex finds the first key
- * with a numeric value that isn't a known meta field.
+ * Discover all metric names in the window. Reads the `_metric` field
+ * that every generic_metrics record carries — one metric per row, so
+ * `summarize by _metric` yields the workspace's full catalog with
+ * accurate sample counts, distinct-service counts, and metric type.
  *
- * Also used as the scheduled search `criblapm__metric_catalog` so
- * the Metrics page reads the catalog from $vt_results in ~1s.
+ * Used both as the live fallback in `listMetrics()` and as the
+ * scheduled search `criblapm__metric_catalog` (results land in
+ * `$vt_results`, the Metrics page reads them in ~1s).
+ *
+ * ## The previous approach and why it was broken
+ *
+ * v0.10.x used `extract("\"([a-zA-Z][a-zA-Z0-9._]*)\"\\s*:\\s*-?[0-9]",
+ * 1, _raw)` — a regex that captures the first quoted-identifier /
+ * colon / number pattern in the JSON. On staging every metric record
+ * starts with a `scope` object whose `dropped_attributes_count` is a
+ * numeric field appearing before any real metric name. `extract`
+ * returns only the first match per record, so every row bucketed
+ * under `dropped_attributes_count` — the picker showed one useless
+ * "metric" and no real ones. Verified via MCP against the deployed
+ * v0.10.2 pack (2026-07-13): 165,520 of 165,520 records have
+ * `_metric` populated, and switching to `_metric` produced the
+ * expected 20+ real names (system.cpu.time, k8s.*, postgresql.*,
+ * traces.span.metrics.duration, ...).
  */
 export function listMetricNames(): string {
-  // The regex finds any numeric field in _raw. This catches real
-  // metrics (http.server.duration, redis.cpu.time) but also numeric
-  // ATTRIBUTES that are dimensions, not measured values. The
-  // blocklist excludes well-known OTel attribute names that are
-  // numeric but not metrics (status codes, port numbers, PIDs, etc.)
   return `${metricsBase()}
-    | extend metric_name=extract("\\"([a-zA-Z][a-zA-Z0-9._]*)\\"\\\\s*:\\\\s*-?[0-9]", 1, _raw)
-    | where isnotempty(metric_name)
-        and metric_name != "_metric_type"
-        and metric_name != "_datatype_detection"
-        and metric_name != "http.status_code"
-        and metric_name != "http.flavor"
-        and metric_name != "net.host.port"
-        and metric_name != "net.peer.port"
-        and metric_name != "process.pid"
-        and metric_name != "rpc.grpc.status_code"
-        and metric_name != "net.sock.peer.port"
-        and metric_name != "net.sock.host.port"
-        and metric_name != "http.response.status_code"
-        and metric_name != "cpu"
-        and metric_name != "partition"
+    | where isnotnull(_metric)
     | extend svc=tostring(['service.name'])
     | summarize samples=count(), services=dcount(svc),
                 metric_type=max(_metric_type)
-      by name=metric_name
+      by name=tostring(_metric)
     | sort by name asc
     | limit 500`;
 }
