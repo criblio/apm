@@ -106,6 +106,16 @@ export const SEED_LOOKUPS: SeedLookup[] = [
     name: ERROR_RATE_HISTORY_LOOKUP,
     seedQuery: `print svc="__init__", d1_pct=todouble(0.0), d2_pct=todouble(0.0), d3_pct=todouble(0.0), d4_pct=todouble(0.0), d5_pct=todouble(0.0), d6_pct=todouble(0.0), d1_total=tolong(0), d2_total=tolong(0), d3_total=tolong(0), d4_total=tolong(0), d5_total=tolong(0), d6_total=tolong(0) | export mode=overwrite description="Cribl APM - error rate history init" to lookup ${ERROR_RATE_HISTORY_LOOKUP}`,
   },
+  {
+    // Was missing from the seed list until v0.10.2 — traceable via
+    // `| lookup criblapm_op_baselines on op` in the latency anomaly
+    // detector. Same failure shape as the other lookups: if the
+    // baseline scheduled search hadn't yet run once at query time
+    // the lookup was "Unknown". Fresh installs now boot with the
+    // sentinel row present.
+    name: OP_BASELINES_LOOKUP,
+    seedQuery: `print svc="__init__", op="__init__", requests=tolong(0), p50_us=todouble(0.0), p95_us=todouble(0.0), p99_us=todouble(0.0) | export mode=overwrite description="Cribl APM - op baselines init" to lookup ${OP_BASELINES_LOOKUP}`,
+  },
 ];
 
 /**
@@ -126,7 +136,13 @@ export const SEED_LOOKUPS: SeedLookup[] = [
  */
 function opBaselineQuery(): string {
   const base = Q.allOperationsSummary(10_000);
-  return `${base}
+  // Sentinel-first union — see prevWindowSummary() for the Cribl
+  // planner quirk. Sentinel svc/op values cant collide with a real
+  // service so lookup on op is unaffected.
+  return `print svc="__sentinel__", op="__sentinel__", requests=tolong(0), p50_us=todouble(0.0), p95_us=todouble(0.0), p99_us=todouble(0.0)
+    | union (
+        ${base}
+      )
     | export mode=overwrite
              description="Cribl APM - rolling 24h per-op p95 baseline"
              to lookup ${OP_BASELINES_LOOKUP}`;
@@ -140,7 +156,13 @@ function opBaselineQuery(): string {
  * tack the | export on. Same pattern as opBaselineQuery() above.
  */
 function traceOriginatorsExportQuery(): string {
-  return `${Q.traceOriginators()}
+  // Sentinel-first union — see prevWindowSummary() for the Cribl
+  // planner quirk. root_svc="__sentinel__" never collides with a
+  // real service so lookup on root_svc is unaffected.
+  return `print root_svc="__sentinel__", type="unknown", total=tolong(0), n_browser=tolong(0), n_loadtest=tolong(0), n_probe=tolong(0), n_msg=tolong(0), n_name_user=tolong(0), n_name_service=tolong(0)
+    | union (
+        ${Q.traceOriginators()}
+      )
     | export mode=overwrite
              description="Cribl APM - trace originator classification"
              to lookup ${TRACE_ORIGINATORS_LOOKUP}`;
@@ -175,9 +197,16 @@ function attrCatalogComputeQuery(): string {
 }
 
 function attrCatalogExportQuery(): string {
-  return `dataset="$vt_results"
-    | where jobName == "criblapm__attr_catalog"
-    | project svc, attr_name, n_spans_with_key
+  // Sentinel-first union — see prevWindowSummary() for rationale.
+  // The $vt_results scan yields 0 rows until criblapm__attr_catalog
+  // has produced its first result; putting the sentinel first
+  // keeps the export tail running.
+  return `print svc="__sentinel__", attr_name="__sentinel__", n_spans_with_key=tolong(0)
+    | union (
+        dataset="$vt_results"
+        | where jobName == "criblapm__attr_catalog"
+        | project svc, attr_name, n_spans_with_key
+      )
     | export mode=overwrite
              description="Cribl APM - attribute name catalog"
              to lookup ${ATTR_CATALOG_LOOKUP}`;
@@ -187,7 +216,13 @@ function attrCatalogExportQuery(): string {
  * day; six of the seven days the previous version recomputed each
  * hour were immutable, so 23/24 of that work was wasted. */
 function errorRateHistoryExportQuery(): string {
-  return `${Q.errorRateHistory()}
+  // Sentinel-first union — see prevWindowSummary() for rationale.
+  // Fresh install may not have 6 days of history yet; sentinel
+  // guarantees the lookup CSV is populated regardless.
+  return `print svc="__sentinel__", d1_pct=todouble(0.0), d2_pct=todouble(0.0), d3_pct=todouble(0.0), d4_pct=todouble(0.0), d5_pct=todouble(0.0), d6_pct=todouble(0.0), d1_total=tolong(0), d2_total=tolong(0), d3_total=tolong(0), d4_total=tolong(0), d5_total=tolong(0), d6_total=tolong(0)
+    | union (
+        ${Q.errorRateHistory()}
+      )
     | export mode=overwrite
              description="Cribl APM - 6-day per-service error-rate history (yesterday..-6d), pivoted one row per svc"
              to lookup ${ERROR_RATE_HISTORY_LOOKUP}`;

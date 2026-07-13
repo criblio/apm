@@ -73,6 +73,28 @@ export function validateQuery(id: string, rawQuery: string): string[] {
         `${id}: mv-expand upstream of export-to-lookup (Cribl planner bug fails the lookup write; split into compute + export searches)`,
       );
     }
+
+    // 3. Every export-to-lookup must guarantee ≥1 output row so
+    //    `mode=overwrite` on an empty upstream can't delete the
+    //    lookup CSV. On some Cribl versions an empty overwrite
+    //    leaves no CSV file at all, and downstream `| lookup
+    //    <name>` fails with "Unknown lookup table name". Accepted
+    //    patterns (both start with `print` so the pipeline base
+    //    always emits ≥1 row, sidestepping the Cribl planner
+    //    optimization that skips the export tail when the base
+    //    scan finds 0 rows):
+    //      a. Pure seed — `print col=…, … | export …` (1 row).
+    //      b. Sentinel-first union — `print col=…, … | union (
+    //         <real query>) | export …`.
+    //    The older `<real query> | union (print …) | export …`
+    //    shape is REJECTED — verified against staging that Cribl
+    //    skips the export when the real query's base scan returns
+    //    0 rows, even though the union branch has 1 sentinel row.
+    if (!isPrintOnly) {
+      errors.push(
+        `${id}: export-to-lookup without a sentinel-first pipeline (start the query with \`print <sentinel columns> | union (<real query>) | export …\` so the export tail is guaranteed to fire even when the real query returns 0 rows). Failure mode: on some Cribl versions \`| export mode=overwrite\` on 0 rows deletes the lookup file entirely, and downstream \`| lookup <name>\` fails with "Unknown lookup".`,
+      );
+    }
   }
 
   // 3. Every `to lookup` must name a non-empty lookup. An interpolated
