@@ -419,21 +419,32 @@ export function prevWindowSummary(): string {
   // to is_error=true spans gets the same numbers with a fraction
   // of the work; validated via MCP at ~3.5s vs the failing
   // 60+ s monolithic.
-  return `${spansBase()}
-    | extend svc=tostring(resource.attributes['service.name']),
-            dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
-            is_error=(tostring(status.code)=="2")
-    ${streamFilterSpanKqlClause()}
-    | summarize prev_req=count(),
-                prev_raw_err=countif(is_error),
-                prev_p95_us=percentile(dur_us, 95)
-      by svc
-    | join kind=leftouter (
-        ${filteredErrorsBranch('')}
-      ) on svc
-    | extend prev_err=coalesce(filtered_errors, tolong(0))
-    | extend prev_err_rate=iff(prev_req > 0, toreal(prev_err)/toreal(prev_req), 0.0)
-    | project svc, prev_req, prev_err, prev_raw_err, prev_p95_us, prev_err_rate
+  // Sentinel-first pattern: the sentinel is the base pipeline and
+  // the real aggregation is unioned in as a branch. If we tried the
+  // reverse (real pipeline first, sentinel unioned in) the Cribl
+  // planner skips the `| export` tail whenever the base scan
+  // returns 0 rows — verified against staging. Putting `print`
+  // first guarantees 1 row reaches the export, so the CSV is
+  // always created even on a fresh install whose otel dataset has
+  // no spans yet.
+  return `print svc="__sentinel__", prev_req=tolong(0), prev_err=tolong(0), prev_raw_err=tolong(0), prev_p95_us=todouble(0.0), prev_err_rate=todouble(0.0)
+    | union (
+        ${spansBase()}
+        | extend svc=tostring(resource.attributes['service.name']),
+                dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
+                is_error=(tostring(status.code)=="2")
+        ${streamFilterSpanKqlClause()}
+        | summarize prev_req=count(),
+                    prev_raw_err=countif(is_error),
+                    prev_p95_us=percentile(dur_us, 95)
+          by svc
+        | join kind=leftouter (
+            ${filteredErrorsBranch('')}
+          ) on svc
+        | extend prev_err=coalesce(filtered_errors, tolong(0))
+        | extend prev_err_rate=iff(prev_req > 0, toreal(prev_err)/toreal(prev_req), 0.0)
+        | project svc, prev_req, prev_err, prev_raw_err, prev_p95_us, prev_err_rate
+      )
     | export mode=overwrite
              description="Cribl APM - previous window service summary"
              to lookup criblapm_alert_prev`;
@@ -628,9 +639,14 @@ export function alertEvaluator(): string {
  */
 export function alertEvaluatorExportState(): string {
   const base = alertEvaluator();
-  return `${base}
-    | where alert_status != "ok" or consecutive_good > 0
-    | project alert_id, alert_status, consecutive_bad, consecutive_good, fire_count
+  // Sentinel-first union — see prevWindowSummary() for the Cribl
+  // planner quirk this pattern works around.
+  return `print alert_id="__sentinel__", alert_status="ok", consecutive_bad=tolong(0), consecutive_good=tolong(0), fire_count=tolong(0)
+    | union (
+        ${base}
+        | where alert_status != "ok" or consecutive_good > 0
+        | project alert_id, alert_status, consecutive_bad, consecutive_good, fire_count
+      )
     | export mode=overwrite
              description="Cribl APM - alert state persistence"
              to lookup criblapm_alert_states`;

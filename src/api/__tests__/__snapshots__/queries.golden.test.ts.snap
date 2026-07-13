@@ -149,7 +149,9 @@ exports[`queries.ts — golden snapshots + invariants > alertEvaluator > snapsho
 `;
 
 exports[`queries.ts — golden snapshots + invariants > alertEvaluatorExportState > snapshot stable 1`] = `
-"dataset="otel" | where isnotnull(end_time_unix_nano)
+"print alert_id="__sentinel__", alert_status="ok", consecutive_bad=tolong(0), consecutive_good=tolong(0), fire_count=tolong(0)
+    | union (
+        dataset="otel" | where isnotnull(end_time_unix_nano)
     | extend svc=tostring(resource.attributes['service.name']),
              is_error=(tostring(status.code)=="2")
     | summarize curr_requests=toreal(count()),
@@ -294,8 +296,9 @@ exports[`queries.ts — golden snapshots + invariants > alertEvaluatorExportStat
                   alert_status, consecutive_bad, consecutive_good,
                   fire_count, transitioned_to
     )
-    | where alert_status != "ok" or consecutive_good > 0
-    | project alert_id, alert_status, consecutive_bad, consecutive_good, fire_count
+        | where alert_status != "ok" or consecutive_good > 0
+        | project alert_id, alert_status, consecutive_bad, consecutive_good, fire_count
+      )
     | export mode=overwrite
              description="Cribl APM - alert state persistence"
              to lookup criblapm_alert_states"
@@ -772,17 +775,19 @@ exports[`queries.ts — golden snapshots + invariants > podUptime > snapshot sta
 `;
 
 exports[`queries.ts — golden snapshots + invariants > prevWindowSummary > snapshot stable 1`] = `
-"dataset="otel" | where isnotnull(end_time_unix_nano)
-    | extend svc=tostring(resource.attributes['service.name']),
-            dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
-            is_error=(tostring(status.code)=="2")
-    | where dur_us < 30000000
-    | summarize prev_req=count(),
-                prev_raw_err=countif(is_error),
-                prev_p95_us=percentile(dur_us, 95)
-      by svc
-    | join kind=leftouter (
+"print svc="__sentinel__", prev_req=tolong(0), prev_err=tolong(0), prev_raw_err=tolong(0), prev_p95_us=todouble(0.0), prev_err_rate=todouble(0.0)
+    | union (
         dataset="otel" | where isnotnull(end_time_unix_nano)
+        | extend svc=tostring(resource.attributes['service.name']),
+                dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
+                is_error=(tostring(status.code)=="2")
+        | where dur_us < 30000000
+        | summarize prev_req=count(),
+                    prev_raw_err=countif(is_error),
+                    prev_p95_us=percentile(dur_us, 95)
+          by svc
+        | join kind=leftouter (
+            dataset="otel" | where isnotnull(end_time_unix_nano)
     | where tostring(status.code) == "2"
     | extend svc=tostring(resource.attributes['service.name']),
              span_kind=tostring(kind),
@@ -810,10 +815,11 @@ exports[`queries.ts — golden snapshots + invariants > prevWindowSummary > snap
     | extend counts_as_error = not((has_error_child == true) or (trace_origin == "user" and (isnotnull(http_status) and http_status >= 400 and http_status <= 499)) or (trace_origin == "user" and grpc_status in (3,5,6,7,11,16)))
     | where counts_as_error
     | summarize filtered_errors=count() by svc
-      ) on svc
-    | extend prev_err=coalesce(filtered_errors, tolong(0))
-    | extend prev_err_rate=iff(prev_req > 0, toreal(prev_err)/toreal(prev_req), 0.0)
-    | project svc, prev_req, prev_err, prev_raw_err, prev_p95_us, prev_err_rate
+          ) on svc
+        | extend prev_err=coalesce(filtered_errors, tolong(0))
+        | extend prev_err_rate=iff(prev_req > 0, toreal(prev_err)/toreal(prev_req), 0.0)
+        | project svc, prev_req, prev_err, prev_raw_err, prev_p95_us, prev_err_rate
+      )
     | export mode=overwrite
              description="Cribl APM - previous window service summary"
              to lookup criblapm_alert_prev"

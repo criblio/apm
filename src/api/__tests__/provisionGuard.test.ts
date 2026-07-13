@@ -8,8 +8,9 @@ describe('validateQuery', () => {
     expect(validateQuery('q', 'dataset="otel" | summarize count() by svc')).toEqual([]);
   });
 
-  it('passes a healthy export query', () => {
-    const q = `dataset="otel" | summarize n=count() by svc
+  it('passes a healthy export query (sentinel-first union)', () => {
+    const q = `print svc="__sentinel__", n=tolong(0)
+      | union (dataset="otel" | summarize n=count() by svc)
       | export mode=overwrite description="x" to lookup my_lookup`;
     expect(validateQuery('q', q)).toEqual([]);
   });
@@ -32,7 +33,8 @@ describe('validateQuery', () => {
   });
 
   it('flags (?i) upstream of export-to-lookup', () => {
-    const q = `dataset="otel" | where _raw matches regex "(?i)consume"
+    const q = `print _raw="__sentinel__"
+      | union (dataset="otel" | where _raw matches regex "(?i)consume")
       | export mode=overwrite to lookup my_lookup`;
     const errors = validateQuery('q', q);
     expect(errors).toHaveLength(1);
@@ -45,7 +47,8 @@ describe('validateQuery', () => {
   });
 
   it('flags mv-expand upstream of export-to-lookup', () => {
-    const q = `dataset="otel" | extend k=bag_keys(attributes) | mv-expand k
+    const q = `print k="__sentinel__"
+      | union (dataset="otel" | extend k=bag_keys(attributes) | mv-expand k)
       | export mode=overwrite to lookup my_lookup`;
     const errors = validateQuery('q', q);
     expect(errors).toHaveLength(1);
@@ -64,9 +67,42 @@ describe('validateQuery', () => {
   });
 
   it('ignores (?i) / mv-expand mentioned only in KQL comment lines', () => {
-    const q = `dataset="otel"
-      // we use [Cc]onsume instead of (?i) here; mv-expand is avoided
-      | where _raw matches regex "[Cc]onsume"
+    const q = `print _raw="__sentinel__"
+      | union (
+          dataset="otel"
+          // we use [Cc]onsume instead of (?i) here; mv-expand is avoided
+          | where _raw matches regex "[Cc]onsume"
+        )
+      | export mode=overwrite to lookup my_lookup`;
+    expect(validateQuery('q', q)).toEqual([]);
+  });
+
+  it('flags export-to-lookup without a sentinel-first pipeline', () => {
+    // Regression guard for the v0.10.0 "Unknown lookup" outage:
+    // on some Cribl versions `| export mode=overwrite` on 0 rows
+    // deletes the lookup CSV entirely.
+    const q = `dataset="otel" | summarize n=count() by svc
+      | export mode=overwrite to lookup my_lookup`;
+    const errors = validateQuery('q', q);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain('sentinel');
+  });
+
+  it('flags the WRONG-ORDER union pattern (real-first, sentinel-branch)', () => {
+    // Verified on staging: `<real> | union (print …) | export` skips
+    // the export tail when <real> emits 0 rows, even though the
+    // union output has 1 row. Must be `print … | union (<real>)`.
+    const q = `dataset="otel" | summarize n=count() by svc
+      | union (print svc="__sentinel__", n=tolong(0))
+      | export mode=overwrite to lookup my_lookup`;
+    const errors = validateQuery('q', q);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain('sentinel');
+  });
+
+  it('accepts print-based seed queries with no sentinel', () => {
+    // The `print`-only shape is itself a deterministic 1-row emitter.
+    const q = `print svc="__init__", n=tolong(0)
       | export mode=overwrite to lookup my_lookup`;
     expect(validateQuery('q', q)).toEqual([]);
   });
