@@ -4,8 +4,16 @@
  * highlighted based on which section is in view, updated via
  * IntersectionObserver — so scrolling the content auto-syncs the
  * highlight without a click.
+ *
+ * Clicks preventDefault + call scrollIntoView() directly instead
+ * of relying on the browser to follow the `#id` hash. React
+ * Router v7's BrowserRouter intercepts anchor clicks inside the
+ * app; a bare `#id` href routes to `/#id` which doesn't match any
+ * app route and falls through to Home. Same failure shape as the
+ * Wave 1 sidebar regression (PR #94). Keep the `href` attribute
+ * for right-click-copy-link + a11y.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type MouseEvent } from 'react';
 import s from './SettingsNav.module.css';
 
 export interface NavGroup {
@@ -26,6 +34,15 @@ interface Props {
 
 export default function SettingsNav({ groups }: Props) {
   const [activeId, setActiveId] = useState<string | null>(null);
+
+  const handleClick = (e: MouseEvent<HTMLAnchorElement>, id: string) => {
+    e.preventDefault();
+    const el = document.getElementById(id);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      setActiveId(id);
+    }
+  };
 
   // Observe each section's visibility; the topmost one whose top is
   // above the middle of the viewport wins the highlight.
@@ -68,6 +85,7 @@ export default function SettingsNav({ groups }: Props) {
                 <a
                   className={`${s.link} ${activeId === item.id ? s.linkActive : ''}`}
                   href={`#${item.id}`}
+                  onClick={(e) => handleClick(e, item.id)}
                 >
                   {item.label}
                 </a>
