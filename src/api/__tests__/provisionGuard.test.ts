@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { validateQuery, validateProvisionPlan } from '../provisionGuard';
+import { validateQuery, validateName, validateProvisionPlan } from '../provisionGuard';
 import { setCurrentDataset } from '@cribl/app-utils/dataset';
 import { getProvisioningPlan, SEED_LOOKUPS } from '../provisionedSearches';
 
@@ -114,6 +114,30 @@ describe('validateQuery', () => {
   });
 });
 
+describe('validateName', () => {
+  it('accepts letters, digits, spaces, underscores and dashes', () => {
+    expect(validateName('q', 'Cribl APM - home service summary')).toEqual([]);
+    expect(validateName('q', 'Cribl APM - 6-day per-service error-rate history')).toEqual([]);
+    expect(validateName('q', 'a_b-c 1')).toEqual([]);
+  });
+
+  it('rejects the v0.10.0 names Cribl 400d on', () => {
+    // The two that actually shipped broken (deploy_events, noise_budget).
+    const slash = validateName('deploy', 'Cribl APM - deploy/change correlation events');
+    expect(slash.length).toBe(1);
+    expect(slash[0]).toContain('"/"');
+
+    const parens = validateName('noise', 'Cribl APM - alert noise budget (per-svc, per-day fires)');
+    expect(parens.length).toBe(1);
+    expect(parens[0]).toContain('"("');
+    expect(parens[0]).toContain('","');
+  });
+
+  it('rejects an empty name', () => {
+    expect(validateName('q', '')).toHaveLength(1);
+  });
+});
+
 describe('validateProvisionPlan', () => {
   it('aggregates violations across targets with ids', () => {
     const errors = validateProvisionPlan([
@@ -126,8 +150,11 @@ describe('validateProvisionPlan', () => {
 
   it('passes the real provisioning plan + seed lookups (dataset=otel)', () => {
     setCurrentDataset('otel');
+    // Mirrors the target list scripts/provision.ts builds, names
+    // included — a plan whose names Cribl would 400 on must fail here,
+    // in CI, not in a user's browser at provision time.
     const targets = [
-      ...getProvisioningPlan().map((s) => ({ id: s.id, query: s.query })),
+      ...getProvisioningPlan().map((s) => ({ id: s.id, query: s.query, name: s.name })),
       ...SEED_LOOKUPS.map((l) => ({ id: `seed:${l.name}`, query: l.seedQuery })),
     ];
     expect(validateProvisionPlan(targets)).toEqual([]);

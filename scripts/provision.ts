@@ -112,7 +112,7 @@ async function main(): Promise<void> {
   // June 2026 outage chain (dataset="" in 17 searches, unjoinable
   // lookup CSVs) shipped through a reconcile that reported success.
   const guardErrors = validateProvisionPlan([
-    ...getProvisioningPlan().map((s) => ({ id: s.id, query: s.query })),
+    ...getProvisioningPlan().map((s) => ({ id: s.id, query: s.query, name: s.name })),
     ...SEED_LOOKUPS.map((l) => ({ id: `seed:${l.name}`, query: l.seedQuery })),
   ]);
   if (guardErrors.length > 0) {
