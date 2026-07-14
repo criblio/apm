@@ -7,13 +7,16 @@
  * provisionGuard tests: pure-input → expected-output, plus a few
  * stage-failure cases that mimic real API errors.
  */
-import { describe, it, expect, vi } from 'vitest';
+import { beforeAll, describe, it, expect, vi } from 'vitest';
 import type { HttpClient } from '@cribl/app-utils/provisioner';
+import { setCurrentDataset } from '@cribl/app-utils/dataset';
 import {
   runCanary,
   CANARY_SENTINEL_SEARCH_ID,
   CANARY_LOOKUP_NAME,
 } from '../postReconcileCanary';
+
+beforeAll(() => setCurrentDataset('otel'));
 
 /**
  * Fake HttpClient that scripts responses by query-substring.
@@ -38,6 +41,9 @@ function fakeHttp(
   const findRowsFor = (q: string): Record<string, unknown>[] => {
     for (const [needle, rows] of Object.entries(rowsByQuerySubstring)) {
       if (q.includes(needle)) return rows;
+    }
+    if (q.includes('event_id in ("criblapm-')) {
+      return [{ rows: 2, types: 2, versions: 1, canaries: 2 }];
     }
     return [];
   };
@@ -86,12 +92,14 @@ describe('runCanary — happy path', () => {
       // Sampled join probe: 50 sampled, 12 joined non-null
       [`lookup ${CANARY_LOOKUP_NAME}`]: [{ total: 50, joined: 12 }],
     });
-    const report = await runCanary(http);
+    const report = await runCanary(http, { contractPollAttempts: 1, contractPollMs: 0 });
+    expect(report.eventContract.message).toBe('generated-event contract round-trip passed (2 rows, 2 datatypes, schema v1)');
     expect(report.ok).toBe(true);
     expect(report.sentinel.ok).toBe(true);
     expect(report.lookupJoin.ok).toBe(true);
     expect(report.lookupJoin.message).toContain('joinable');
     expect(report.lookupJoin.message).toContain('12/50');
+    expect(report.eventContract.ok).toBe(true);
   });
 });
 
@@ -100,7 +108,7 @@ describe('runCanary — sentinel empty', () => {
     const { http } = fakeHttp({
       [`lookup ${CANARY_LOOKUP_NAME}`]: [{ total: 50, joined: 10 }],
     });
-    const report = await runCanary(http);
+    const report = await runCanary(http, { contractPollAttempts: 1, contractPollMs: 0 });
     expect(report.ok).toBe(false);
     expect(report.sentinel.ok).toBe(false);
     expect(report.sentinel.message).toContain('ZERO');
@@ -110,7 +118,7 @@ describe('runCanary — sentinel empty', () => {
     const { http } = fakeHttp({
       [`lookup ${CANARY_LOOKUP_NAME}`]: [{ total: 50, joined: 10 }],
     });
-    const report = await runCanary(http, { firstInstall: true });
+    const report = await runCanary(http, { firstInstall: true, contractPollAttempts: 1, contractPollMs: 0 });
     expect(report.sentinel.ok).toBe(true);
     expect(report.sentinel.message).toContain('first-install');
   });
@@ -124,7 +132,7 @@ describe('runCanary — lookup join failure shapes', () => {
       // export-to-lookup bug shape that PR #70 was meant to fix.
       [`lookup ${CANARY_LOOKUP_NAME}`]: [{ total: 50, joined: 0 }],
     });
-    const report = await runCanary(http);
+    const report = await runCanary(http, { contractPollAttempts: 1, contractPollMs: 0 });
     expect(report.ok).toBe(false);
     expect(report.lookupJoin.ok).toBe(false);
     expect(report.lookupJoin.message).toMatch(/ZERO joined|unjoinable/);
@@ -135,7 +143,7 @@ describe('runCanary — lookup join failure shapes', () => {
       [CANARY_SENTINEL_SEARCH_ID]: [{ jobName: CANARY_SENTINEL_SEARCH_ID }],
       [`lookup ${CANARY_LOOKUP_NAME}`]: [{ total: 50, joined: 0 }],
     });
-    const report = await runCanary(http, { firstInstall: true });
+    const report = await runCanary(http, { firstInstall: true, contractPollAttempts: 1, contractPollMs: 0 });
     expect(report.lookupJoin.ok).toBe(true);
     expect(report.lookupJoin.message).toContain('first-install');
   });
@@ -145,7 +153,7 @@ describe('runCanary — lookup join failure shapes', () => {
       [CANARY_SENTINEL_SEARCH_ID]: [{ jobName: CANARY_SENTINEL_SEARCH_ID }],
       [`lookup ${CANARY_LOOKUP_NAME}`]: [{ total: 0, joined: 0 }],
     });
-    const report = await runCanary(http);
+    const report = await runCanary(http, { contractPollAttempts: 1, contractPollMs: 0 });
     expect(report.lookupJoin.ok).toBe(false);
     expect(report.lookupJoin.message).toMatch(/zero root spans/);
   });
@@ -155,7 +163,7 @@ describe('runCanary — lookup join failure shapes', () => {
       { [CANARY_SENTINEL_SEARCH_ID]: [{ jobName: CANARY_SENTINEL_SEARCH_ID }] },
       { throwOn: '/jobs' },
     );
-    const report = await runCanary(http);
+    const report = await runCanary(http, { contractPollAttempts: 1, contractPollMs: 0 });
     expect(report.ok).toBe(false);
     expect(report.sentinel.ok || report.lookupJoin.ok).toBe(false);
   });
@@ -169,6 +177,8 @@ describe('runCanary — sentinel override', () => {
     });
     const report = await runCanary(http, {
       sentinelSearchId: 'criblapm__custom_sentinel',
+      contractPollAttempts: 1,
+      contractPollMs: 0,
     });
     expect(report.sentinel.message).toContain('criblapm__custom_sentinel');
     expect(report.ok).toBe(true);

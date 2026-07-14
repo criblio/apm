@@ -11,6 +11,11 @@
  * unit-tested in isolation, and so the parsing/serializing functions can
  * be reused by the URL hydration in SearchPage (PR F).
  */
+import {
+  kqlBracketField,
+  kqlFiniteNumber,
+  kqlStringLiteral,
+} from '../api/kqlSafety';
 
 /** Operators the filter UI supports. */
 export type FilterOp =
@@ -59,16 +64,10 @@ export interface FilterRow {
 
 /** Pick the KQL access path for an attribute name. Mirrors queries.ts. */
 function attrExpr(attr: string): string {
-  const escaped = attr.replace(/'/g, "\\'");
   if (attr.startsWith('k8s.') || attr.startsWith('service.')) {
-    return `tostring(resource.attributes['${escaped}'])`;
+    return `tostring(resource.attributes${kqlBracketField(attr)})`;
   }
-  return `tostring(attributes['${escaped}'])`;
-}
-
-/** Quote a string value for inlining in KQL. */
-function kqlString(v: string): string {
-  return `"${v.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+  return `tostring(attributes${kqlBracketField(attr)})`;
 }
 
 function rowIsValid(r: FilterRow): boolean {
@@ -86,18 +85,18 @@ export function rowToKql(r: FilterRow): string {
   const v = r.value.trim();
   switch (r.op) {
     case '=':
-      return `${lhs} == ${kqlString(v)}`;
+      return `${lhs} == ${kqlStringLiteral(v)}`;
     case '!=':
-      return `${lhs} != ${kqlString(v)}`;
+      return `${lhs} != ${kqlStringLiteral(v)}`;
     case '~':
-      return `${lhs} contains_cs ${kqlString(v)}`;
+      return `${lhs} contains_cs ${kqlStringLiteral(v)}`;
     case '!~':
-      return `not (${lhs} contains_cs ${kqlString(v)})`;
+      return `not (${lhs} contains_cs ${kqlStringLiteral(v)})`;
     case '>':
     case '<':
     case '>=':
     case '<=':
-      return `toreal(${lhs}) ${r.op} ${v}`;
+      return `toreal(${lhs}) ${r.op} ${kqlFiniteNumber(Number(v))}`;
   }
 }
 

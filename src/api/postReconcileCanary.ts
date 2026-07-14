@@ -31,12 +31,17 @@
  */
 import type { HttpClient } from '@cribl/app-utils/provisioner';
 import { getCurrentDataset } from '@cribl/app-utils/dataset';
+import {
+  generatedEventContractCanaryRead,
+  generatedEventContractCanarySend,
+} from './generatedEventContract';
+import { kqlDatasetId, kqlStringLiteral } from './kqlSafety';
 
 /** Guard against injection when embedding the runtime dataset name
  *  in a literal query. Character-class matches the query builders'
  *  quoteDataset(). Callers must have set the dataset store upstream. */
 function safeDataset(): string {
-  return getCurrentDataset().replace(/[^a-zA-Z0-9_-]/g, '');
+  return kqlDatasetId(getCurrentDataset());
 }
 
 /**
@@ -62,12 +67,16 @@ export interface CanaryOpts {
   firstInstall?: boolean;
   /** Override the sentinel search ID — defaults to the constant. */
   sentinelSearchId?: string;
+  /** Test hooks; production defaults tolerate normal ingest propagation. */
+  contractPollAttempts?: number;
+  contractPollMs?: number;
 }
 
 export interface CanaryReport {
   ok: boolean;
   sentinel: { ok: boolean; rowCount: number; message: string };
   lookupJoin: { ok: boolean; rowCount: number; message: string };
+  eventContract: { ok: boolean; rowCount: number; message: string };
 }
 
 /**
@@ -159,7 +168,7 @@ export async function runCanary(
   // -2h window — enough to span the 5-min scheduled-search cadence
   // a couple times over, so a transient miss doesn't flap the canary.
   const sentinelKql = `dataset="$vt_results"
-    | where jobName == "${sentinelId.replace(/"/g, '\\"')}"
+    | where jobName == ${kqlStringLiteral(sentinelId)}
     | limit 1`;
   let sentinelRows: Record<string, unknown>[] = [];
   let sentinelErr: unknown = null;
@@ -295,9 +304,65 @@ export async function runCanary(
     };
   })();
 
+  // ── Probe 3: generated-event send/storage/read contract ─────────
+  // Emit one alert and one deploy sentinel through Local Search, then read
+  // both back through the platform-normalized data_datatype expression used
+  // by every consumer. This catches routing/normalization drift that static
+  // query validation cannot see.
+  const canaryId = `criblapm-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  let eventContractRows: Record<string, unknown>[] = [];
+  let eventContractErr: unknown = null;
+  try {
+    await runCanaryQuery(
+      http,
+      generatedEventContractCanarySend(canaryId, safeDataset()),
+      '-1m',
+      'now',
+    );
+    const attempts = Math.max(1, opts.contractPollAttempts ?? 8);
+    const pollMs = Math.max(0, opts.contractPollMs ?? 1_000);
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      eventContractRows = await runCanaryQuery(
+        http,
+        generatedEventContractCanaryRead(canaryId, safeDataset()),
+        '-15m',
+        'now',
+      );
+      const row = eventContractRows[0];
+      if (Number(row?.['rows'] ?? 0) >= 2) break;
+      if (attempt + 1 < attempts) await delay(pollMs);
+    }
+  } catch (e) {
+    eventContractErr = e;
+  }
+
+  const eventContract: CanaryReport['eventContract'] = (() => {
+    if (eventContractErr) {
+      return {
+        ok: false,
+        rowCount: 0,
+        message: `generated-event contract probe failed: ${(eventContractErr as Error).message ?? String(eventContractErr)}`,
+      };
+    }
+    const row = eventContractRows[0];
+    const rows = Number(row?.['rows'] ?? 0);
+    const types = Number(row?.['types'] ?? 0);
+    const versions = Number(row?.['versions'] ?? 0);
+    const canaries = Number(row?.['canaries'] ?? 0);
+    const ok = rows >= 2 && types === 2 && versions === 1 && canaries >= 2;
+    return {
+      ok,
+      rowCount: rows,
+      message: ok
+        ? `generated-event contract round-trip passed (${rows} rows, ${types} datatypes, schema v1)`
+        : `generated-event contract drift: expected 2 canary rows across 2 datatypes at one schema version; got rows=${rows}, types=${types}, versions=${versions}, canaries=${canaries}`,
+    };
+  })();
+
   return {
-    ok: sentinel.ok && lookupJoin.ok,
+    ok: sentinel.ok && lookupJoin.ok && eventContract.ok,
     sentinel,
     lookupJoin,
+    eventContract,
   };
 }

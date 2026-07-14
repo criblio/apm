@@ -16,6 +16,12 @@ import SettingsPage from './routes/SettingsPage';
 import ServicesListPage from './routes/ServicesListPage';
 import AlertsPage from './routes/AlertsPage';
 import ErrorsPage from './routes/ErrorsPage';
+import NotFoundPage from './routes/NotFoundPage';
+import ResilienceBoundary from './components/ResilienceBoundary';
+
+function contained(name: string, page: ReactNode): ReactNode {
+  return <ResilienceBoundary title={`${name} is temporarily unavailable`}>{page}</ResilienceBoundary>;
+}
 
 /**
  * Bridges React Router's navigate/useHref into the Capra (react-aria-
@@ -40,20 +46,20 @@ export default function App() {
         <CapraRouterBridge>
         <Routes>
           <Route element={<AppShell />}>
-            <Route index element={<OverviewPage />} />
-            <Route path="/services" element={<ServicesListPage />} />
-            <Route path="/map" element={<SystemArchPage />} />
-            <Route path="/traces" element={<SearchPage />} />
-            <Route path="/logs" element={<LogsPage />} />
-            <Route path="/metrics" element={<MetricsPage />} />
-            <Route path="/alerts" element={<AlertsPage />} />
-            <Route path="/errors" element={<ErrorsPage />} />
-            <Route path="/investigate" element={<InvestigatePage />} />
-            <Route path="/settings" element={<SettingsPage />} />
-            <Route path="/trace/:traceId" element={<TraceView />} />
-            <Route path="/compare" element={<ComparePage />} />
-            <Route path="/compare/:idA/:idB" element={<ComparePage />} />
-            <Route path="/service/:serviceName" element={<ServiceDetailPage />} />
+            <Route index element={contained('Overview', <OverviewPage />)} />
+            <Route path="/services" element={contained('Services', <ServicesListPage />)} />
+            <Route path="/map" element={contained('Service Map', <SystemArchPage />)} />
+            <Route path="/traces" element={contained('Trace Search', <SearchPage />)} />
+            <Route path="/logs" element={contained('Logs', <LogsPage />)} />
+            <Route path="/metrics" element={contained('Metrics', <MetricsPage />)} />
+            <Route path="/alerts" element={contained('Alerts', <AlertsPage />)} />
+            <Route path="/errors" element={contained('Errors', <ErrorsPage />)} />
+            <Route path="/investigate" element={contained('Investigator', <InvestigatePage />)} />
+            <Route path="/configuration" element={contained('Configuration', <SettingsPage />)} />
+            <Route path="/trace/:traceId" element={contained('Trace', <TraceView />)} />
+            <Route path="/compare" element={contained('Trace Compare', <ComparePage />)} />
+            <Route path="/compare/:idA/:idB" element={contained('Trace Compare', <ComparePage />)} />
+            <Route path="/service/:serviceName" element={contained('Service Detail', <ServiceDetailPage />)} />
             {/* Backwards compat redirects */}
             <Route path="/search" element={<Navigate to="/traces" replace />} />
             <Route path="/signals/traces" element={<Navigate to="/traces" replace />} />
@@ -61,6 +67,7 @@ export default function App() {
             <Route path="/signals/metrics" element={<Navigate to="/metrics" replace />} />
             <Route path="/architecture" element={<Navigate to="/map" replace />} />
             <Route path="/services/architecture" element={<Navigate to="/map" replace />} />
+            <Route path="*" element={<NotFoundPage />} />
           </Route>
         </Routes>
         </CapraRouterBridge>

@@ -6,6 +6,8 @@ import { useRangeParam } from '../hooks/useRangeParam';
 import DependencyGraph from '../components/DependencyGraph';
 import IsometricGraph from '../components/IsometricGraph';
 import StatusBanner from '../components/StatusBanner';
+import ResilienceBoundary from '../components/ResilienceBoundary';
+import PartialFailureBanner from '../components/PartialFailureBanner';
 import {
   getDependencies,
   listServiceSummaries,
@@ -55,6 +57,8 @@ export default function SystemArchPage() {
   const [buckets, setBuckets] = useState<ServiceBucket[]>([]);
   const [loadingDeps, setLoadingDeps] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [partialFailures, setPartialFailures] = useState<Record<string, string>>({});
+  const [retryNonce, setRetryNonce] = useState(0);
   const [dims, setDims] = useState({ w: 800, h: 600 });
   const streamFilterEnabled = useStreamFilterEnabled();
 
@@ -78,6 +82,7 @@ export default function SystemArchPage() {
     const binSeconds = binSecondsFor(lookback);
     setLoadingDeps(true);
     setError(null);
+    setPartialFailures({});
 
     // Previous-window summaries always live — range-dependent,
     // not cacheable. Fires in the background and feeds traffic-
@@ -87,8 +92,13 @@ export default function SystemArchPage() {
       .then((r) => {
         if (!cancelled) setPrevSummaries(r);
       })
-      .catch(() => {
-        if (!cancelled) setPrevSummaries([]);
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          setPartialFailures((cur) => ({
+            ...cur,
+            'Prior-window comparison': err instanceof Error ? err.message : String(err),
+          }));
+        }
       });
 
     const tryCache = async (): Promise<boolean> => {
@@ -136,16 +146,26 @@ export default function SystemArchPage() {
         .then((r) => {
           if (!cancelled) setSummaries(r);
         })
-        .catch(() => {
-          if (!cancelled) setSummaries([]);
+        .catch((err: unknown) => {
+          if (!cancelled) {
+            setPartialFailures((cur) => ({
+              ...cur,
+              'Service health summaries': err instanceof Error ? err.message : String(err),
+            }));
+          }
         });
 
       getServiceTimeSeries(binSeconds, undefined, lookback, 'now')
         .then((r) => {
           if (!cancelled) setBuckets(r);
         })
-        .catch(() => {
-          if (!cancelled) setBuckets([]);
+        .catch((err: unknown) => {
+          if (!cancelled) {
+            setPartialFailures((cur) => ({
+              ...cur,
+              'Service time series': err instanceof Error ? err.message : String(err),
+            }));
+          }
         });
 
       void pDeps;
@@ -154,7 +174,7 @@ export default function SystemArchPage() {
     return () => {
       cancelled = true;
     };
-  }, [lookback, streamFilterEnabled]);
+  }, [lookback, streamFilterEnabled, retryNonce]);
 
   function setLookback(value: string) {
     // Clear the legacy ?lookback= if present so we don't end up with
@@ -318,6 +338,10 @@ export default function SystemArchPage() {
       </div>
 
       {error && <StatusBanner kind="error">{error}</StatusBanner>}
+      <PartialFailureBanner
+        failures={partialFailures}
+        onRetry={() => setRetryNonce((value) => value + 1)}
+      />
 
       <div className={s.canvasWrap} ref={containerRef}>
         {loadingDeps && <div className={s.empty}>Loading dependency graph…</div>}
@@ -325,28 +349,32 @@ export default function SystemArchPage() {
           <div className={s.empty}>No service dependencies in this time range.</div>
         )}
         {!loadingDeps && edges.length > 0 && view === 'graph' && (
-          <DependencyGraph
-            edges={edges}
-            services={servicesMap}
-            prevServices={prevServicesMap}
-            bucketsByService={bucketsByService}
-            width={dims.w}
-            height={dims.h}
-            loadOperations={loadOperations}
-            lookback={lookback}
-          />
+          <ResilienceBoundary title="Dependency graph is unavailable">
+            <DependencyGraph
+              edges={edges}
+              services={servicesMap}
+              prevServices={prevServicesMap}
+              bucketsByService={bucketsByService}
+              width={dims.w}
+              height={dims.h}
+              loadOperations={loadOperations}
+              lookback={lookback}
+            />
+          </ResilienceBoundary>
         )}
         {!loadingDeps && edges.length > 0 && view === 'isometric' && (
-          <IsometricGraph
-            edges={edges}
-            services={servicesMap}
-            prevServices={prevServicesMap}
-            bucketsByService={bucketsByService}
-            width={dims.w}
-            height={dims.h}
-            loadOperations={loadOperations}
-            lookback={lookback}
-          />
+          <ResilienceBoundary title="Isometric dependency graph is unavailable">
+            <IsometricGraph
+              edges={edges}
+              services={servicesMap}
+              prevServices={prevServicesMap}
+              bucketsByService={bucketsByService}
+              width={dims.w}
+              height={dims.h}
+              loadOperations={loadOperations}
+              lookback={lookback}
+            />
+          </ResilienceBoundary>
         )}
       </div>
     </div>

@@ -145,8 +145,8 @@ const sections: NavItem[][] = [
 ];
 
 const settingsItem: NavItem = {
-  label: 'Settings',
-  to: '/settings',
+  label: 'Configuration',
+  to: '/configuration',
   icon: (
     <svg {...ICON_PROPS}>
       <circle cx="12" cy="12" r="3" />

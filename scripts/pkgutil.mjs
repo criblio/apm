@@ -103,7 +103,18 @@ export async function createAppPack(dev = false) {
 
   const child = spawn(
     'tar',
-    ['-czf', '-', '-C', 'package-build', '.'],
+    [
+      '--sort=name',
+      '--mtime=@0',
+      '--owner=0',
+      '--group=0',
+      '--numeric-owner',
+      '-czf',
+      '-',
+      '-C',
+      'package-build',
+      '.',
+    ],
     {
       cwd: rootDir,
       stdio: ['ignore', 'pipe', 'pipe'],

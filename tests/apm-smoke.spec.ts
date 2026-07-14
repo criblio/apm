@@ -15,10 +15,11 @@ test('APM app shell renders on Cribl Cloud', async ({ page }) => {
   await gotoApm(page, '/');
   const apm = apmFrame(page);
 
-  // NavBar brand + three representative tabs from src/components/NavBar.tsx.
-  await expect(apm.getByRole('link', { name: 'Overview', exact: true })).toBeVisible({
+  // Capra VerticalNavigation items are button-driven (not raw anchors) so
+  // role-based link selectors would miss a correctly rendered shell.
+  await expect(apm.getByText('Overview', { exact: true }).first()).toBeVisible({
     timeout: 30_000,
   });
-  await expect(apm.getByRole('link', { name: 'Services', exact: true })).toBeVisible();
-  await expect(apm.getByRole('link', { name: 'Investigate', exact: true })).toBeVisible();
+  await expect(apm.getByText('Services', { exact: true }).first()).toBeVisible();
+  await expect(apm.getByText('Investigate', { exact: true }).first()).toBeVisible();
 });

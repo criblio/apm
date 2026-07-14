@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import SpotlightPanel from './SpotlightPanel';
+import PartialFailureBanner from './PartialFailureBanner';
 import { SPOTLIGHT_ATTRIBUTES } from '../api/queries';
 import { getSpotlightDiff } from '../api/search';
 import type { SpotlightBucket } from '../api/types';
@@ -71,11 +72,14 @@ export default function SpotlightSection({
 }: Props) {
   const [diff, setDiff] = useState<Map<string, SpotlightBucket[]>>(new Map());
   const [loading, setLoading] = useState(false);
+  const [failures, setFailures] = useState<Record<string, string>>({});
+  const [retryNonce, setRetryNonce] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
     setDiff(new Map());
     setLoading(true);
+    setFailures({});
     getSpotlightDiff(attributes, selectionKql, earliest, latest, {
       scopeKql,
       onAttr: (attr, rows) => {
@@ -88,6 +92,13 @@ export default function SpotlightSection({
           return next;
         });
       },
+      onError: (attr, error) => {
+        if (cancelled) return;
+        setFailures((cur) => ({
+          ...cur,
+          [attr]: error instanceof Error ? error.message : String(error),
+        }));
+      },
     })
       .catch(() => {})
       .finally(() => {
@@ -96,7 +107,7 @@ export default function SpotlightSection({
     return () => {
       cancelled = true;
     };
-  }, [selectionKql, scopeKql, earliest, latest, attributes]);
+  }, [selectionKql, scopeKql, earliest, latest, attributes, retryNonce]);
 
   const handlePick = useCallback(
     (attr: string, value: string) => onPickValue?.(attr, value),
@@ -106,6 +117,10 @@ export default function SpotlightSection({
   return (
     <div className={s.section}>
       {title && <h4 className={s.title}>{title}</h4>}
+      <PartialFailureBanner
+        failures={failures}
+        onRetry={() => setRetryNonce((value) => value + 1)}
+      />
       <SpotlightPanel
         diff={diff}
         onPickValue={handlePick}

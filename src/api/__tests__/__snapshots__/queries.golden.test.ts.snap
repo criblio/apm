@@ -69,162 +69,36 @@ exports[`queries.ts — golden snapshots + invariants > alertEvaluator > snapsho
     // "auto:none:svc" key — meaning the resolving→ok walk never
     // fires, no "resolved" event is emitted, and the Alert Timeline
     // shows the alert as "ongoing" forever. Stable key fixes this.
-    | extend alert_id=strcat("auto:health:", svc)
-    | lookup criblapm_alert_states on alert_id
-    | extend prev_status=iff(isnotnull(alert_status), tostring(alert_status), "ok"),
-             prev_bad=iff(isnotnull(consecutive_bad), tolong(consecutive_bad), 0),
-             prev_good=iff(isnotnull(consecutive_good), tolong(consecutive_good), 0),
-             prev_fire_count=iff(isnotnull(fire_count), tolong(fire_count), 0)
-    | extend new_bad=iff(is_bad, prev_bad + 1, 0),
-             new_good=iff(is_bad, 0, prev_good + 1)
-    | extend alert_status=case(
-               is_bad and prev_status == "ok", "pending",
-               is_bad and prev_status == "pending" and new_bad >= 2, "firing",
-               is_bad and prev_status == "pending", "pending",
-               is_bad and prev_status == "firing", "firing",
-               is_bad and prev_status == "resolving", "firing",
-               not(is_bad) and prev_status == "pending", "ok",
-               not(is_bad) and prev_status == "firing", "resolving",
-               not(is_bad) and prev_status == "resolving" and new_good >= 3, "ok",
-               not(is_bad) and prev_status == "resolving", "resolving",
-               "ok"),
-             consecutive_bad=new_bad,
-             consecutive_good=new_good,
-             fire_count=iff(is_bad and prev_status == "pending" and new_bad >= 2, prev_fire_count + 1, prev_fire_count),
-             transitioned_to=case(
-               is_bad and prev_status == "pending" and new_bad >= 2, "firing",
-               not(is_bad) and prev_status == "resolving" and new_good >= 3, "resolved",
-               "")
-    | project svc, curr_requests, curr_errors, curr_error_rate,
-              prev_requests, prev_errors, prev_error_rate,
-              alert_id, signal_type, is_bad, is_persistent,
-              alert_status, consecutive_bad, consecutive_good,
-              fire_count, transitioned_to
-    | union (
-        dataset="$vt_results"
-        | where jobName == "criblapm__svc_operations"
-        | project svc, op=name, curr_p95_us=toreal(p95_us), curr_requests=toreal(requests)
-        | lookup criblapm_op_baselines on svc, op
-        | extend prev_p95_us=iff(isnotnull(p95_us), toreal(p95_us), 0.0),
-                 prev_op_requests=iff(isnotnull(requests), toreal(requests), 0.0)
-        // Thresholds tuned for gradual-drift scenarios. The
-        // 2026-05-31 third eval scored emailMemoryLeak at 0.30
-        // with 5x ratio + 500ms floor — drift over 7 min didn't
-        // get there. Loosened to 3x ratio + 250ms floor with a
-        // 20-span volume gate to keep the noise tolerable. Item
-        // 1e in ROADMAP.
-        | where isnotnull(prev_p95_us) and prev_p95_us > 0
-                and curr_p95_us >= prev_p95_us * 3
-                and curr_p95_us >= 250000
-                and prev_op_requests >= 20
-        | extend alert_id=strcat("auto:latency:", svc, ":", op),
-                 signal_type="latency",
-                 is_bad=true,
-                 is_persistent=false,
-                 curr_errors=0.0, curr_error_rate=0.0,
-                 prev_requests=prev_op_requests, prev_errors=0.0, prev_error_rate=0.0
-        | lookup criblapm_alert_states on alert_id
-        | extend prev_status=iff(isnotnull(alert_status), tostring(alert_status), "ok"),
-                 prev_bad=iff(isnotnull(consecutive_bad), tolong(consecutive_bad), 0),
-                 prev_good=iff(isnotnull(consecutive_good), tolong(consecutive_good), 0),
-                 prev_fire_count=iff(isnotnull(fire_count), tolong(fire_count), 0)
-        | extend new_bad=prev_bad + 1, new_good=0
-        | extend alert_status=case(
-                   prev_status == "ok", "pending",
-                   prev_status == "pending" and new_bad >= 2, "firing",
-                   prev_status == "pending", "pending",
-                   prev_status == "firing", "firing",
-                   prev_status == "resolving", "firing",
-                   "ok"),
-                 consecutive_bad=new_bad,
-                 consecutive_good=0,
-                 fire_count=iff(prev_status == "pending" and new_bad >= 2, prev_fire_count + 1, prev_fire_count),
-                 transitioned_to=iff(prev_status == "pending" and new_bad >= 2, "firing", "")
-        | project svc, curr_requests, curr_errors, curr_error_rate,
-                  prev_requests, prev_errors, prev_error_rate,
-                  alert_id, signal_type, is_bad, is_persistent,
-                  alert_status, consecutive_bad, consecutive_good,
-                  fire_count, transitioned_to
-    )"
-`;
+    | extend alert_id=strcat("auto:health:", svc),
+             evaluation_id=strcat("criblapm-eval:", tostring(bin(now(), 5m)))
 
-exports[`queries.ts — golden snapshots + invariants > alertEvaluatorExportState > snapshot stable 1`] = `
-"print alert_id="__sentinel__", alert_status="ok", consecutive_bad=tolong(0), consecutive_good=tolong(0), fire_count=tolong(0)
-    | union (
-        dataset="otel" | where isnotnull(end_time_unix_nano)
-    | extend svc=tostring(resource.attributes['service.name']),
-             is_error=(tostring(status.code)=="2")
-    | summarize curr_requests=toreal(count()),
-                curr_errors=toreal(countif(is_error)) by svc
-    | extend curr_error_rate=iff(curr_requests > 0, curr_errors/curr_requests, 0.0)
-    | lookup criblapm_alert_prev on svc
-    | extend prev_requests=iff(isnotnull(prev_req), toreal(prev_req), 0.0),
-             prev_errors=iff(isnotnull(prev_err), toreal(prev_err), 0.0),
-             prev_error_rate=iff(isnotnull(prev_err_rate), toreal(prev_err_rate), 0.0)
-    | extend curr_err_pct=curr_error_rate * 100,
-             prev_err_pct=prev_error_rate * 100,
-             // is_persistent is informational — used by notification
-             // logic to suppress repeat pings, NOT by detection.
-             // A 25% error rate that's been 25% for an hour is still
-             // a real problem that should be visible.
-             is_persistent=(prev_error_rate * 100 >= 1 and (curr_error_rate * 100 - prev_error_rate * 100) < 2),
-             // traffic_ratio normalizes to requests-per-minute so the
-             // -15m curr window and -60m prev window compare on the
-             // same scale. Without normalization a healthy service
-             // would look like it's at 25% of prior traffic (15/60).
-             traffic_ratio=iff(prev_requests >= 50,
-                               (curr_requests / 15.0) / (prev_requests / 60.0),
-                               1.0)
-    // Three error_rate paths, tuned for production noise tolerance.
-    // The prior ≥1% / ≥2-error floors were over-fit to chaos-
-    // engineered eval scenarios (llmRateLimit, recommendationCache)
-    // and fired on normal background error rates of real services.
-    //   1. High absolute rate — ≥5% with ≥20 spans. Paging-worthy
-    //      regardless of baseline.
-    //   2. Sharp deviation from a stable baseline — current rate
-    //      ≥3× prev AND ≥2% absolute AND prev window had ≥100
-    //      requests (baseline is statistically meaningful).
-    //   3. Catastrophic ramp on previously-clean service — ≥10
-    //      errors when the prior window had effectively zero,
-    //      gated on ≥50 current requests to distinguish "real
-    //      service just broke" from low-volume background noise.
-    // Tradeoff: silences chaos scenarios on ultra-low-volume
-    // services (llmRateLimit / recommendationCache product-reviews).
-    // The low-volume-mode setting (P1.2) re-enables an older arm
-    // for those — opt-in only since it costs precision on noisier
-    // workloads.
-    | extend signal_type=case(
-               curr_requests == 0 and prev_requests >= 50, "silent",
-               curr_err_pct >= 5 and curr_requests >= 20, "error_rate",
-               curr_err_pct >= 2 and curr_err_pct >= prev_err_pct * 3
-                 and prev_requests >= 100, "error_rate",
-               curr_errors >= 10 and prev_errors < 1
-                 and curr_requests >= 50, "error_rate",
-               traffic_ratio <= 0.5 and prev_requests >= 50, "traffic_drop",
-               "none"),
-             is_bad=(
-               (curr_requests == 0 and prev_requests >= 50)
-               or (curr_err_pct >= 5 and curr_requests >= 20)
-               or (curr_err_pct >= 2 and curr_err_pct >= prev_err_pct * 3
-                   and prev_requests >= 100)
-               or (curr_errors >= 10 and prev_errors < 1
-                   and curr_requests >= 50)
-               or (traffic_ratio <= 0.5 and prev_requests >= 50))
-    // alert_id is STABLE per service (doesn't include signal_type).
-    // Why: when a service recovers, signal_type rotates from
-    // "error_rate" → "none", so an signal_type-keyed alert_id
-    // would change too. The state export uses mode=overwrite, so
-    // the old "auto:error_rate:svc" row gets wiped before the
-    // state machine ever sees prev_status="firing" on the new
-    // "auto:none:svc" key — meaning the resolving→ok walk never
-    // fires, no "resolved" event is emitted, and the Alert Timeline
-    // shows the alert as "ongoing" forever. Stable key fixes this.
-    | extend alert_id=strcat("auto:health:", svc)
-    | lookup criblapm_alert_states on alert_id
-    | extend prev_status=iff(isnotnull(alert_status), tostring(alert_status), "ok"),
-             prev_bad=iff(isnotnull(consecutive_bad), tolong(consecutive_bad), 0),
-             prev_good=iff(isnotnull(consecutive_good), tolong(consecutive_good), 0),
-             prev_fire_count=iff(isnotnull(fire_count), tolong(fire_count), 0)
+    | join kind=leftouter (
+        dataset="otel"
+        | where coalesce(tostring(data_datatype), tostring(datatype)) == "criblapm_alert"
+        | where isnull(is_canary) or tostring(is_canary) != "true"
+        | where isnull(record_kind) or tostring(record_kind) == "evaluation"
+        | where isnotempty(alert_id)
+        | join kind=inner (
+            dataset="otel"
+            | where coalesce(tostring(data_datatype), tostring(datatype)) == "criblapm_alert"
+            | where isnull(is_canary) or tostring(is_canary) != "true"
+            | where isnull(record_kind) or tostring(record_kind) == "evaluation"
+            | where isnotempty(alert_id)
+            | summarize persisted_time=max(_time) by alert_id
+          ) on alert_id
+        | where _time == persisted_time
+        | summarize persisted_evaluation_id=max(tostring(evaluation_id)),
+                    persisted_status=max(tostring(alert_status)),
+                    persisted_bad=max(tolong(consecutive_bad)),
+                    persisted_good=max(tolong(consecutive_good)),
+                    persisted_fire_count=max(tolong(fire_count))
+          by alert_id
+      ) on alert_id
+    | extend is_retry=iff(isnotnull(persisted_evaluation_id) and persisted_evaluation_id == evaluation_id, true, false),
+             prev_status=iff(isnotnull(persisted_status), persisted_status, "ok"),
+             prev_bad=iff(isnotnull(persisted_bad), persisted_bad, 0),
+             prev_good=iff(isnotnull(persisted_good), persisted_good, 0),
+             prev_fire_count=iff(isnotnull(persisted_fire_count), persisted_fire_count, 0)
     | extend new_bad=iff(is_bad, prev_bad + 1, 0),
              new_good=iff(is_bad, 0, prev_good + 1)
     | extend alert_status=case(
@@ -247,7 +121,8 @@ exports[`queries.ts — golden snapshots + invariants > alertEvaluatorExportStat
                "")
     | project svc, curr_requests, curr_errors, curr_error_rate,
               prev_requests, prev_errors, prev_error_rate,
-              alert_id, signal_type, is_bad, is_persistent,
+              alert_id, evaluation_id, is_retry,
+              signal_type, is_bad, is_persistent,
               alert_status, consecutive_bad, consecutive_good,
               fire_count, transitioned_to
     | union (
@@ -268,16 +143,40 @@ exports[`queries.ts — golden snapshots + invariants > alertEvaluatorExportStat
                 and curr_p95_us >= 250000
                 and prev_op_requests >= 20
         | extend alert_id=strcat("auto:latency:", svc, ":", op),
+                 evaluation_id=strcat("criblapm-eval:", tostring(bin(now(), 5m))),
                  signal_type="latency",
                  is_bad=true,
                  is_persistent=false,
                  curr_errors=0.0, curr_error_rate=0.0,
                  prev_requests=prev_op_requests, prev_errors=0.0, prev_error_rate=0.0
-        | lookup criblapm_alert_states on alert_id
-        | extend prev_status=iff(isnotnull(alert_status), tostring(alert_status), "ok"),
-                 prev_bad=iff(isnotnull(consecutive_bad), tolong(consecutive_bad), 0),
-                 prev_good=iff(isnotnull(consecutive_good), tolong(consecutive_good), 0),
-                 prev_fire_count=iff(isnotnull(fire_count), tolong(fire_count), 0)
+
+    | join kind=leftouter (
+        dataset="otel"
+        | where coalesce(tostring(data_datatype), tostring(datatype)) == "criblapm_alert"
+        | where isnull(is_canary) or tostring(is_canary) != "true"
+        | where isnull(record_kind) or tostring(record_kind) == "evaluation"
+        | where isnotempty(alert_id)
+        | join kind=inner (
+            dataset="otel"
+            | where coalesce(tostring(data_datatype), tostring(datatype)) == "criblapm_alert"
+            | where isnull(is_canary) or tostring(is_canary) != "true"
+            | where isnull(record_kind) or tostring(record_kind) == "evaluation"
+            | where isnotempty(alert_id)
+            | summarize persisted_time=max(_time) by alert_id
+          ) on alert_id
+        | where _time == persisted_time
+        | summarize persisted_evaluation_id=max(tostring(evaluation_id)),
+                    persisted_status=max(tostring(alert_status)),
+                    persisted_bad=max(tolong(consecutive_bad)),
+                    persisted_good=max(tolong(consecutive_good)),
+                    persisted_fire_count=max(tolong(fire_count))
+          by alert_id
+      ) on alert_id
+        | extend is_retry=iff(isnotnull(persisted_evaluation_id) and persisted_evaluation_id == evaluation_id, true, false),
+                 prev_status=iff(isnotnull(persisted_status), persisted_status, "ok"),
+                 prev_bad=iff(isnotnull(persisted_bad), persisted_bad, 0),
+                 prev_good=iff(isnotnull(persisted_good), persisted_good, 0),
+                 prev_fire_count=iff(isnotnull(persisted_fire_count), persisted_fire_count, 0)
         | extend new_bad=prev_bad + 1, new_good=0
         | extend alert_status=case(
                    prev_status == "ok", "pending",
@@ -292,174 +191,49 @@ exports[`queries.ts — golden snapshots + invariants > alertEvaluatorExportStat
                  transitioned_to=iff(prev_status == "pending" and new_bad >= 2, "firing", "")
         | project svc, curr_requests, curr_errors, curr_error_rate,
                   prev_requests, prev_errors, prev_error_rate,
-                  alert_id, signal_type, is_bad, is_persistent,
+                  alert_id, evaluation_id, is_retry,
+                  signal_type, is_bad, is_persistent,
                   alert_status, consecutive_bad, consecutive_good,
                   fire_count, transitioned_to
     )
-        | where alert_status != "ok" or consecutive_good > 0
-        | project alert_id, alert_status, consecutive_bad, consecutive_good, fire_count
-      )
-    | export mode=overwrite
-             description="Cribl APM - alert state persistence"
-             to lookup criblapm_alert_states"
-`;
-
-exports[`queries.ts — golden snapshots + invariants > alertHistorySend > snapshot stable 1`] = `
-"dataset="otel" | where isnotnull(end_time_unix_nano)
-    | extend svc=tostring(resource.attributes['service.name']),
-             is_error=(tostring(status.code)=="2")
-    | summarize curr_requests=toreal(count()),
-                curr_errors=toreal(countif(is_error)) by svc
-    | extend curr_error_rate=iff(curr_requests > 0, curr_errors/curr_requests, 0.0)
-    | lookup criblapm_alert_prev on svc
-    | extend prev_requests=iff(isnotnull(prev_req), toreal(prev_req), 0.0),
-             prev_errors=iff(isnotnull(prev_err), toreal(prev_err), 0.0),
-             prev_error_rate=iff(isnotnull(prev_err_rate), toreal(prev_err_rate), 0.0)
-    | extend curr_err_pct=curr_error_rate * 100,
-             prev_err_pct=prev_error_rate * 100,
-             // is_persistent is informational — used by notification
-             // logic to suppress repeat pings, NOT by detection.
-             // A 25% error rate that's been 25% for an hour is still
-             // a real problem that should be visible.
-             is_persistent=(prev_error_rate * 100 >= 1 and (curr_error_rate * 100 - prev_error_rate * 100) < 2),
-             // traffic_ratio normalizes to requests-per-minute so the
-             // -15m curr window and -60m prev window compare on the
-             // same scale. Without normalization a healthy service
-             // would look like it's at 25% of prior traffic (15/60).
-             traffic_ratio=iff(prev_requests >= 50,
-                               (curr_requests / 15.0) / (prev_requests / 60.0),
-                               1.0)
-    // Three error_rate paths, tuned for production noise tolerance.
-    // The prior ≥1% / ≥2-error floors were over-fit to chaos-
-    // engineered eval scenarios (llmRateLimit, recommendationCache)
-    // and fired on normal background error rates of real services.
-    //   1. High absolute rate — ≥5% with ≥20 spans. Paging-worthy
-    //      regardless of baseline.
-    //   2. Sharp deviation from a stable baseline — current rate
-    //      ≥3× prev AND ≥2% absolute AND prev window had ≥100
-    //      requests (baseline is statistically meaningful).
-    //   3. Catastrophic ramp on previously-clean service — ≥10
-    //      errors when the prior window had effectively zero,
-    //      gated on ≥50 current requests to distinguish "real
-    //      service just broke" from low-volume background noise.
-    // Tradeoff: silences chaos scenarios on ultra-low-volume
-    // services (llmRateLimit / recommendationCache product-reviews).
-    // The low-volume-mode setting (P1.2) re-enables an older arm
-    // for those — opt-in only since it costs precision on noisier
-    // workloads.
-    | extend signal_type=case(
-               curr_requests == 0 and prev_requests >= 50, "silent",
-               curr_err_pct >= 5 and curr_requests >= 20, "error_rate",
-               curr_err_pct >= 2 and curr_err_pct >= prev_err_pct * 3
-                 and prev_requests >= 100, "error_rate",
-               curr_errors >= 10 and prev_errors < 1
-                 and curr_requests >= 50, "error_rate",
-               traffic_ratio <= 0.5 and prev_requests >= 50, "traffic_drop",
-               "none"),
-             is_bad=(
-               (curr_requests == 0 and prev_requests >= 50)
-               or (curr_err_pct >= 5 and curr_requests >= 20)
-               or (curr_err_pct >= 2 and curr_err_pct >= prev_err_pct * 3
-                   and prev_requests >= 100)
-               or (curr_errors >= 10 and prev_errors < 1
-                   and curr_requests >= 50)
-               or (traffic_ratio <= 0.5 and prev_requests >= 50))
-    // alert_id is STABLE per service (doesn't include signal_type).
-    // Why: when a service recovers, signal_type rotates from
-    // "error_rate" → "none", so an signal_type-keyed alert_id
-    // would change too. The state export uses mode=overwrite, so
-    // the old "auto:error_rate:svc" row gets wiped before the
-    // state machine ever sees prev_status="firing" on the new
-    // "auto:none:svc" key — meaning the resolving→ok walk never
-    // fires, no "resolved" event is emitted, and the Alert Timeline
-    // shows the alert as "ongoing" forever. Stable key fixes this.
-    | extend alert_id=strcat("auto:health:", svc)
-    | lookup criblapm_alert_states on alert_id
-    | extend prev_status=iff(isnotnull(alert_status), tostring(alert_status), "ok"),
-             prev_bad=iff(isnotnull(consecutive_bad), tolong(consecutive_bad), 0),
-             prev_good=iff(isnotnull(consecutive_good), tolong(consecutive_good), 0),
-             prev_fire_count=iff(isnotnull(fire_count), tolong(fire_count), 0)
-    | extend new_bad=iff(is_bad, prev_bad + 1, 0),
-             new_good=iff(is_bad, 0, prev_good + 1)
-    | extend alert_status=case(
-               is_bad and prev_status == "ok", "pending",
-               is_bad and prev_status == "pending" and new_bad >= 2, "firing",
-               is_bad and prev_status == "pending", "pending",
-               is_bad and prev_status == "firing", "firing",
-               is_bad and prev_status == "resolving", "firing",
-               not(is_bad) and prev_status == "pending", "ok",
-               not(is_bad) and prev_status == "firing", "resolving",
-               not(is_bad) and prev_status == "resolving" and new_good >= 3, "ok",
-               not(is_bad) and prev_status == "resolving", "resolving",
-               "ok"),
-             consecutive_bad=new_bad,
-             consecutive_good=new_good,
-             fire_count=iff(is_bad and prev_status == "pending" and new_bad >= 2, prev_fire_count + 1, prev_fire_count),
-             transitioned_to=case(
-               is_bad and prev_status == "pending" and new_bad >= 2, "firing",
-               not(is_bad) and prev_status == "resolving" and new_good >= 3, "resolved",
-               "")
-    | project svc, curr_requests, curr_errors, curr_error_rate,
-              prev_requests, prev_errors, prev_error_rate,
-              alert_id, signal_type, is_bad, is_persistent,
-              alert_status, consecutive_bad, consecutive_good,
-              fire_count, transitioned_to
-    | union (
-        dataset="$vt_results"
-        | where jobName == "criblapm__svc_operations"
-        | project svc, op=name, curr_p95_us=toreal(p95_us), curr_requests=toreal(requests)
-        | lookup criblapm_op_baselines on svc, op
-        | extend prev_p95_us=iff(isnotnull(p95_us), toreal(p95_us), 0.0),
-                 prev_op_requests=iff(isnotnull(requests), toreal(requests), 0.0)
-        // Thresholds tuned for gradual-drift scenarios. The
-        // 2026-05-31 third eval scored emailMemoryLeak at 0.30
-        // with 5x ratio + 500ms floor — drift over 7 min didn't
-        // get there. Loosened to 3x ratio + 250ms floor with a
-        // 20-span volume gate to keep the noise tolerable. Item
-        // 1e in ROADMAP.
-        | where isnotnull(prev_p95_us) and prev_p95_us > 0
-                and curr_p95_us >= prev_p95_us * 3
-                and curr_p95_us >= 250000
-                and prev_op_requests >= 20
-        | extend alert_id=strcat("auto:latency:", svc, ":", op),
-                 signal_type="latency",
-                 is_bad=true,
-                 is_persistent=false,
-                 curr_errors=0.0, curr_error_rate=0.0,
-                 prev_requests=prev_op_requests, prev_errors=0.0, prev_error_rate=0.0
-        | lookup criblapm_alert_states on alert_id
-        | extend prev_status=iff(isnotnull(alert_status), tostring(alert_status), "ok"),
-                 prev_bad=iff(isnotnull(consecutive_bad), tolong(consecutive_bad), 0),
-                 prev_good=iff(isnotnull(consecutive_good), tolong(consecutive_good), 0),
-                 prev_fire_count=iff(isnotnull(fire_count), tolong(fire_count), 0)
-        | extend new_bad=prev_bad + 1, new_good=0
-        | extend alert_status=case(
-                   prev_status == "ok", "pending",
-                   prev_status == "pending" and new_bad >= 2, "firing",
-                   prev_status == "pending", "pending",
-                   prev_status == "firing", "firing",
-                   prev_status == "resolving", "firing",
-                   "ok"),
-                 consecutive_bad=new_bad,
-                 consecutive_good=0,
-                 fire_count=iff(prev_status == "pending" and new_bad >= 2, prev_fire_count + 1, prev_fire_count),
-                 transitioned_to=iff(prev_status == "pending" and new_bad >= 2, "firing", "")
-        | project svc, curr_requests, curr_errors, curr_error_rate,
-                  prev_requests, prev_errors, prev_error_rate,
-                  alert_id, signal_type, is_bad, is_persistent,
-                  alert_status, consecutive_bad, consecutive_good,
-                  fire_count, transitioned_to
-    )
-    | where transitioned_to != ""
+    // A platform retry inside the same scheduled cadence bucket must not
+    // advance the state machine again. The first successful send is already
+    // durable; suppressing a retry at the producer is stronger than merely
+    // deduplicating conflicting rows at each reader.
+    | where not(is_retry)
+    | extend evaluated_at=bin(now(), 5m),
+             schema_version=tolong(1),
+             producer="criblapm__home_alerts", record_kind="evaluation",
+             event_type=iff(transitioned_to != "", transitioned_to, "evaluated")
+    | extend event_id=strcat("criblapm:alert:", evaluation_id, ":", alert_id)
     | project _time=now(), dataset="otel",
-              datatype="criblapm_alert",
-              event_type=transitioned_to,
-              alert_id, alert_status, svc,
-              signal_type, is_persistent,
+              datatype="criblapm_alert", schema_version,
+              event_id, producer, record_kind, evaluation_id, evaluated_at,
+              event_type, alert_id, alert_status, svc,
+              signal_type, is_bad, is_persistent,
               curr_error_rate, prev_error_rate,
               curr_requests, prev_requests,
-              fire_count, consecutive_bad
-    | send group="search""
+              fire_count, consecutive_bad, consecutive_good
+    | send tee=true group="search""
+`;
+
+exports[`queries.ts — golden snapshots + invariants > alertHistory > snapshot stable 1`] = `
+"dataset="otel"
+    | where coalesce(tostring(data_datatype), tostring(datatype)) == "criblapm_alert"
+    | where event_type in ("firing", "resolved")
+    | where isnull(is_canary) or tostring(is_canary) != "true"
+
+    | extend logical_event_id=coalesce(tostring(event_id), strcat("legacy:", tostring(alert_id), ":", tostring(_time), ":", tostring(event_type)))
+    | summarize _time=max(_time)
+      by logical_event_id, schema_version, evaluation_id, event_type,
+         alert_id, alert_status, svc, signal_type, curr_error_rate,
+         prev_error_rate, curr_requests, prev_requests, fire_count
+    | project _time, event_id=logical_event_id, schema_version,
+              evaluation_id, event_type, alert_id, alert_status,
+              svc, signal_type, curr_error_rate, prev_error_rate,
+              curr_requests, prev_requests, fire_count
+    | sort by _time desc
+    | limit 500"
 `;
 
 exports[`queries.ts — golden snapshots + invariants > allOperationsSummary > snapshot stable 1`] = `
@@ -551,10 +325,14 @@ exports[`queries.ts — golden snapshots + invariants > deployEventsSend > snaps
     // cadence so a stable version's first_seen (≈ start-of-window,
     // ~ -1h) never trips this filter again after its first emission.
     | where first_seen >= datetime_add('minute', -30, now())
+    | extend schema_version=tolong(1),
+             producer="criblapm__deploy_events", record_kind="deploy",
+             event_id=strcat("criblapm:deploy:", svc, ":", version, ":", tostring(first_seen))
     | project _time=now(), dataset="otel",
-              datatype="criblapm_deploy",
+              datatype="criblapm_deploy", schema_version,
+              event_id, producer, record_kind,
               svc, version, first_seen, n_spans
-    | send group="search""
+    | send tee=true group="search""
 `;
 
 exports[`queries.ts — golden snapshots + invariants > errorPropagationRollup > snapshot stable 1`] = `
@@ -617,13 +395,13 @@ exports[`queries.ts — golden snapshots + invariants > findTraces (full filters
 exports[`queries.ts — golden snapshots + invariants > findTraces (no filters) > snapshot stable 1`] = `
 "dataset="otel" | where isnotnull(end_time_unix_nano)
     | extend svc=tostring(resource.attributes['service.name'])
-    
+
     | summarize first_seen=min(_time),
                 trace_start_ns=min(start_time_unix_nano),
                 trace_end_ns=max(end_time_unix_nano)
       by trace_id
     | extend trace_dur_us=(toreal(trace_end_ns)-toreal(trace_start_ns))/1000.0
-    
+
     | sort by first_seen desc
     | limit 20"
 `;
@@ -685,7 +463,7 @@ exports[`queries.ts — golden snapshots + invariants > metricTimeSeries (basic)
 "dataset="otel" | where datatype == "generic_metrics"
     | where isnotnull(['http.server.request.duration'])
     | extend svc=tostring(['service.name'])
-    
+
     | summarize val=percentile(toreal(['http.server.request.duration']), 95)
       by bucket=bin(_time, 60s)
     | sort by bucket asc"
@@ -703,11 +481,16 @@ exports[`queries.ts — golden snapshots + invariants > metricTimeSeries (groupe
 
 exports[`queries.ts — golden snapshots + invariants > noiseBudgetByService > snapshot stable 1`] = `
 "dataset="otel"
-    | where datatype == "criblapm_alert"
+    | where coalesce(tostring(data_datatype), tostring(datatype)) == "criblapm_alert"
     | where event_type == "firing"
-    | extend day=bin(_time, 1d)
+    | where isnull(is_canary) or tostring(is_canary) != "true"
+    | extend logical_event_id=coalesce(tostring(event_id), strcat("legacy:", tostring(alert_id), ":", tostring(_time), ":", tostring(event_type))),
+             persistent_int=iff(tostring(is_persistent)=="true", 1, 0)
+    | summarize event_time=max(_time), persistent_int=max(persistent_int)
+      by logical_event_id, svc, alert_id
+    | extend day=bin(event_time, 1d)
     | summarize fires=count(),
-                persistent_fires=countif(tostring(is_persistent)=="true"),
+                persistent_fires=countif(persistent_int==1),
                 services_distinct_alerts=dcount(alert_id)
       by svc, day
     | extend noisy_fires=fires - persistent_fires
@@ -780,8 +563,8 @@ exports[`queries.ts — golden snapshots + invariants > prevWindowSummary > snap
              http_status=toint(attributes['http.response.status_code']),
              grpc_status=toint(attributes['rpc.grpc.status_code']),
              sid=tostring(span_id)
-    
-    
+
+
     | join kind=leftouter (
         dataset="otel" | where isnotnull(end_time_unix_nano)
         | where tostring(parent_span_id) == ""
@@ -823,7 +606,7 @@ exports[`queries.ts — golden snapshots + invariants > rawRecentErrorSpans > sn
     | sort by _time desc
     | limit 300
     | project _time, svc, name, span_kind, http_status, grpc_status, msg, trace_id, sid
-    
+
     | join kind=leftouter (
         dataset="otel" | where isnotnull(end_time_unix_nano)
         | where tostring(parent_span_id) == ""
@@ -865,12 +648,26 @@ exports[`queries.ts — golden snapshots + invariants > rawSlowestTraces > snaps
     | limit 500"
 `;
 
+exports[`queries.ts — golden snapshots + invariants > recentDeployEvents > snapshot stable 1`] = `
+"dataset="otel"
+    | where coalesce(tostring(data_datatype), tostring(datatype)) == "criblapm_deploy"
+    | where isnull(is_canary) or tostring(is_canary) != "true"
+    | extend logical_event_id=coalesce(tostring(event_id), strcat("legacy:", tostring(svc), ":", tostring(version), ":", tostring(first_seen))),
+             svc=tostring(svc), version=tostring(version),
+             first_seen_num=toreal(first_seen), n_spans_num=tolong(n_spans)
+    | summarize first_seen_ms=max(first_seen_num)*1000,
+                n_spans_total=max(n_spans_num)
+      by logical_event_id, svc, version
+    | sort by first_seen_ms desc
+    | limit 25"
+`;
+
 exports[`queries.ts — golden snapshots + invariants > recentErrorTraces (all) > snapshot stable 1`] = `
 "dataset="otel" | where isnotnull(end_time_unix_nano)
     | extend svc=tostring(resource.attributes['service.name']),
             is_error=(tostring(status.code)=="2")
     | where is_error
-    
+
     | summarize first_seen=max(_time),
                 error_count=count()
       by trace_id
@@ -1020,7 +817,7 @@ exports[`queries.ts — golden snapshots + invariants > serviceSummary (all) > s
     | extend svc=tostring(resource.attributes['service.name']),
             dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
             is_error=(tostring(status.code)=="2")
-    
+
     | where dur_us < 30000000
     | summarize requests=count(),
                 raw_errors=countif(is_error),
@@ -1037,8 +834,8 @@ exports[`queries.ts — golden snapshots + invariants > serviceSummary (all) > s
              http_status=toint(attributes['http.response.status_code']),
              grpc_status=toint(attributes['rpc.grpc.status_code']),
              sid=tostring(span_id)
-    
-    
+
+
     | join kind=leftouter (
         dataset="otel" | where isnotnull(end_time_unix_nano)
         | where tostring(parent_span_id) == ""
@@ -1089,7 +886,7 @@ exports[`queries.ts — golden snapshots + invariants > serviceSummary (scoped) 
              grpc_status=toint(attributes['rpc.grpc.status_code']),
              sid=tostring(span_id)
     | where svc=="test-svc"
-    
+
     | join kind=leftouter (
         dataset="otel" | where isnotnull(end_time_unix_nano)
         | where tostring(parent_span_id) == ""
@@ -1122,7 +919,7 @@ exports[`queries.ts — golden snapshots + invariants > serviceTimeSeries > snap
     | extend svc=tostring(resource.attributes['service.name']),
             dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
             is_error=(tostring(status.code)=="2")
-    
+
     | where dur_us < 30000000
     | summarize requests=count(),
                 errors=countif(is_error),
@@ -1146,7 +943,7 @@ exports[`queries.ts — golden snapshots + invariants > slowestTraces (all) > sn
             parent=tostring(parent_span_id),
             is_root=(parent=="" or isempty(parent)),
             dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0
-    
+
     | summarize span_count=count(),
                 first_seen=min(_time),
                 trace_start_ns=min(start_time_unix_nano),
@@ -1184,7 +981,7 @@ exports[`queries.ts — golden snapshots + invariants > slowestTraces (scoped) >
 
 exports[`queries.ts — golden snapshots + invariants > spotlightAttrDiff > snapshot stable 1`] = `
 "dataset="otel" | where isnotnull(end_time_unix_nano)
-    
+
     | extend attr_value=tostring(attributes['http.method']),
              sel_match=status_code == "2"
     | where isnotempty(attr_value)
@@ -1201,7 +998,7 @@ exports[`queries.ts — golden snapshots + invariants > spotlightAttrDiff > snap
 exports[`queries.ts — golden snapshots + invariants > traceLogs > snapshot stable 1`] = `
 "dataset="otel"
     | where isnotnull(body) and isnotnull(severity_number)
-    | where trace_id=="t-abc"
+    | where trace_id=="0123456789abcdef"
     | project _time, trace_id, span_id, body, severity_text, severity_number,
               attributes,
               service_name=tostring(resource.attributes['service.name']),
@@ -1255,7 +1052,7 @@ exports[`queries.ts — golden snapshots + invariants > traceOriginators > snaps
 
 exports[`queries.ts — golden snapshots + invariants > traceSpans > snapshot stable 1`] = `
 "dataset="otel" | where isnotnull(end_time_unix_nano)
-    | where trace_id in ("t1", "t2")
+    | where trace_id in ("0123456789abcdef", "fedcba9876543210")
     | project _time, trace_id, span_id, parent_span_id, name, kind,
               start_time_unix_nano, end_time_unix_nano,
               attributes, events, links,

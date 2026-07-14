@@ -27,12 +27,15 @@ import {
 } from '../api/search';
 import TraceTable from '../components/TraceTable';
 import StatusBanner from '../components/StatusBanner';
+import PartialFailureBanner from '../components/PartialFailureBanner';
+import ResilienceBoundary from '../components/ResilienceBoundary';
 import type {
   AttrValueBucket,
   SpotlightBucket,
   TraceSummary,
 } from '../api/types';
 import s from './SearchPage.module.css';
+import { kqlStringLiteral } from '../api/kqlSafety';
 
 const FILTER_OP_SET = new Set<FilterOp>(FILTER_OPS);
 
@@ -128,6 +131,8 @@ export default function SearchPage() {
     Map<string, SpotlightBucket[]>
   >(new Map());
   const [facetLoading, setFacetLoading] = useState(false);
+  const [facetFailures, setFacetFailures] = useState<Record<string, string>>({});
+  const [facetRetry, setFacetRetry] = useState(0);
 
   const runSearch = useCallback(async (state: SearchFormState) => {
     setLoading(true);
@@ -187,10 +192,19 @@ export default function SearchPage() {
       setFacetDist(new Map());
       setSpotlightDiff(new Map());
       setFacetLoading(false);
+      setFacetFailures({});
       return;
     }
     let cancelled = false;
     setFacetLoading(true);
+    setFacetFailures({});
+    const recordFacetFailure = (attr: string, value: unknown) => {
+      if (cancelled) return;
+      setFacetFailures((cur) => ({
+        ...cur,
+        [attr]: value instanceof Error ? value.message : String(value),
+      }));
+    };
     // Compose the per-span scope from service/operation + predicate
     // so the facet/spotlight queries see the same span set the trace
     // search does. The facet queries insert the predicate BEFORE the
@@ -199,14 +213,12 @@ export default function SearchPage() {
     // shorthand that findTraces uses post-extend.
     const scope: string[] = [];
     if (formState.service) {
-      const svc = formState.service.replace(/"/g, '\\"');
       scope.push(
-        `tostring(resource.attributes['service.name'])=="${svc}"`,
+        `tostring(resource.attributes['service.name'])==${kqlStringLiteral(formState.service)}`,
       );
     }
     if (formState.operation) {
-      const op = formState.operation.replace(/"/g, '\\"');
-      scope.push(`name=="${op}"`);
+      scope.push(`name==${kqlStringLiteral(formState.operation)}`);
     }
     if (predicate) scope.push(`(${predicate})`);
     const scopedPredicate = scope.join(' and ');
@@ -237,6 +249,7 @@ export default function SearchPage() {
                 return next;
               });
             },
+            recordFacetFailure,
           )
         : getSpotlightDiff(
             SPOTLIGHT_ATTRIBUTES,
@@ -254,12 +267,12 @@ export default function SearchPage() {
                   return next;
                 });
               },
+              onError: recordFacetFailure,
             },
           );
     work
-      .catch(() => {
-        // Each per-attr query already swallowed its own error and fired
-        // onAttr with an empty list; a top-level reject is unexpected.
+      .catch((err: unknown) => {
+        recordFacetFailure('Facet analysis', err);
       })
       .finally(() => {
         if (!cancelled) setFacetLoading(false);
@@ -274,6 +287,7 @@ export default function SearchPage() {
     formState.service,
     formState.operation,
     hasSignal,
+    facetRetry,
   ]);
 
   // Build a per-attribute value-suggestions function for the
@@ -365,7 +379,15 @@ export default function SearchPage() {
 
       <main className={s.results}>
         {error && <StatusBanner kind="error">{error}</StatusBanner>}
-        {hasSearched && !error && <TraceTable traces={results} />}
+        <PartialFailureBanner
+          failures={facetFailures}
+          onRetry={() => setFacetRetry((value) => value + 1)}
+        />
+        {hasSearched && !error && (
+          <ResilienceBoundary title="Trace results are unavailable">
+            <TraceTable traces={results} />
+          </ResilienceBoundary>
+        )}
         {!hasSearched && !error && (
           <StatusBanner kind="info">
             <p style={{ margin: 0 }}>

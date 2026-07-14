@@ -5,12 +5,15 @@
  * `countif(not <bool>)` dialect bug that bit us during PR D's
  * MCP validation).
  */
-import { describe, it, expect } from 'vitest';
+import { beforeAll, describe, it, expect } from 'vitest';
+import { setCurrentDataset } from '@cribl/app-utils/dataset';
 import {
   attrValueDistribution,
   spotlightAttrDiff,
   SPOTLIGHT_ATTRIBUTES,
 } from '../queries';
+
+beforeAll(() => setCurrentDataset('otel'));
 
 describe('SPOTLIGHT_ATTRIBUTES', () => {
   it('keeps the request-shape http attributes', () => {
@@ -63,9 +66,8 @@ describe('attrValueDistribution', () => {
     expect(q).toContain('| limit 50');
   });
 
-  it('escapes single quotes in attribute names', () => {
-    const q = attrValueDistribution(`weird'attr`, '');
-    expect(q).toContain(`attributes['weird\\'attr']`);
+  it('rejects attribute names that could escape bracket access', () => {
+    expect(() => attrValueDistribution(`weird'attr`, '')).toThrow('field name');
   });
 
   it('projects exactly the expected columns for the wrapper', () => {

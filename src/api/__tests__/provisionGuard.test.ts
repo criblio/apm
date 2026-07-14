@@ -160,13 +160,12 @@ describe('validateProvisionPlan', () => {
     expect(validateProvisionPlan(targets)).toEqual([]);
   });
 
-  it('fails the real provisioning plan when the dataset store is empty', () => {
-    // Replays the June outage: framework dataset store defaulting to ''.
+  it('refuses to build the real provisioning plan when the dataset store is empty', () => {
     setCurrentDataset('');
-    const targets = getProvisioningPlan().map((s) => ({ id: s.id, query: s.query }));
-    const errors = validateProvisionPlan(targets);
-    setCurrentDataset('otel');
-    expect(errors.length).toBeGreaterThan(0);
-    expect(errors.some((e) => e.includes('empty dataset'))).toBe(true);
+    try {
+      expect(() => getProvisioningPlan()).toThrow('dataset ID');
+    } finally {
+      setCurrentDataset('otel');
+    }
   });
 });

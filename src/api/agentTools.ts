@@ -12,6 +12,8 @@
  * result and spins.
  */
 import { runQuery } from './cribl';
+import { getCurrentDataset } from '@cribl/app-utils/dataset';
+import { assertReadOnlyKql, kqlInteger, kqlTime } from './kqlSafety';
 import { getTrace } from './search';
 import type { JaegerTrace } from './types';
 import { summarizeTrace } from './transform';
@@ -125,20 +127,30 @@ async function runSearchTool(
   args: RunSearchArgs,
   signal?: AbortSignal,
 ): Promise<{ content: string; ui: RunSearchUi }> {
-  const earliest = normalizeTimeArg(args.earliest ?? '-15m');
-  const latest = normalizeTimeArg(args.latest ?? 'now');
-  const limit = Math.min(Math.max(1, args.limit ?? 100), 1000);
-  const description = args.description ?? '';
+  let earliest = '-15m';
+  let latest = 'now';
+  let limit = 100;
+  let description = '';
+  let query = '';
 
   const started = Date.now();
   try {
     if (signal?.aborted) throw new Error('aborted');
-    const rows = await runQuery(args.query, earliest, latest, limit);
+    if (typeof args.query !== 'string') throw new Error('run_search.query must be a string');
+    if (args.description != null && typeof args.description !== 'string') {
+      throw new Error('run_search.description must be a string');
+    }
+    query = assertReadOnlyKql(args.query, [getCurrentDataset()]);
+    earliest = normalizeTimeArg(args.earliest ?? '-15m');
+    latest = normalizeTimeArg(args.latest ?? 'now');
+    limit = Number(kqlInteger(args.limit ?? 100, { min: 1, max: 1_000 }));
+    description = args.description ?? '';
+    const rows = await runQuery(query, earliest, latest, limit);
     const durationMs = Date.now() - started;
 
     const ui: RunSearchUi = {
       kind: 'search',
-      query: args.query,
+      query,
       description,
       earliest,
       latest,
@@ -157,7 +169,7 @@ async function runSearchTool(
     const msg = err instanceof Error ? err.message : String(err);
     const ui: RunSearchUi = {
       kind: 'search',
-      query: args.query,
+      query: query || (typeof args.query === 'string' ? args.query : ''),
       description,
       earliest,
       latest,
@@ -167,7 +179,7 @@ async function runSearchTool(
       error: msg,
     };
     return {
-      content: `Search failed: ${msg}. The query was:\n\n${args.query}\n\nPlease revise and retry.`,
+      content: `Search blocked or failed: ${msg}. Please revise the read-only query and retry.`,
       ui,
     };
   }
@@ -185,8 +197,7 @@ function rowCap(limit: number): number {
 /** Coerce a time arg that might be a number (unix seconds) into a
  *  relative/absolute string that runQuery accepts. */
 function normalizeTimeArg(v: string | number): string {
-  if (typeof v === 'number') return String(v);
-  return v;
+  return kqlTime(v);
 }
 
 /**
@@ -489,12 +500,9 @@ export async function executeToolCall(
 }
 
 /**
- * Is this tool call subject to "Run Query" approval in the UI?
- * Only run_search with confirmBeforeRunning:true pauses the loop —
- * everything else executes immediately.
+ * Every run_search call is subject to app-controlled human approval.
+ * The model-supplied confirmBeforeRunning argument is intentionally ignored.
  */
 export function requiresApproval(call: ToolCallInvocation): boolean {
-  if (call.name !== 'run_search') return false;
-  const args = parseArgs<RunSearchArgs>(call.arguments);
-  return args.confirmBeforeRunning === true;
+  return call.name === 'run_search';
 }

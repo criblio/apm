@@ -10,6 +10,8 @@
  * to make sure the machine composes correctly across cycles.
  */
 import { describe, it, expect } from 'vitest';
+import { setCurrentDataset } from '@cribl/app-utils/dataset';
+import * as Q from '../queries';
 import {
   FIRE_AFTER,
   CLEAR_AFTER,
@@ -163,5 +165,17 @@ describe('nextAlertState — full traversals', () => {
     expect(s2.alert_status).toBe('firing');
     expect(s2.transitioned_to).toBe(''); // relapse, not a new fire
     expect(s2.fire_count_delta).toBe(0);
+  });
+});
+
+describe('alert evaluator retry idempotency', () => {
+  it('keys evaluations to the cadence bucket and suppresses a durable retry', () => {
+    setCurrentDataset('otel');
+    const query = Q.alertEvaluator();
+    expect(query).toContain('persisted_evaluation_id=max(tostring(evaluation_id))');
+    expect(query).toContain('evaluation_id=strcat("criblapm-eval:", tostring(bin(now(), 5m)))');
+    expect(query).toContain('persisted_evaluation_id == evaluation_id');
+    expect(query).toContain('| where not(is_retry)');
+    expect(query).not.toContain('| dedup ');
   });
 });

@@ -9,9 +9,12 @@ import '@capra/core/styles.css';
 import '@capra/icons/styles.css';
 import './styles/base.css';
 import App from './App.tsx';
+import ResilienceBoundary from './components/ResilienceBoundary.tsx';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    <ResilienceBoundary title="Cribl APM could not start">
+      <App />
+    </ResilienceBoundary>
   </StrictMode>,
 );

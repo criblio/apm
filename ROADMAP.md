@@ -1,16 +1,255 @@
 # Cribl APM — Roadmap
 
 This document is the canonical priority list for the Cribl APM
-Search App. Rewritten 2026-06-23 after v0.10.0 closed out all of
-P0 (platform integrity) and the first half of P2 (adoption); the
-new top priority is the per-signal-dataset abstraction that
-unblocks shipping metrics + logs against datasets distinct from
-the trace dataset.
+Search App. Re-reviewed adversarially on 2026-07-14 against v0.11.0,
+the packaged artifact, the shared framework, and the live Cribl
+workspace. The resilience release gate below supersedes feature
+priority: restore the app's trust contracts before continuing the
+per-signal-dataset work.
 
 > **Refer to this doc as `ROADMAP.md`** (or `/ROADMAP.md` from the repo
 > root). Companion docs: `FAILURE-SCENARIOS.md` for the flagd flag
 > catalog and test plan; `CLAUDE.md` for repo-wide coding rules;
 > `AGENTS.md` for the Cribl App Platform developer guide.
+
+## 2026-07-14 adversarial review — resilience release gate
+
+**Confirmed product direction:** this is intended to become a
+customer-installable Cribl App for arbitrary Cribl Cloud workspaces.
+The current OTel-demo data contract is an intermediate state, not the
+finished product boundary; generalization remains in RG.12 after this
+release gate.
+
+No new feature work should ship ahead of the stop-ship items below.
+The existing per-signal-dataset P0 remains the first feature priority
+after this gate is green.
+
+### 2026-07-14 burn-down result — v0.11.2
+
+| Gate | Status | Verification evidence |
+|---|---|---|
+| RG.1 generated-event contract | Complete | The deployed post-reconcile canary emitted and read two rows/two datatypes at schema v1 through the real `send` boundary. All alert/deploy readers dual-read `data_datatype` and legacy `datatype`, filter canaries, and use stable logical event IDs. |
+| RG.2 ordered/exactly-once alerts | Complete | The two racing state/history jobs were deleted from the live workspace. One immutable evaluator now commits state and history. A live isolated `ok → pending → firing → resolving → ok` traversal replayed every evaluation and produced exactly five durable IDs, one firing, one resolved, and `fire_count=1`. |
+| RG.3 read-only KQL boundary | Complete | Shared serializers now cover datasets, strings, identifiers, numbers, times, trace/span IDs, and predicates. The advanced editor is predicate-only. Investigator approval is app-controlled and every model query is read-only validated. Hostile pipeline, field, route, and prompt tests pass. |
+| RG.4 reproducible release | Complete | CI and release use the same framework-pinned composite action and build once. `apm-0.11.2.tgz` rebuilt twice at SHA-256 `610613d197f4f276e82870bc22f2c248f4dda4bdc51682adc1e3bda869f9410c`, which is the exact artifact installed in staging. Pack inspection, lock/framework/source metadata, deterministic production SBOM, checksums, and provenance are wired. PR #106 recorded a successful serialized upgrade/reconcile and real-host route, generated-event, and exactly-once alert smoke suite against the owner-approved existing workspace. |
+| RG.5 least privilege/product honesty | Complete | The packaged proxy manifest is empty and archive inspection rejects domains, injected headers, scripts, or dependencies. The non-functional notification-target selector and persisted dead settings were removed. |
+| RG.6 dependencies/supply chain | Complete | Full-tree and production audits report zero vulnerabilities. React Router/Vite and transitive findings are patched; Node is pinned to a supported floor; Dependabot, dependency review, license denial, secret scanning, and SHA-pinned Actions are enforced. |
+| RG.7 runtime containment | Complete | Root, route, and major-panel boundaries isolate failures. Secondary query failures render explicit unavailable/unknown state with Retry. `/configuration` replaces the host-conflicting route and wildcard recovery is present. All top-level routes plus forwarded `popstate` pass in the real Cribl iframe; deterministic route-level fault injection keeps Overview alive and labels missing data. |
+
+**Stop-ship publication decision:** the gate is **CLEARED**. Engineering
+criteria, the manual rehearsal, dependency review, and the serialized
+PR live CI upgrade/smoke run are green. Version 0.11.2 is ready for code
+review and may be merged/tagged after approval. A second disposable
+workspace is not required for this gate. Fresh-install, legacy-upgrade,
+and clean-uninstall coverage remain explicit RG.18 work when a safe
+disposable tenant or equivalent reset mechanism is available.
+
+### Evidence behind the gate
+
+The bullets below are the observations at the start of the review; the
+burn-down table above records their current disposition.
+
+- Local checks are superficially green: 263 unit tests and type-check
+  pass; lint has one unfailed hook-dependency warning. The tests are
+  predominantly KQL snapshots and pure functions. There is no CI
+  browser, live Cribl, package-install, failure-path, or coverage gate.
+- The live event contract is split. In the last 24 hours, 47 alert and
+  18 deploy events were stored as `data_datatype`, while `datatype` was
+  `Uncategorized`. `noiseBudgetByService()` and `listRecentDeploys()`
+  read `datatype`, so the shipped noise budget produces no rows and
+  Investigator deploy context cannot see the emitted deploys.
+- The three alert jobs share one cron. Recent live cycles ran
+  `criblapm__alert_state_export` first, then the UI evaluator and
+  history sender. Because all three recompute against mutable lookup
+  state, the export can consume a transition before history observes
+  it. Completion is not correctness here.
+- All 51 inspected recent APM scheduled jobs completed, but queue wait
+  ranged from 8.6 seconds to roughly 22.5 minutes. Several "5 minute"
+  panels waited 37–130 seconds; hourly jobs waited 10–22 minutes. The
+  configured cadence is therefore not the delivered freshness SLO.
+- The release workflow clones the framework's current branch tip,
+  whereas CI tests `.framework-sha`. A release can contain framework
+  code that never passed this repository's CI.
+- The packaged `proxies.yml` authorizes unused `api.example.com` paths
+  and an injected credential expression even though README says the
+  app makes no external calls.
+- Current `npm audit` reports eight advisories, including three high
+  severity findings in the React Router and Vite dependency trees.
+- The app exposes `/settings` even though the platform guide records
+  that host routes containing `settings` may be intercepted. There is
+  also no root error boundary or wildcard route recovery.
+
+### Stop-ship — restore correctness, security, and release integrity
+
+- **RG.1 Repair and version generated-event contracts** (S) — define
+  one typed schema for `criblapm_alert` and `criblapm_deploy` at the
+  `| send` boundary, including the platform's stored field names.
+  Migrate every reader (noise budget, alert pages/evals, recent
+  deploys, Investigator preflight) to that contract. Add `schema_version`
+  and stable event IDs. A post-reconcile contract canary must emit a
+  sentinel event, read it back through the same query each consumer
+  uses, and fail the deploy on drift. Backfill or dual-read old events
+  for the supported upgrade window.
+- **RG.2 Make alert transitions ordered and exactly-once** (M) — stop
+  running three independent copies of the state machine against a
+  mutable lookup on the same cron. Produce one immutable evaluator
+  snapshot with an `evaluation_id`; have state persistence and history
+  consume that same snapshot, independent of queue order. Make history
+  idempotent by `(alert_id, evaluation_id, transitioned_to)`. Test the
+  full `ok -> pending -> firing -> resolving -> ok` traversal against
+  live scheduled jobs and assert exactly one firing and one resolved
+  event, including retries and delayed/out-of-order consumers.
+- **RG.3 Put a read-only KQL security boundary around all untrusted
+  input** (L) — replace hand-built escaping with shared functions for
+  KQL strings, field identifiers, dataset IDs, numbers, relative
+  times, and hex trace/span IDs. Cover route params, tag keys, numeric
+  filter values, metric/group-by names, Spotlight predicates, and
+  service names. The advanced editor must accept a predicate only and
+  reject pipeline/side-effect operators such as `send` and `export`.
+  The Investigator must never trust the model-controlled
+  `confirmBeforeRunning` flag: enforce read-only query validation and
+  app-side approval policy before every `run_search`. Add hostile-string,
+  property, and prompt-injection tests.
+- **RG.4 Make releases reproducible from the tested commit** (S) — use
+  `.framework-sha` in both CI and release, run the identical lint,
+  unit, type, package, and pack-inspection gates in both, and fail lint
+  on warnings. Build once, promote that artifact, publish its checksum,
+  dependency lock digest, framework SHA, and SBOM/provenance. Install
+  the produced tgz into the owner-approved existing validation workspace
+  before publishing it, serialize all shared-workspace runs, and execute
+  the authoritative real-host smoke suite after upgrade. Never rebuild a
+  different artifact within a workflow. Fresh-install coverage is tracked
+  separately in RG.18 because no safe disposable workspace is available.
+- **RG.5 Remove undeclared privilege and false product affordances**
+  (S) — ship an empty proxy manifest until a real external dependency
+  exists; add an archive test that fails on unexpected domains or
+  injected headers. The notification-target UI currently promises
+  dispatch but only saves IDs; either wire it end-to-end with delivery
+  evidence or hide/label it unavailable until the existing alerting
+  roadmap work lands. Remove or implement other dead settings so saved
+  configuration always has a consumer.
+- **RG.6 Patch dependency advisories and add continuous supply-chain
+  gates** (S) — update the vulnerable React Router, Vite, Babel,
+  PostCSS, js-yaml, and brace-expansion trees; assess runtime versus
+  build-only exposure in the PR. Add automated dependency updates,
+  production and full-tree audit policy, license review, secret scan,
+  and SHA-pin third-party GitHub Actions.
+- **RG.7 Contain runtime failures and platform route conflicts** (M)
+  — move Settings to a host-safe route such as `/configuration`, add
+  a root error boundary and wildcard/not-found recovery, and give each
+  major panel an isolated failure boundary with Retry. A failed
+  dependency/anomaly/log query must render **unknown/unavailable**, not
+  an empty collection that looks healthy. Exercise iframe navigation,
+  back/forward, parent `popstate`, and every route in the real host.
+
+**Stop-ship done =** the live contract canary passes; a fault produces
+exactly one firing/resolved pair; adversarial inputs cannot add KQL
+pipeline stages; the package has no unused proxy capability or known
+high-severity advisory; and the released tgz is byte-identical to the
+artifact tested with the recorded framework SHA.
+
+### P1 resilience — make overload and partial failure boring
+
+- **RG.8 Introduce a shared search-job coordinator** (L) — extend the
+  framework client with `AbortSignal`, server-side job cancellation,
+  request deduplication, a global concurrency budget, priority lanes
+  (interactive before background), and bounded retry/backoff with
+  jitter for 429/5xx/network failures. Replace fixed 400 ms polling
+  with capped backoff. Navigation, range changes, refresh, and Stop
+  must cancel the underlying job, not merely ignore its eventual React
+  state update. Prevent overlapping refreshes and stale responses from
+  overwriting newer ranges.
+- **RG.9 Treat freshness as data** (M) — every cached panel and alert
+  carries source job ID, scheduled time, start/completion time, age,
+  configuration/dataset revision, and last error. Serve last-known-good
+  data with an explicit stale badge; never silently fall back between
+  cached and live semantics. Define page-load and detection-freshness
+  SLOs, then fail health checks when queue delay violates them.
+- **RG.10 Re-budget scheduled searches from live queue evidence** (M)
+  — stagger heavy jobs, remove unnecessary duplicate scans, and keep
+  expensive daily/hourly work out of the alert lane. Detect zero-row,
+  missed, queued, failed, stale, and schema-invalid jobs individually;
+  one sentinel search is insufficient. Add load shedding so a busy
+  workspace degrades panel freshness before it starves Investigator
+  and alert evaluation.
+- **RG.11 Make configuration boot-safe, validated, and atomic** (M) —
+  do not issue default-`otel` queries before pack-scoped KV settings
+  load. Add a versioned runtime schema, migrations, corruption recovery,
+  and an onboarding gate that validates dataset existence, permissions,
+  signal presence, field shape, and recent data before activation.
+  Key capability caches by dataset/config revision. Replace KV
+  read-modify-write races with a serialized settings store or revision
+  check so concurrent toggles cannot lose updates.
+- **RG.12 Make install, upgrade, and uninstall tenant-safe** (L) —
+  remove demo-specific `otel`, `open_telemetry:opentelemetry-demo`, and
+  global default-ruleset mutations from automatic deploy behavior.
+  Generate a least-privilege plan from the chosen signal datasets,
+  show all workspace writes before apply, preserve user-owned fields,
+  and keep an undo journal. If post-install provisioning or canaries
+  fail after `force: true`, automatically roll back the pack and
+  managed resources to the prior known-good revision.
+- **RG.13 Add operator-visible diagnostics without leaking data** (M)
+  — replace swallowed catches and console-only errors with a small
+  typed error taxonomy and diagnostics view: auth/permission, queue,
+  timeout, query parse, malformed response, cache stale, and config
+  invalid. Include correlation/job IDs and remediation, but redact
+  KQL literals, credentials, log bodies, and PII by default. Add
+  lightweight counters for job latency, queue time, cancellations,
+  cache hits, partial panels, and canary status.
+- **RG.14 Bound and sanitize Investigator data flow** (M) — treat log,
+  span, and metric values as untrusted data, not instructions. Cap
+  result bytes as well as rows, allowlist fields sent back to the
+  model, redact likely secrets/PII, and state clearly what Cribl AI
+  receives. Validate tool arguments at runtime, cancel search tools
+  with the investigation, and never report unsupported actions such
+  as notebook saves as successful.
+
+### Test and CI program required by the gate
+
+- **RG.15 Strengthen static and unit gates** (M) — enable TypeScript
+  `strict` and `noUncheckedIndexedAccess`; type-check tests, eval, and
+  deploy/provision scripts; make zero lint warnings the baseline.
+  Add coverage reporting and meaningful branch thresholds for API,
+  settings, KQL serialization, provisioning, alert state, transforms,
+  and Investigator tools. Split the 1–2K-line query/context/page files
+  behind typed domain boundaries as tests are added, rather than
+  continuing to grow monoliths.
+- **RG.16 Add deterministic client/component failure tests** (L) — use
+  a fake Search API/clock to cover queued/running/completed/failed/
+  canceled jobs, 401/403/404/429/5xx, proxy timeout, abort, malformed
+  and truncated NDJSON, pagination boundaries, KV outage/corruption,
+  lookup flap, empty data, partial panels, rapid range changes, and
+  concurrent refresh. Assert stale requests cannot win and missing
+  data cannot be presented as healthy.
+- **RG.17 Add Cribl contract and RBAC tests** (L) — derive endpoint
+  shapes from `openapi.json`; assert all search endpoints use
+  `/m/default_search`; verify app-scoped KV/proxy behavior and every
+  packaged permission. Run a role matrix (installer/admin, normal
+  analyst, read-only user, forbidden user) so client-credential tests
+  cannot mask permissions the real iframe user lacks.
+- **RG.18 Expand the real-host CI lane beyond the shared workspace** (L) —
+  stop replacing the locked production `window.fetch` with a bearer
+  token in the iframe for the authoritative suite. Test through the
+  actual Cribl App host/proxy. The current owner-approved workspace lane
+  runs serialized route, contract, and alert canaries. When a disposable
+  tenant or safe reset mechanism becomes available, add sequential fresh
+  install, legacy upgrade, three distinct signal datasets, wrong/empty schema,
+  every route, provisioning, generated-event round trip, cache
+  freshness, alert exactly-once, Investigator approval/stop, and clean
+  uninstall. Keep the injected-fetch harness only as a fast non-
+  authoritative test double and prevent tokens from entering traces.
+- **RG.19 Add release and recovery drills** (M) — inspect archive
+  contents, install the exact candidate tgz, run smoke/contract/canary
+  checks, then deliberately fail provisioning and verify rollback.
+  Quarterly, rehearse lookup corruption, queue saturation, revoked
+  permissions, KV loss, and bad framework upgrade. Record recovery
+  time and turn each escaped failure into a permanent regression test.
+
+**Resilience gate done =** CI proves fresh install + upgrade on the
+real host, critical boundaries meet coverage targets, every scheduled
+dependency has freshness/schema health, partial failures are visible
+and retryable, queue saturation preserves alert/interactive priority,
+and rollback restores a known-good app without manual workspace repair.
 
 ## Guiding principle: lean on Cribl Search
 
@@ -26,9 +265,9 @@ A second principle joined the first after the June outages:
 can corrupt quietly — KQL generation, provisioning, lookup exports —
 gets a tripwire. We cannot sell detection we can't trust ourselves.
 
-## Strategic posture (revised 2026-06-23)
+## Strategic posture (feature work after the resilience release gate)
 
-Three moves, in order:
+Once the release gate above is green, three moves remain, in order:
 
 1. **Per-signal datasets, then field mapping (P0 / P1)** — the
    forcing function: metrics support is landing now and metrics /

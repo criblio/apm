@@ -8,6 +8,8 @@ import StackedColumnChart, {
 } from '../components/StackedColumnChart';
 import TraceBriefList from '../components/TraceBriefList';
 import StatusBanner from '../components/StatusBanner';
+import ResilienceBoundary from '../components/ResilienceBoundary';
+import PartialFailureBanner from '../components/PartialFailureBanner';
 import MetricsCard, { type MetricsCardRow } from '../components/MetricsCard';
 import SpotlightSection from '../components/SpotlightSection';
 
@@ -25,7 +27,8 @@ import {
   getServiceMetricsBatch,
 } from '../api/search';
 import { runQuery } from '../api/cribl';
-import { getCurrentDataset } from '@cribl/app-utils/dataset';
+import * as Q from '../api/queries';
+import { kqlStringLiteral } from '../api/kqlSafety';
 import { listCachedSvcDetailPanels } from '../api/panelCache';
 import { serviceColor } from '../utils/spans';
 import { previousWindow } from '../utils/timeRange';
@@ -267,6 +270,8 @@ export default function ServiceDetailPage() {
   const [loadingInstances, setLoadingInstances] = useState(true);
   const [loadingDeps, setLoadingDeps] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [partialFailures, setPartialFailures] = useState<Record<string, string>>({});
+  const [retryNonce, setRetryNonce] = useState(0);
   const [notFound, setNotFound] = useState(false);
   const [alertStatus, setAlertStatus] = useState<'ok' | 'pending' | 'firing' | 'resolving'>('ok');
   const [alertHistory, setAlertHistory] = useState<AlertHistoryEntry[]>([]);
@@ -288,6 +293,22 @@ export default function ServiceDetailPage() {
     Map<string, Array<{ t: number; v: number }>> | undefined
   >(undefined);
 
+  const recordPartialFailure = useCallback((panel: string, value: unknown) => {
+    setPartialFailures((cur) => ({
+      ...cur,
+      [panel]: value instanceof Error ? value.message : String(value),
+    }));
+  }, []);
+
+  const clearPartialFailure = useCallback((panel: string) => {
+    setPartialFailures((cur) => {
+      if (!(panel in cur)) return cur;
+      const next = { ...cur };
+      delete next[panel];
+      return next;
+    });
+  }, []);
+
   const fetchAll = useCallback(async () => {
     setError(null);
     setNotFound(false);
@@ -304,8 +325,14 @@ export default function ServiceDetailPage() {
     // part of the cacheable set. Non-fatal on error.
     const prev = previousWindow(range);
     listServiceSummaries(prev.earliest, prev.latest, serviceName)
-      .then((all) => setPrevSummary(all.find((x) => x.service === serviceName) ?? null))
-      .catch(() => setPrevSummary(null));
+      .then((all) => {
+        setPrevSummary(all.find((x) => x.service === serviceName) ?? null);
+        clearPartialFailure('Prior-window comparison');
+      })
+      .catch((err: unknown) => {
+        setPrevSummary(null);
+        recordPartialFailure('Prior-window comparison', err);
+      });
 
     // Status-code mix runs unconditionally — it's not cached in
     // $vt_results today and the cache-fast-path below returns early,
@@ -316,8 +343,14 @@ export default function ServiceDetailPage() {
     // (upstream bug). See
     // docs/sessions/2026-05-20-smooth-climb-misdiagnosis.md.
     getServiceStatusCodeMix(binSeconds, serviceName, range, 'now')
-      .then((rows) => setStatusMix(rows))
-      .catch(() => setStatusMix([]));
+      .then((rows) => {
+        setStatusMix(rows);
+        clearPartialFailure('HTTP status mix');
+      })
+      .catch((err: unknown) => {
+        setStatusMix([]);
+        recordPartialFailure('HTTP status mix', err);
+      });
 
     // Cache-fast path: when the user is on the default -1h range
     // with the stream filter enabled, read all five ServiceDetail
@@ -336,32 +369,45 @@ export default function ServiceDetailPage() {
           setLoadingBuckets(false);
           setOperations(cached.operations);
           setLoadingOps(false);
+          clearPartialFailure('Service time series');
+          clearPartialFailure('Operation summaries');
           if (cached.dependencies) {
             setEdges(cached.dependencies);
             setLoadingDeps(false);
+            clearPartialFailure('Service dependencies');
           } else {
             void getDependencies(range, 'now')
-              .then((e) => setEdges(e))
-              .catch(() => setEdges([]))
+              .then((e) => {
+                setEdges(e);
+                clearPartialFailure('Service dependencies');
+              })
+              .catch((err: unknown) => recordPartialFailure('Service dependencies', err))
               .finally(() => setLoadingDeps(false));
           }
           if (cached.recentErrors && cached.recentErrors.length > 0) {
             setErrorTraces(cached.recentErrors);
             setLoadingErrors(false);
+            clearPartialFailure('Recent error traces');
           } else {
             // Tighten the fallback to -15m instead of the full range.
             // The cache miss means the 5-min scheduled search hasn't
             // caught the recent errors yet; scanning the full -1h
             // range is expensive and the errors we want are recent.
             void listRecentErrorTraces(serviceName, '-15m', 'now')
-              .then((et) => setErrorTraces(et))
-              .catch(() => setErrorTraces([]))
+              .then((et) => {
+                setErrorTraces(et);
+                clearPartialFailure('Recent error traces');
+              })
+              .catch((err: unknown) => recordPartialFailure('Recent error traces', err))
               .finally(() => setLoadingErrors(false));
           }
           // Instances aren't cached — always live.
           void listServiceInstances(serviceName, range, 'now')
-            .then((inst) => setInstances(inst))
-            .catch(() => setInstances([]))
+            .then((inst) => {
+              setInstances(inst);
+              clearPartialFailure('Service instances');
+            })
+            .catch((err: unknown) => recordPartialFailure('Service instances', err))
             .finally(() => setLoadingInstances(false));
           return;
         }
@@ -384,40 +430,58 @@ export default function ServiceDetailPage() {
       .finally(() => setLoadingSummary(false));
 
     getServiceTimeSeries(binSeconds, serviceName, range, 'now')
-      .then((rows) => setBuckets(rows))
-      .catch(() => setBuckets([]))
+      .then((rows) => {
+        setBuckets(rows);
+        clearPartialFailure('Service time series');
+      })
+      .catch((err: unknown) => recordPartialFailure('Service time series', err))
       .finally(() => setLoadingBuckets(false));
 
     listOperationSummaries(serviceName, range, 'now')
-      .then((ops) => setOperations(ops))
-      .catch(() => setOperations([]));
+      .then((ops) => {
+        setOperations(ops);
+        clearPartialFailure('Operation summaries');
+      })
+      .catch((err: unknown) => recordPartialFailure('Operation summaries', err))
+      .finally(() => setLoadingOps(false));
     // Pod uptime — cheap (30m window, one summarize per service)
     // and feeds the Investigator's leak-fingerprint signal.
     listPodUptime(serviceName, '-30m', 'now')
-      .then(setPodUptimes)
-      .catch(() => setPodUptimes([]))
-      .finally(() => setLoadingOps(false));
+      .then((rows) => {
+        setPodUptimes(rows);
+        clearPartialFailure('Pod uptime');
+      })
+      .catch((err: unknown) => recordPartialFailure('Pod uptime', err));
 
     listRecentErrorTraces(serviceName, range, 'now')
-      .then((et) => setErrorTraces(et))
-      .catch(() => setErrorTraces([]))
+      .then((et) => {
+        setErrorTraces(et);
+        clearPartialFailure('Recent error traces');
+      })
+      .catch((err: unknown) => recordPartialFailure('Recent error traces', err))
       .finally(() => setLoadingErrors(false));
 
     getDependencies(range, 'now')
-      .then((e) => setEdges(e))
-      .catch(() => setEdges([]))
+      .then((e) => {
+        setEdges(e);
+        clearPartialFailure('Service dependencies');
+      })
+      .catch((err: unknown) => recordPartialFailure('Service dependencies', err))
       .finally(() => setLoadingDeps(false));
 
     listServiceInstances(serviceName, range, 'now')
-      .then((inst) => setInstances(inst))
-      .catch(() => setInstances([]))
+      .then((inst) => {
+        setInstances(inst);
+        clearPartialFailure('Service instances');
+      })
+      .catch((err: unknown) => recordPartialFailure('Service instances', err))
       .finally(() => setLoadingInstances(false));
 
-  }, [range, serviceName, streamFilterEnabled]);
+  }, [clearPartialFailure, range, recordPartialFailure, serviceName, streamFilterEnabled]);
 
   useEffect(() => {
     void fetchAll();
-  }, [fetchAll]);
+  }, [fetchAll, retryNonce]);
 
   // Alert queries — independent of the time range picker since they
   // use fixed windows. Polled every 30s so the badge picks up a
@@ -427,12 +491,12 @@ export default function ServiceDetailPage() {
   // saw svcDetailAlertBadge timeouts in 5+ scenarios as a result).
   useEffect(() => {
     if (!serviceName) return;
-    const svcEsc = serviceName.replace(/"/g, '\\"');
+    const svcLiteral = kqlStringLiteral(serviceName);
     let cancelled = false;
 
     const refreshAlertStatus = () => {
       runQuery(
-        `dataset="$vt_results" | where jobName == "criblapm__home_alerts" and svc == "${svcEsc}" | sort by _time desc | limit 1 | project alert_status`,
+        `dataset="$vt_results" | where jobName == "criblapm__home_alerts" and svc == ${svcLiteral} | sort by _time desc | limit 1 | project alert_status`,
         '-1h', 'now', 1,
       )
         .then((rows) => {
@@ -441,14 +505,16 @@ export default function ServiceDetailPage() {
           if (['ok', 'pending', 'firing', 'resolving'].includes(status)) {
             setAlertStatus(status as typeof alertStatus);
           }
+          clearPartialFailure('Alert status');
         })
-        .catch(() => {});
+        .catch((err: unknown) => {
+          if (!cancelled) recordPartialFailure('Alert status', err);
+        });
     };
 
     const refreshAlertHistory = () => {
-      const ds = getCurrentDataset().replace(/[^a-zA-Z0-9_-]/g, '');
       runQuery(
-        `dataset="${ds}" | where data_datatype == "criblapm_alert" and svc == "${svcEsc}" | project _time, event_type, signal_type, curr_error_rate, prev_error_rate | sort by _time desc | limit 20`,
+        Q.alertHistory(20, serviceName),
         '-24h', 'now', 20,
       )
         .then((rows) => {
@@ -461,8 +527,11 @@ export default function ServiceDetailPage() {
               ? `Error rate ${(Number(r.curr_error_rate) * 100).toFixed(1)}% (was ${(Number(r.prev_error_rate ?? 0) * 100).toFixed(1)}%)`
               : '',
           })));
+          clearPartialFailure('Alert history');
         })
-        .catch(() => {});
+        .catch((err: unknown) => {
+          if (!cancelled) recordPartialFailure('Alert history', err);
+        });
     };
 
     refreshAlertStatus();
@@ -475,7 +544,7 @@ export default function ServiceDetailPage() {
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [serviceName]);
+  }, [clearPartialFailure, recordPartialFailure, retryNonce, serviceName]);
 
   // Metric cards fire TWO queries in parallel: the catalog (which
   // tells us which rows to render) and a single batched series
@@ -493,14 +562,30 @@ export default function ServiceDetailPage() {
     setCardSeriesByMetric(undefined);
     const binSeconds = binSecondsFor(range);
     Promise.all([
-      listServiceMetricNames(serviceName, range, 'now').catch(() => [] as string[]),
+      listServiceMetricNames(serviceName, range, 'now')
+        .then((list) => {
+          clearPartialFailure('Metric catalog');
+          return list;
+        })
+        .catch((err: unknown) => {
+          recordPartialFailure('Metric catalog', err);
+          return [] as string[];
+        }),
       getServiceMetricsBatch(
         serviceName,
         ALL_CARD_METRICS,
         binSeconds,
         range,
         'now',
-      ).catch(() => new Map<string, Array<{ t: number; v: number }>>()),
+      )
+        .then((map) => {
+          clearPartialFailure('Metric card series');
+          return map;
+        })
+        .catch((err: unknown) => {
+          recordPartialFailure('Metric card series', err);
+          return new Map<string, Array<{ t: number; v: number }>>();
+        }),
     ]).then(([list, map]) => {
       if (cancelled) return;
       setServiceMetricSet(new Set(list));
@@ -509,7 +594,7 @@ export default function ServiceDetailPage() {
     return () => {
       cancelled = true;
     };
-  }, [serviceName, range]);
+  }, [clearPartialFailure, range, recordPartialFailure, retryNonce, serviceName]);
 
   const color = serviceColor(serviceName);
   const rangeMinutes = relativeTimeMs(range) / 60_000;
@@ -926,6 +1011,10 @@ export default function ServiceDetailPage() {
       </div>
 
       {error && <StatusBanner kind="error">{error}</StatusBanner>}
+      <PartialFailureBanner
+        failures={partialFailures}
+        onRetry={() => setRetryNonce((value) => value + 1)}
+      />
 
       <div className={s.hero} style={
         ALERT_STATUS_COLORS[alertStatus]
@@ -1077,6 +1166,7 @@ export default function ServiceDetailPage() {
             Request rate, error rate, latency, and HTTP status mix
           </span>
         </div>
+        <ResilienceBoundary title="Service health charts are unavailable">
         <div className={s.charts}>
           <LineChart
             title="Rate"
@@ -1100,6 +1190,7 @@ export default function ServiceDetailPage() {
             emptyMessage={loadingBuckets ? 'Loading…' : 'No data'}
           />
         </div>
+        </ResilienceBoundary>
         {/* Status-code mix — stacked column chart with ok as the
             baseline (slate) and 4xx / 5xx classes stacked on top
             in distinct colors. Total column height = absolute
@@ -1138,7 +1229,7 @@ export default function ServiceDetailPage() {
           // error rate: values whose error rate stands out (high or
           // low) vs the service average point at WHERE errors are
           // coming from.
-          scopeKql={`tostring(resource.attributes['service.name'])=="${serviceName.replace(/"/g, '\\"')}"`}
+          scopeKql={`tostring(resource.attributes['service.name'])==${kqlStringLiteral(serviceName)}`}
           selectionKql={`tostring(status.code)=="2"`}
           earliest={range}
           selectionNoun="errors"
@@ -1302,8 +1393,8 @@ export default function ServiceDetailPage() {
                               // (pod, caller, peer) is correlated with
                               // the failures.
                               scopeKql={
-                                `tostring(resource.attributes['service.name'])=="${serviceName.replace(/"/g, '\\"')}"` +
-                                ` and name=="${op.operation.replace(/"/g, '\\"')}"`
+                                `tostring(resource.attributes['service.name'])==${kqlStringLiteral(serviceName)}` +
+                                ` and name==${kqlStringLiteral(op.operation)}`
                               }
                               selectionKql={`tostring(status.code)=="2"`}
                               earliest={range}
@@ -1524,6 +1615,7 @@ export default function ServiceDetailPage() {
             Dependency latencies, runtime, and platform metrics
           </span>
         </div>
+        <ResilienceBoundary title="Infrastructure metric cards are unavailable">
         <div className={s.metricCards}>
           <MetricsCard
             title="Dependency latencies"
@@ -1553,6 +1645,7 @@ export default function ServiceDetailPage() {
             seriesByMetric={cardSeriesByMetric}
           />
         </div>
+        </ResilienceBoundary>
       </section>
 
       </>
