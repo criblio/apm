@@ -20,14 +20,22 @@ test('live Cribl accepts the generated-event evaluator and all consumer queries'
   expect(Array.isArray(noise)).toBe(true);
   expect(Array.isArray(deploys)).toBe(true);
 
-  const scheduled = await runQuery(
-    `dataset="$vt_results"
-      | where jobName == "criblapm__home_alerts" and tolong(schema_version) == 1
+  // Assert the durable contract, not the volatile $vt_results cache. The
+  // scheduled search keeps only its last two executions, and an idempotent
+  // same-bucket retry can legitimately produce zero rows; two such retries
+  // temporarily make the cache look empty even though the versioned events
+  // were committed successfully.
+  const durable = await runQuery(
+    `dataset="otel"
+      | where coalesce(tostring(data_datatype), tostring(datatype)) == "criblapm_alert"
+      | where producer == "criblapm__home_alerts" and record_kind == "evaluation"
+      | where tolong(schema_version) == 1
+      | where isnull(is_canary) or tostring(is_canary) != "true"
       | summarize rows=count(), evaluations=dcount(evaluation_id)`,
     '-2h',
     'now',
     10,
   );
-  expect(Number(scheduled[0]?.rows ?? 0)).toBeGreaterThan(0);
-  expect(Number(scheduled[0]?.evaluations ?? 0)).toBeGreaterThan(0);
+  expect(Number(durable[0]?.rows ?? 0)).toBeGreaterThan(0);
+  expect(Number(durable[0]?.evaluations ?? 0)).toBeGreaterThan(0);
 });

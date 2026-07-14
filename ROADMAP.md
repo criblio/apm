@@ -24,6 +24,25 @@ No new feature work should ship ahead of the stop-ship items below.
 The existing per-signal-dataset P0 remains the first feature priority
 after this gate is green.
 
+### 2026-07-14 framework extraction follow-through — v0.11.3
+
+The hardening review identified reusable app-platform behavior that
+should not be maintained independently by every Cribl App. The work is
+split into a reviewable stack so the framework owns generic policy and
+mechanics while APM retains its telemetry-specific behavior.
+
+| Task | Status | Ownership and evidence |
+|---|---|---|
+| FX.1 shared runtime safety primitives | Complete — framework PR #16 | `@cribl/app-utils` owns KQL serialization/read-only validation, the bounded and cancelable Cribl Search job runner, typed failures, strict NDJSON handling, and the generic React resilience boundary. APM retains OTel trace/span validation, UI presentation, and canary policy. Framework tests cover 27 cases; APM's 290 tests pass against the shared implementation. |
+| FX.2 shared release and supply-chain tooling | Complete — framework PR #17 | `@cribl/app-tooling` owns deterministic packaging, archive inspection, exact candidate deployment, release evidence/SBOM/checksums, action pinning, license policy, and secret checks. A SHA-pinned composite action gives apps one CI/release build path. Tooling tests cover reproducible archives and install/upgrade behavior without `force`. |
+| FX.3 consume framework from APM | Complete — APM PR #107 | Deleted 1,100+ lines of copied infrastructure, retained only thin APM wrappers, and pinned both the action and cloned framework to merged framework commit `1d10110da4b12c10f66e95ce54f9658544ea3d07`. The package rebuilt twice at SHA-256 `808d754df1e8bf0ff68c9fc0e6cbc0d2d7b04878f67f733d1250aedf90bddc2c`; that exact tgz passed a non-force 0.11.2 → 0.11.3 live upgrade, reconciliation canaries, and all five authoritative hosted smoke tests locally and again in serialized PR CI run `29372182013`. |
+| FX.4 migrate other framework consumers | Pending, not release-blocking | Adopt the packages in Customer Analytics and future Cribl Apps after framework PRs #16/#17 merge. Do not overwrite Customer Analytics' existing uncommitted `scripts/deploy.mjs`; reconcile that work in its own reviewed branch. |
+
+**Required merge order:** framework PR #16, framework PR #17, APM
+hardening PR #106, then the stacked APM v0.11.3 consumer PR. Do not
+squash the app PRs together unless the live upgrade evidence is
+re-created for the resulting release candidate.
+
 ### 2026-07-14 burn-down result — v0.11.2
 
 | Gate | Status | Verification evidence |
