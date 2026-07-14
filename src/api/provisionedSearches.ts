@@ -45,7 +45,6 @@ export const CRIBLAPM_PREFIX = 'criblapm__';
  * intentionally — lookup names can't start with the double-
  * underscore pattern without looking weird in the UI. */
 export const OP_BASELINES_LOOKUP = 'criblapm_op_baselines';
-export const ALERT_STATES_LOOKUP = 'criblapm_alert_states';
 export const ALERT_PREV_LOOKUP = 'criblapm_alert_prev';
 /** Trace-originator classification lookup — joined by the error
  * filter to tag each error span with the kind of actor that
@@ -86,10 +85,6 @@ export const ERROR_RATE_HISTORY_LOOKUP = 'criblapm_error_rate_history';
  * "Unknown lookup table name"). `print` sidesteps the branch by
  * always producing exactly one row. */
 export const SEED_LOOKUPS: SeedLookup[] = [
-  {
-    name: ALERT_STATES_LOOKUP,
-    seedQuery: `print alert_id="__init__", alert_status="ok", consecutive_bad=tolong(0), consecutive_good=tolong(0), fire_count=tolong(0) | export mode=overwrite description="Cribl APM - alert state init" to lookup ${ALERT_STATES_LOOKUP}`,
-  },
   {
     name: ALERT_PREV_LOOKUP,
     seedQuery: `print svc="__init__", prev_req=tolong(0), prev_err=tolong(0), prev_err_rate=todouble(0.0), prev_p95_us=tolong(0) | export mode=overwrite description="Cribl APM - prev window init" to lookup ${ALERT_PREV_LOOKUP}`,
@@ -323,17 +318,13 @@ export function getProvisioningPlan(): ProvisionedSearch[] {
       sampleRate: 1,
       schedule: { ...panelCadence },
     },
-    // ── Alert pipeline: prev summary → evaluator → state export
+    // ── Alert pipeline: prev summary → immutable evaluator commit
     //
-    // Three searches run in sequence each cadence cycle:
-    //  1. prev_summary: exports previous-window metrics to a lookup
-    //  2. alert_eval: reads current from $vt_results + prev from
-    //     lookup, applies state machine, outputs to $vt_results
-    //  3. alert_state_export: same as eval but exports state to
-    //     lookup for the next cycle
-    //
-    // The evaluator runs 1 minute after the summaries so their
-    // results are available.
+    // prev_summary maintains the comparison baseline. The evaluator
+    // reads its prior state from immutable generated events, emits one
+    // versioned snapshot per alert, and uses send tee=true so that the
+    // exact committed rows also populate $vt_results for the UI. No
+    // same-cron consumer can race a mutable state lookup.
     {
       id: 'criblapm__home_alerts_prev',
       name: 'Cribl APM - previous window summary',
@@ -349,34 +340,12 @@ export function getProvisioningPlan(): ProvisionedSearch[] {
       id: 'criblapm__home_alerts',
       name: 'Cribl APM - alert evaluator',
       description:
-        'Cribl APM: queries spans over a -15m window for curr_requests/errors (fresher than the home_service_summary -1h dilution), joins previous from lookup, computes health + debounce state machine. Output includes alert_status (ok/pending/firing/resolving) and transitioned_to.',
+        'Cribl APM: computes health and debounce state from the latest immutable evaluator event, emits a versioned snapshot through Local Search, and retains that exact commit in $vt_results via send tee=true.',
       query: Q.alertEvaluator(),
       // -15m window so fresh fault-injection bursts on low-traffic
       // services aren't diluted by healthy traffic from the prior
       // 53 minutes. Baseline (prev) is still -2h to -1h via the
       // criblapm_alert_prev lookup.
-      earliest: '-15m',
-      latest: 'now',
-      sampleRate: 1,
-      schedule: { ...evalCadence },
-    },
-    {
-      id: 'criblapm__alert_state_export',
-      name: 'Cribl APM - alert state export',
-      description:
-        'Cribl APM: exports alert state machine columns to the criblapm_alert_states lookup for persistence across evaluation cycles.',
-      query: Q.alertEvaluatorExportState(),
-      earliest: '-15m',
-      latest: 'now',
-      sampleRate: 1,
-      schedule: { ...evalCadence },
-    },
-    {
-      id: 'criblapm__alert_history_send',
-      name: 'Cribl APM - alert history send',
-      description:
-        'Cribl APM: sends alert state transitions (firing/resolved) back to the dataset as searchable history via | send group="search".',
-      query: Q.alertHistorySend(),
       earliest: '-15m',
       latest: 'now',
       sampleRate: 1,
@@ -512,9 +481,8 @@ export function getProvisioningPlan(): ProvisionedSearch[] {
     },
     // ── Noise budget (P1.1) ─────────────────────────────────
     //
-    // Aggregates the alert-history events (criblapm__alert_history_send
-    // → datatype="criblapm_alert" rows in the dataset) into per-(svc,
-    // day) fire counts. Read at provision-time by `npm run eval` to
+    // Aggregates transition snapshots emitted by criblapm__home_alerts
+    // into per-(svc, day) fire counts. Read at provision-time by `npm run eval` to
     // include "fires-per-week on flag-off traffic" alongside scenario
     // recall, so threshold changes are accepted only when both
     // numbers move in the right direction. Daily cadence — the

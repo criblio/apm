@@ -21,6 +21,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import TraceLogsView from '../components/TraceLogsView';
 import TimeRangePicker from '../components/TimeRangePicker';
 import StatusBanner from '../components/StatusBanner';
+import PartialFailureBanner from '../components/PartialFailureBanner';
 import { listLogServices, searchLogs } from '../api/search';
 import type { TraceLogEntry } from '../api/types';
 import s from './LogsPage.module.css';
@@ -51,6 +52,8 @@ export default function LogsPage() {
   const [logs, setLogs] = useState<TraceLogEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [serviceCatalogFailure, setServiceCatalogFailure] = useState<string | null>(null);
+  const [serviceCatalogRetry, setServiceCatalogRetry] = useState(0);
   // A separate "committed" version of the body query — only updates on
   // submit so users can type freely without triggering a query per keystroke.
   const [committedBody, setCommittedBody] = useState('');
@@ -58,17 +61,21 @@ export default function LogsPage() {
   // Service dropdown populates from distinct log-emitting services.
   useEffect(() => {
     let cancelled = false;
+    setServiceCatalogFailure(null);
     listLogServices(range)
       .then((svcs) => {
         if (!cancelled) setServices(svcs);
       })
-      .catch(() => {
-        if (!cancelled) setServices([]);
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          setServices([]);
+          setServiceCatalogFailure(err instanceof Error ? err.message : String(err));
+        }
       });
     return () => {
       cancelled = true;
     };
-  }, [range]);
+  }, [range, serviceCatalogRetry]);
 
   const runSearch = useCallback(async () => {
     setLoading(true);
@@ -216,6 +223,10 @@ export default function LogsPage() {
         </div>
 
         {error && <StatusBanner kind="error">{error}</StatusBanner>}
+        <PartialFailureBanner
+          failures={serviceCatalogFailure ? { 'Log service catalog': serviceCatalogFailure } : {}}
+          onRetry={() => setServiceCatalogRetry((value) => value + 1)}
+        />
 
         <TraceLogsView
           logs={logs}

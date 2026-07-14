@@ -1,14 +1,19 @@
 {
   "name": "apm",
   "private": true,
-  "version": "0.11.0",
+  "version": "0.11.2",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "lint": "eslint .",
+    "lint": "eslint . --max-warnings=0",
     "preview": "vite preview",
     "package": "npm run build && node scripts/package.mjs",
+    "verify": "npm run lint && npm test && npx tsc --noEmit",
+    "audit": "npm audit --audit-level=moderate && npm audit --omit=dev --audit-level=low",
+    "security:static": "node scripts/check-actions-pinned.mjs && node scripts/check-licenses.mjs && node scripts/secret-scan.mjs",
+    "release:evidence": "node scripts/release-artifacts.mjs",
+    "inspect:pack": "node scripts/inspect-pack.mjs",
     "deploy": "node scripts/deploy.mjs",
     "provision": "tsx scripts/provision.ts",
     "browser:smoke": "node scripts/browser-smoke.js",
@@ -60,6 +65,12 @@
     "typescript-eslint": "^8.58.0",
     "vite": "^8.0.4",
     "vitest": "^4.1.5"
+  },
+  "overrides": {
+    "esbuild": "0.28.1"
+  },
+  "engines": {
+    "node": ">=22.13.0"
   },
   "displayName": "Cribl APM",
   "description": "Application performance monitoring on top of Cribl Search — traces, logs, and metrics from the OpenTelemetry demo.",

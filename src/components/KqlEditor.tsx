@@ -1,4 +1,5 @@
 import { useCallback, useId, useState } from 'react';
+import { assertKqlPredicate } from '../api/kqlSafety';
 import s from './KqlEditor.module.css';
 
 interface Props {
@@ -35,17 +36,24 @@ export default function KqlEditor({
 }: Props) {
   const id = useId();
   const [draft, setDraft] = useState(value);
+  const [validationError, setValidationError] = useState<string | null>(null);
 
   const handleChange = useCallback(
     (next: string) => {
       setDraft(next);
+      setValidationError(null);
       onChange(next);
     },
     [onChange],
   );
 
   const apply = useCallback(() => {
-    onApply(draft);
+    try {
+      onApply(assertKqlPredicate(draft));
+      setValidationError(null);
+    } catch (error) {
+      setValidationError(error instanceof Error ? error.message : String(error));
+    }
   }, [draft, onApply]);
 
   const handleKey = useCallback(
@@ -78,7 +86,9 @@ export default function KqlEditor({
         placeholder={`tostring(attributes['http.url']) matches regex "/api/v[0-9]+/.*"`}
         disabled={disabled}
         aria-label="Raw KQL predicate"
+        aria-invalid={validationError ? true : undefined}
       />
+      {validationError && <p className={s.helper} role="alert">{validationError}</p>}
       <div className={s.actions}>
         <span className={s.hint}>Ctrl/⌘+Enter to apply</span>
         <button

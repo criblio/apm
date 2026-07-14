@@ -33,6 +33,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import LineChart, { type LineSeries } from '../components/LineChart';
 import TimeRangePicker from '../components/TimeRangePicker';
 import StatusBanner from '../components/StatusBanner';
+import PartialFailureBanner from '../components/PartialFailureBanner';
+import ResilienceBoundary from '../components/ResilienceBoundary';
 import {
   listMetrics,
   listMetricServices,
@@ -165,6 +167,8 @@ export default function MetricsPage() {
   const [series, setSeries] = useState<MetricSeries | null>(null);
   const [chartLoading, setChartLoading] = useState(false);
   const [chartError, setChartError] = useState<string | null>(null);
+  const [contextFailures, setContextFailures] = useState<Record<string, string>>({});
+  const [contextRetry, setContextRetry] = useState(0);
 
   // Populate the metric catalog whenever the range changes.
   useEffect(() => {
@@ -204,6 +208,7 @@ export default function MetricsPage() {
     setGroupBy('');
     setUserPickedAgg(false);
     setInfo(null);
+    setContextFailures({});
 
     void listMetricServices(selected, range, 'now')
       .then((list) => {
@@ -211,8 +216,14 @@ export default function MetricsPage() {
         setServices(list);
         if (service && !list.includes(service)) setService('');
       })
-      .catch(() => {
-        if (!cancelled) setServices([]);
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          setServices([]);
+          setContextFailures((cur) => ({
+            ...cur,
+            'Metric service catalog': err instanceof Error ? err.message : String(err),
+          }));
+        }
       });
 
     void getMetricInfo(selected, range, 'now')
@@ -226,15 +237,21 @@ export default function MetricsPage() {
           return defaultAggForType(metricInfo.type);
         });
       })
-      .catch(() => {
-        if (!cancelled) setInfo({ name: selected, type: 'unknown', dimensions: [] });
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          setInfo({ name: selected, type: 'unknown', dimensions: [] });
+          setContextFailures((cur) => ({
+            ...cur,
+            'Metric metadata': err instanceof Error ? err.message : String(err),
+          }));
+        }
       });
 
     return () => {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selected, range]);
+  }, [selected, range, contextRetry]);
 
   // Fetch chart data when any axis input changes.
   const fetchSeries = useCallback(async () => {
@@ -506,6 +523,10 @@ export default function MetricsPage() {
 
         {metricsError && <StatusBanner kind="error">{metricsError}</StatusBanner>}
         {chartError && <StatusBanner kind="error">{chartError}</StatusBanner>}
+        <PartialFailureBanner
+          failures={contextFailures}
+          onRetry={() => setContextRetry((value) => value + 1)}
+        />
 
         {selected && (
           <div className={s.metricHeader}>
@@ -555,19 +576,21 @@ export default function MetricsPage() {
         )}
 
         {selected && (
-          <LineChart
-            title={selected}
-            subtitle={`${agg}${service ? ` · ${service}` : ''}${groupBy ? ` · by ${groupBy}` : ''}`}
-            series={chartSeries}
-            yFormat={(v) => formatMetricValue(selected, agg, v)}
-            emptyMessage={
-              chartLoading
-                ? 'Loading…'
-                : chartError
-                  ? 'Query failed'
-                  : 'No data for this metric in the selected range.'
-            }
-          />
+          <ResilienceBoundary title="Metric chart is unavailable">
+            <LineChart
+              title={selected}
+              subtitle={`${agg}${service ? ` · ${service}` : ''}${groupBy ? ` · by ${groupBy}` : ''}`}
+              series={chartSeries}
+              yFormat={(v) => formatMetricValue(selected, agg, v)}
+              emptyMessage={
+                chartLoading
+                  ? 'Loading…'
+                  : chartError
+                    ? 'Query failed'
+                    : 'No data for this metric in the selected range.'
+              }
+            />
+          </ResilienceBoundary>
         )}
 
         {!selected && !metricsLoading && (

@@ -6,6 +6,7 @@ import TimeRangePicker from '../components/TimeRangePicker';
 import { binSecondsFor } from '../components/timeRanges';
 import Sparkline from '../components/Sparkline';
 import StatusBanner from '../components/StatusBanner';
+import PartialFailureBanner from '../components/PartialFailureBanner';
 import TraceClassList, { type ClassItem } from '../components/TraceClassList';
 import OperationAnomalyList from '../components/OperationAnomalyList';
 import {
@@ -180,6 +181,7 @@ export default function ServicesListPage() {
   const [loadingAnomalies, setLoadingAnomalies] = useState(true);
   const [panelCacheUpdatedMs, setPanelCacheUpdatedMs] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [partialFailures, setPartialFailures] = useState<Record<string, string>>({});
   const [refreshMs, setRefreshMs] = useState<number>(DEFAULT_REFRESH_MS);
   const [sort, setSort] = useState<SortState>({ key: 'requests', dir: 'desc' });
   const [lastRefresh, setLastRefresh] = useState<number>(() => Date.now());
@@ -187,6 +189,13 @@ export default function ServicesListPage() {
 
   const fetchAll = useCallback(async () => {
     setError(null);
+    setPartialFailures({});
+    const recordFailure = (panel: string, value: unknown) => {
+      setPartialFailures((cur) => ({
+        ...cur,
+        [panel]: value instanceof Error ? value.message : String(value),
+      }));
+    };
     const binSeconds = binSecondsFor(range);
     setLoadingSummaries(true);
     setLoadingBuckets(true);
@@ -198,15 +207,15 @@ export default function ServicesListPage() {
     const prev = previousWindow(range);
     listServiceSummaries(prev.earliest, prev.latest)
       .then((r) => setPrevSummaries(r))
-      .catch(() => setPrevSummaries([]));
+      .catch((err: unknown) => recordFailure('Prior-window comparison', err));
 
     getDependencies(range, 'now')
       .then((r) => setEdges(r))
-      .catch(() => setEdges([]));
+      .catch((err: unknown) => recordFailure('Service dependencies', err));
 
     listOperationAnomalies(range, 'now')
       .then((r) => setAnomalies(r))
-      .catch(() => setAnomalies([]))
+      .catch((err: unknown) => recordFailure('Operation anomalies', err))
       .finally(() => setLoadingAnomalies(false));
 
     if (range === '-1h' && streamFilterEnabled) {
@@ -227,7 +236,7 @@ export default function ServicesListPage() {
           } else {
             void listErrorClasses(range, 'now')
               .then((r) => setErrorClasses(r))
-              .catch(() => setErrorClasses([]))
+              .catch((err: unknown) => recordFailure('Error trace classes', err))
               .finally(() => setLoadingErrors(false));
           }
           setLastRefresh(Date.now());
@@ -246,17 +255,17 @@ export default function ServicesListPage() {
 
     const pBuckets = getServiceTimeSeries(binSeconds, undefined, range, 'now')
       .then((r) => setBuckets(r))
-      .catch(() => setBuckets([]))
+      .catch((err: unknown) => recordFailure('Service time series', err))
       .finally(() => setLoadingBuckets(false));
 
     const pSlow = listSlowTraceClasses(range, 'now')
       .then((r) => setSlowClasses(r))
-      .catch(() => setSlowClasses([]))
+      .catch((err: unknown) => recordFailure('Slow trace classes', err))
       .finally(() => setLoadingSlow(false));
 
     const pErrors = listErrorClasses(range, 'now')
       .then((r) => setErrorClasses(r))
-      .catch(() => setErrorClasses([]))
+      .catch((err: unknown) => recordFailure('Error trace classes', err))
       .finally(() => setLoadingErrors(false));
 
     await Promise.allSettled([pSummaries, pBuckets, pSlow, pErrors]);
@@ -395,6 +404,7 @@ export default function ServicesListPage() {
       </div>
 
       {error && <StatusBanner kind="error">{error}</StatusBanner>}
+      <PartialFailureBanner failures={partialFailures} onRetry={() => void fetchAll()} />
 
       <div className={s.catalog}>
         <div className={s.catalogHeader}>

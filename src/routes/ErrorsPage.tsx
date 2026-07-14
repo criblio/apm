@@ -11,6 +11,7 @@ import { useStreamFilterEnabled } from '../hooks/useStreamFilter';
 import { serviceColor } from '../utils/spans';
 import { useRangeParam } from '../hooks/useRangeParam';
 import type { ErrorClass } from '../api/types';
+import { kqlStringLiteral } from '../api/kqlSafety';
 import s from './ErrorsPage.module.css';
 
 const DEFAULT_RANGE = '-1h';
@@ -40,11 +41,9 @@ function errorKey(ec: ErrorClass): string {
  * attributes (rpc.method etc.) that don't move when the error fires.
  */
 function spotlightScopeFor(ec: ErrorClass): string {
-  const svc = ec.service.replace(/"/g, '\\"');
-  const op = ec.operation.replace(/"/g, '\\"');
   return (
-    `tostring(resource.attributes['service.name'])=="${svc}"` +
-    ` and name=="${op}"`
+    `tostring(resource.attributes['service.name'])==${kqlStringLiteral(ec.service)}` +
+    ` and name==${kqlStringLiteral(ec.operation)}`
   );
 }
 

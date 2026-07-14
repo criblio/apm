@@ -38,7 +38,7 @@ export type TransitionEvent = '' | 'firing' | 'resolved';
 
 export interface AlertStateInput {
   /** Status from the prior evaluation cycle (read from the
-   *  criblapm_alert_states lookup; `ok` if no prior row). */
+   *  latest immutable evaluation event; `ok` if no prior row). */
   prev_status: AlertStatus;
   /** Did the current evaluation cycle classify this row as bad? */
   is_bad: boolean;

@@ -19,15 +19,16 @@
  */
 import { getCurrentDataset } from '@cribl/app-utils/dataset';
 import { runQuery } from './cribl';
+import { kqlDatasetId } from './kqlSafety';
 
 /** Guard against injection when embedding the runtime dataset name
  *  in a query literal. Same character-class the query builders use.
  *  Empty string is not valid here — callers must check upstream. */
 function safeDataset(): string {
-  return getCurrentDataset().replace(/[^a-zA-Z0-9_-]/g, '');
+  return kqlDatasetId(getCurrentDataset());
 }
 
-let cached: Promise<boolean> | null = null;
+const cachedByDataset = new Map<string, Promise<boolean>>();
 
 /**
  * Probe the otel dataset for a single span and check whether
@@ -40,11 +41,13 @@ let cached: Promise<boolean> | null = null;
  * return false so callers safely default to the dotted path.
  */
 export function flatFieldsAvailable(): Promise<boolean> {
+  const dataset = safeDataset();
+  let cached = cachedByDataset.get(dataset);
   if (!cached) {
     cached = (async () => {
       try {
         const rows = await runQuery(
-          `dataset="${safeDataset()}" | where isnotnull(end_time_unix_nano) | take 1 | project sn=service_name, sc=status_code`,
+          `dataset="${dataset}" | where isnotnull(end_time_unix_nano) | take 1 | project sn=service_name, sc=status_code`,
           '-10m',
           'now',
           1,
@@ -55,6 +58,7 @@ export function flatFieldsAvailable(): Promise<boolean> {
         return false;
       }
     })();
+    cachedByDataset.set(dataset, cached);
   }
   return cached;
 }
@@ -63,5 +67,5 @@ export function flatFieldsAvailable(): Promise<boolean> {
  * the provisioner from Settings — they want the app to pick up
  * the new acceleration state without a page reload. */
 export function resetFlatFieldsCache(): void {
-  cached = null;
+  cachedByDataset.clear();
 }

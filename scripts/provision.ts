@@ -190,6 +190,7 @@ async function main(): Promise<void> {
   const tickFor = (ok: boolean) => (ok ? '✓' : '✗');
   console.log(`${tickFor(canary.sentinel.ok)}   sentinel:    ${canary.sentinel.message}`);
   console.log(`${tickFor(canary.lookupJoin.ok)}   lookup-join: ${canary.lookupJoin.message}`);
+  console.log(`${tickFor(canary.eventContract.ok)}   event-contract: ${canary.eventContract.message}`);
   if (!canary.ok) {
     console.error('▶ Canary FAILED — reconcile applied but workspace is unhealthy.');
     process.exit(1);

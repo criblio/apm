@@ -27,7 +27,7 @@
  * every tick. The eslint rule flags it but the pattern is intentional.
  */
 /* eslint-disable react-hooks/refs */
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import NodeTooltip from './NodeTooltip';
 import EdgeTooltip from './EdgeTooltip';
 import ZoomControls from './ZoomControls';
@@ -175,12 +175,12 @@ export default function DependencyGraph({
   // summary, only a prior-window one) get sized off their last-known
   // volume so they don't collapse to the minimum radius and look
   // like "always idle" services.
-  function nodeRadius(node: SimNode): number {
+  const nodeRadius = useCallback((node: SimNode): number => {
     const summary = services.get(node.id);
     const prev = prevServices?.get(node.id);
     const volume = summary?.requests ?? prev?.requests ?? node.size;
     return Math.max(10, Math.min(34, 10 + Math.log10(volume + 1) * 6));
-  }
+  }, [services, prevServices]);
 
   const { simNodesRef, simLinksRef, tick, pinNode, releaseNode } = useForceLayout({
     nodes,
@@ -213,7 +213,7 @@ export default function DependencyGraph({
       if (n.y != null) { minY = Math.min(minY, n.y - r); maxY = Math.max(maxY, n.y + r); }
     }
     if (isFinite(minX)) fitToBounds({ minX, minY, maxX, maxY });
-  }, [tick, fitToBounds, simNodesRef]);
+  }, [tick, fitToBounds, simNodesRef, nodeRadius]);
 
   const focusId = pinned ?? hovered;
   const focusNode = focusId

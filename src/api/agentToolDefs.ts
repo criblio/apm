@@ -56,7 +56,8 @@ export const APM_TOOL_DEFINITIONS: AgentToolDefinition[] = [
         },
         confirmBeforeRunning: {
           type: 'boolean',
-          description: 'Whether to confirm with the user before running the search.',
+          description:
+            'Compatibility hint only. Cribl APM independently requires human approval for every run_search call.',
           default: true,
         },
       },

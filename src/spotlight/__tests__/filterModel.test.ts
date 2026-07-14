@@ -44,10 +44,10 @@ describe('rowToKql', () => {
     ).toBe(`tostring(attributes['http.target']) == "a\\"b"`);
   });
 
-  it('escapes single quotes in the attribute name', () => {
-    expect(
+  it('rejects attribute names that could escape bracket access', () => {
+    expect(() =>
       rowToKql({ id: '1', attr: `weird'attr`, op: '=', value: 'x' }),
-    ).toBe(`tostring(attributes['weird\\'attr']) == "x"`);
+    ).toThrow('field name');
   });
 });
 

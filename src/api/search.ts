@@ -3,7 +3,6 @@
  * into the verbs the UI calls.
  */
 import { runQuery } from './cribl';
-import { getCurrentDataset } from '@cribl/app-utils/dataset';
 import { listCachedMetricCatalog } from './panelCache';
 import { applyFilterRulesToRaw, DEFAULT_FILTER_RULES } from './errorFilter';
 import * as Q from './queries';
@@ -181,15 +180,24 @@ export async function getFacetDistribution(
    * queries settle.
    */
   onAttr?: (attr: string, rows: AttrValueBucket[]) => void,
+  /** Called for each failed attribute query so callers can distinguish
+   *  "no values" from "the backend did not answer". */
+  onError?: (attr: string, error: unknown) => void,
 ): Promise<Map<string, AttrValueBucket[]>> {
   const out = new Map<string, AttrValueBucket[]>();
   await runWithLimit(attrs, SPOTLIGHT_CONCURRENCY, async (attr) => {
-    const rows = await runQuery(
-      Q.attrValueDistribution(attr, predicateKql, topPerAttr),
-      earliest,
-      latest,
-      topPerAttr,
-    ).catch(() => [] as Record<string, unknown>[]);
+    let rows: Record<string, unknown>[];
+    try {
+      rows = await runQuery(
+        Q.attrValueDistribution(attr, predicateKql, topPerAttr),
+        earliest,
+        latest,
+        topPerAttr,
+      );
+    } catch (error) {
+      onError?.(attr, error);
+      rows = [];
+    }
     const buckets = rows.map((r) => ({
       attrName: String(r.attr_name ?? attr),
       attrValue: String(r.attr_value ?? ''),
@@ -228,6 +236,8 @@ export interface SpotlightDiffOptions {
   scopeKql?: string;
   /** Streaming hook (same shape as getFacetDistribution's). */
   onAttr?: (attr: string, rows: SpotlightBucket[]) => void;
+  /** Reports individual attribute failures without discarding successful results. */
+  onError?: (attr: string, error: unknown) => void;
 }
 
 export async function getSpotlightDiff(
@@ -237,15 +247,21 @@ export async function getSpotlightDiff(
   latest = 'now',
   options: SpotlightDiffOptions = {},
 ): Promise<Map<string, SpotlightBucket[]>> {
-  const { topPerAttr = 20, scopeKql, onAttr } = options;
+  const { topPerAttr = 20, scopeKql, onAttr, onError } = options;
   const out = new Map<string, SpotlightBucket[]>();
   await runWithLimit(attrs, SPOTLIGHT_CONCURRENCY, async (attr) => {
-    const rows = await runQuery(
-      Q.spotlightAttrDiff(attr, selectionKql, topPerAttr, scopeKql),
-      earliest,
-      latest,
-      topPerAttr,
-    ).catch(() => [] as Record<string, unknown>[]);
+    let rows: Record<string, unknown>[];
+    try {
+      rows = await runQuery(
+        Q.spotlightAttrDiff(attr, selectionKql, topPerAttr, scopeKql),
+        earliest,
+        latest,
+        topPerAttr,
+      );
+    } catch (error) {
+      onError?.(attr, error);
+      rows = [];
+    }
     const buckets = rows.map((r) => ({
       attrName: String(r.attr_name ?? attr),
       attrValue: String(r.attr_value ?? ''),
@@ -627,9 +643,8 @@ export interface RecentDeploy {
 }
 
 /**
- * Read recent deploy events from the dataset. Reads
- * datatype="criblapm_deploy" rows emitted by the criblapm__deploy_events
- * scheduled search. Used by the Investigator preflight to enrich
+ * Read recent versioned deploy events emitted by the
+ * criblapm__deploy_events scheduled search. Used by the Investigator preflight to enrich
  * the seed context with "service X deployed Nm ago" lines so the
  * agent considers deploy-correlation when investigating.
  *
@@ -667,17 +682,7 @@ export async function listRecentDeploys(
           : Infinity,
     }));
   }
-  const kql = `dataset="${getCurrentDataset().replace(/[^a-zA-Z0-9_-]/g, '')}"
-    | where datatype == "criblapm_deploy"
-    | extend svc=tostring(svc), version=tostring(version),
-             first_seen_num=toreal(first_seen),
-             n_spans_num=tolong(n_spans)
-    | summarize first_seen_ms=max(first_seen_num)*1000,
-                n_spans_total=max(n_spans_num)
-      by svc, version
-    | sort by first_seen_ms desc
-    | limit 25`;
-  const rows = await runQuery(kql, earliest, latest, 50);
+  const rows = await runQuery(Q.recentDeployEvents(25), earliest, latest, 50);
   const mapped: RecentDeploy[] = rows.map((r) => {
     const firstSeenMs = Number(r.first_seen_ms ?? 0);
     const ageMinutes =

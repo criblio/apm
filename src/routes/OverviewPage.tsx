@@ -4,6 +4,8 @@ import { Button, Card, Tag, type TagColor } from '@capra/core';
 import TimeRangePicker from '../components/TimeRangePicker';
 import StatusBanner from '../components/StatusBanner';
 import DetectedIssuesPanel from '../components/DetectedIssuesPanel';
+import ResilienceBoundary from '../components/ResilienceBoundary';
+import PartialFailureBanner from '../components/PartialFailureBanner';
 import {
   listServiceSummaries,
   listOperationAnomalies,
@@ -11,7 +13,7 @@ import {
 } from '../api/search';
 import { listCachedHomePanels } from '../api/panelCache';
 import { runQuery } from '../api/cribl';
-import { getCurrentDataset } from '@cribl/app-utils/dataset';
+import * as Q from '../api/queries';
 import { serviceColor } from '../utils/spans';
 import { serviceHealth, healthRowBg } from '../utils/health';
 import { buildDetectedIssues, buildDetectedIssuesFromCache } from '../utils/detectedIssues';
@@ -82,34 +84,43 @@ export default function OverviewPage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [partialFailures, setPartialFailures] = useState<Record<string, string>>({});
   const streamFilterEnabled = useStreamFilterEnabled();
   const hasDataRef = useRef(false);
 
   // Alert history panel — same query in the fast (cache-hit) and
   // slow (live) branches below. Built once per call so we pick up
   // the current dataset even if the user just changed it in Settings.
-  const recentAlertsQuery = () => {
-    const ds = getCurrentDataset().replace(/[^a-zA-Z0-9_-]/g, '');
-    return `dataset="${ds}" | where data_datatype == "criblapm_alert" | project _time, event_type, svc, signal_type | sort by _time desc | limit 5`;
-  };
+  const recentAlertsQuery = () => Q.alertHistory(5);
 
   const fetchAll = useCallback(async () => {
     setRefreshing(true);
     setError(null);
+    setPartialFailures({});
+    if (range !== DEFAULT_RANGE) setCachedIssues(null);
     if (!hasDataRef.current) setLoading(true);
 
     const prev = previousWindow(range);
     listServiceSummaries(prev.earliest, prev.latest)
       .then((r) => setPrevSummaries(r))
-      .catch(() => setPrevSummaries([]));
+      .catch((e: unknown) => setPartialFailures((current) => ({
+        ...current,
+        'Previous-window comparison': e instanceof Error ? e.message : String(e),
+      })));
 
     getDependencies(range, 'now')
       .then((r) => setEdges(r))
-      .catch(() => setEdges([]));
+      .catch((e: unknown) => setPartialFailures((current) => ({
+        ...current,
+        Dependencies: e instanceof Error ? e.message : String(e),
+      })));
 
     listOperationAnomalies(range, 'now')
       .then((r) => setAnomalies(r))
-      .catch(() => setAnomalies([]));
+      .catch((e: unknown) => setPartialFailures((current) => ({
+        ...current,
+        'Latency anomalies': e instanceof Error ? e.message : String(e),
+      })));
 
     // Cache-fast path
     if (range === '-1h' && streamFilterEnabled) {
@@ -133,7 +144,10 @@ export default function OverviewPage() {
             eventType: String(r.event_type ?? ''),
             service: String(r.svc ?? ''),
             signalType: String(r.signal_type ?? ''),
-          })))).catch(() => {});
+          })))).catch((e: unknown) => setPartialFailures((current) => ({
+            ...current,
+            'Recent alert history': e instanceof Error ? e.message : String(e),
+          })));
           return;
         }
       } catch { /* fall through */ }
@@ -159,7 +173,10 @@ export default function OverviewPage() {
       eventType: String(r.event_type ?? ''),
       service: String(r.svc ?? ''),
       signalType: String(r.signal_type ?? ''),
-    })))).catch(() => {});
+    })))).catch((e: unknown) => setPartialFailures((current) => ({
+      ...current,
+      'Recent alert history': e instanceof Error ? e.message : String(e),
+    })));
   }, [range, streamFilterEnabled]);
 
   useEffect(() => { void fetchAll(); }, [fetchAll]);
@@ -230,12 +247,15 @@ export default function OverviewPage() {
 
       {refreshing && <div className={s.refreshBar} />}
       {error && <StatusBanner kind="error">{error}</StatusBanner>}
+      <PartialFailureBanner failures={partialFailures} onRetry={() => void fetchAll()} />
 
-      <DetectedIssuesPanel
-        issues={detectedIssues}
-        loading={loading}
-        lookback={range}
-      />
+      <ResilienceBoundary title="Detected Issues panel is unavailable">
+        <DetectedIssuesPanel
+          issues={detectedIssues}
+          loading={loading}
+          lookback={range}
+        />
+      </ResilienceBoundary>
 
       {/* Key metrics */}
       {!loading && (

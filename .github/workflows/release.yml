@@ -7,19 +7,17 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 jobs:
   release:
     runs-on: ubuntu-latest
+    concurrency:
+      group: apm-live-validation-${{ github.repository }}
+      cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v4
-      - name: Clone shared framework
-        run: git clone --depth 1 https://github.com/criblio/cribl-search-app-framework.git ../cribl-search-app-framework
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      - name: Install framework deps
-        run: cd ../cribl-search-app-framework/packages/app-utils && npm ci
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Verify tag matches package.json version
         run: |
           TAG_VERSION="${GITHUB_REF_NAME#v}"
@@ -28,12 +26,44 @@ jobs:
             echo "::error::Tag $GITHUB_REF_NAME ($TAG_VERSION) does not match package.json version ($PKG_VERSION)"
             exit 1
           fi
-      - run: npm ci
-      - run: npm run lint
-      - run: npm run package
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+      - uses: ./.github/actions/release-build
+      - name: Upgrade the shared validation workspace with the exact candidate
+        env:
+          CRIBL_BASE_URL: ${{ secrets.CRIBL_RELEASE_VALIDATION_BASE_URL }}
+          CRIBL_CLIENT_ID: ${{ secrets.CRIBL_RELEASE_VALIDATION_CLIENT_ID }}
+          CRIBL_CLIENT_SECRET: ${{ secrets.CRIBL_RELEASE_VALIDATION_CLIENT_SECRET }}
+        run: |
+          set -euo pipefail
+          test -n "$CRIBL_BASE_URL"
+          test -n "$CRIBL_CLIENT_ID"
+          test -n "$CRIBL_CLIENT_SECRET"
+          node scripts/deploy.mjs --artifact build/apm-*.tgz
+      - name: Install browser for live Cribl smoke tests
+        run: npx playwright install --with-deps chromium
+      - name: Smoke test the candidate through the real Cribl host
+        env:
+          CRIBL_BASE_URL: ${{ secrets.CRIBL_RELEASE_VALIDATION_BASE_URL }}
+          CRIBL_CLIENT_ID: ${{ secrets.CRIBL_RELEASE_VALIDATION_CLIENT_ID }}
+          CRIBL_CLIENT_SECRET: ${{ secrets.CRIBL_RELEASE_VALIDATION_CLIENT_SECRET }}
+          CRIBL_TEST_EMAIL: ${{ secrets.CRIBL_RELEASE_VALIDATION_TEST_EMAIL }}
+          CRIBL_TEST_PASSWORD: ${{ secrets.CRIBL_RELEASE_VALIDATION_TEST_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test -n "$CRIBL_TEST_EMAIL"
+          test -n "$CRIBL_TEST_PASSWORD"
+          npx playwright test \
+            tests/apm-smoke.spec.ts \
+            tests/resilience-routes.spec.ts \
+            tests/live-generated-events.spec.ts \
+            tests/live-alert-transition.spec.ts \
+            --project=chromium
+      - name: Attest the exact tested package
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
-          files: build/apm-*.tgz
+          subject-path: build/apm-*.tgz
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          files: build/apm-*
           generate_release_notes: true
           fail_on_unmatched_files: true

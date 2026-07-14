@@ -3,6 +3,7 @@ import { useParams, useSearchParams } from 'react-router-dom';
 import SpanTree from '../components/SpanTree';
 import SpanDetail from '../components/SpanDetail';
 import TraceLogsView from '../components/TraceLogsView';
+import PartialFailureBanner from '../components/PartialFailureBanner';
 import { getTrace, getTraceLogs } from '../api/search';
 import { summarizeTrace } from '../api/transform';
 import { formatDurationUs } from '../utils/spans';
@@ -60,6 +61,8 @@ export default function TraceView() {
   const [tab, setTab] = useState<Tab>('timeline');
   const [logs, setLogs] = useState<TraceLogEntry[]>([]);
   const [loadingLogs, setLoadingLogs] = useState(false);
+  const [logsFailure, setLogsFailure] = useState<string | null>(null);
+  const [logsRetry, setLogsRetry] = useState(0);
 
   useEffect(() => {
     if (!traceId) return;
@@ -97,12 +100,16 @@ export default function TraceView() {
     if (!traceId) return;
     let cancelled = false;
     setLoadingLogs(true);
+    setLogsFailure(null);
     getTraceLogs(traceId, '-24h', 'now')
       .then((rows) => {
         if (!cancelled) setLogs(rows);
       })
-      .catch(() => {
-        if (!cancelled) setLogs([]);
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          setLogs([]);
+          setLogsFailure(err instanceof Error ? err.message : String(err));
+        }
       })
       .finally(() => {
         if (!cancelled) setLoadingLogs(false);
@@ -110,7 +117,7 @@ export default function TraceView() {
     return () => {
       cancelled = true;
     };
-  }, [traceId]);
+  }, [traceId, logsRetry]);
 
   const summary = useMemo(() => (trace ? summarizeTrace(trace) : null), [trace]);
   const selectedSpan = useMemo(
@@ -195,6 +202,11 @@ export default function TraceView() {
           />
         </div>
       </div>
+
+      <PartialFailureBanner
+        failures={logsFailure ? { 'Trace-correlated logs': logsFailure } : {}}
+        onRetry={() => setLogsRetry((value) => value + 1)}
+      />
 
       <div className={s.tabBar}>
         <button

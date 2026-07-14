@@ -58,14 +58,14 @@ const BUILDERS: Array<{ id: string; call: () => string }> = [
       maxDurationUs: 2_000_000,
       limit: 50,
     }) },
-  { id: 'traceSpans',                    call: () => Q.traceSpans(['t1', 't2']) },
+  { id: 'traceSpans',                    call: () => Q.traceSpans(['0123456789abcdef', 'fedcba9876543210']) },
   { id: 'serviceSummary (all)',          call: () => Q.serviceSummary() },
   { id: 'serviceSummary (scoped)',       call: () => Q.serviceSummary('test-svc') },
   { id: 'prevWindowSummary',             call: () => Q.prevWindowSummary() },
   { id: 'alertEvaluator',                call: () => Q.alertEvaluator() },
-  { id: 'alertEvaluatorExportState',     call: () => Q.alertEvaluatorExportState() },
-  { id: 'alertHistorySend',              call: () => Q.alertHistorySend() },
+  { id: 'alertHistory',                  call: () => Q.alertHistory() },
   { id: 'deployEventsSend',              call: () => Q.deployEventsSend() },
+  { id: 'recentDeployEvents',            call: () => Q.recentDeployEvents() },
   { id: 'noiseBudgetByService',          call: () => Q.noiseBudgetByService() },
   { id: 'serviceTimeSeries',             call: () => Q.serviceTimeSeries(60) },
   { id: 'serviceStatusCodeMix',          call: () => Q.serviceStatusCodeMix(60, 'test-svc') },
@@ -90,7 +90,7 @@ const BUILDERS: Array<{ id: string; call: () => string }> = [
       limit: 100,
     }) },
   { id: 'logServices',                   call: () => Q.logServices() },
-  { id: 'traceLogs',                     call: () => Q.traceLogs('t-abc') },
+  { id: 'traceLogs',                     call: () => Q.traceLogs('0123456789abcdef') },
   { id: 'messagingDependencies',         call: () => Q.messagingDependencies() },
   { id: 'dependencies',                  call: () => Q.dependencies() },
   { id: 'attrValueDistribution',         call: () => Q.attrValueDistribution('http.method', 'status_code == "2"') },
@@ -119,11 +119,18 @@ const BUILDERS: Array<{ id: string; call: () => string }> = [
   { id: 'serviceMetricsBatch',           call: () => Q.serviceMetricsBatch('test-svc', ['m.a', 'm.b'], 60) },
 ];
 
+function snapshotKql(query: string): string {
+  // Template interpolation can leave indentation on otherwise blank lines.
+  // Preserve semantic whitespace while keeping generated snapshot files free
+  // of trailing-space noise (and compatible with git diff --check).
+  return query.replace(/[ \t]+$/gm, '');
+}
+
 describe('queries.ts — golden snapshots + invariants', () => {
   for (const { id, call } of BUILDERS) {
     describe(id, () => {
       it('snapshot stable', () => {
-        expect(call()).toMatchSnapshot();
+        expect(snapshotKql(call())).toMatchSnapshot();
       });
       it('passes provision-guard invariants', () => {
         expect(validateQuery(id, call())).toEqual([]);
@@ -145,11 +152,13 @@ describe('queries.ts — golden snapshots + invariants', () => {
 });
 
 describe('queries.ts — June 2026 outage regressions', () => {
-  it('FAILS validation when the dataset store is empty (dataset="" wipeout shape)', () => {
+  it('refuses to build when the dataset store is empty', () => {
     setCurrentDataset('');
-    const errs = validateQuery('serviceSummary', Q.serviceSummary());
-    setCurrentDataset('otel'); // restore for following tests
-    expect(errs.some((e) => e.includes('empty dataset'))).toBe(true);
+    try {
+      expect(() => Q.serviceSummary()).toThrow('dataset ID');
+    } finally {
+      setCurrentDataset('otel');
+    }
   });
 
   it('rejects a hand-rolled (?i)+export-to-lookup query', () => {

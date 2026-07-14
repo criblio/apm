@@ -11,11 +11,26 @@ import { getCurrentDataset } from '@cribl/app-utils/dataset';
 import { streamFilterKqlClause, streamFilterSpanKqlClause } from './streamFilter';
 import { getLowVolumeMode } from './lowVolumeMode';
 import { DEFAULT_FILTER_RULES, compileFilterRulesToKql } from './errorFilter';
+import {
+  ALERT_EVENT_DATATYPE,
+  DEPLOY_EVENT_DATATYPE,
+  GENERATED_EVENT_SCHEMA_VERSION,
+  eventIdExpr,
+  generatedDatatypePredicate,
+} from './generatedEventContract';
+import {
+  assertKqlPredicate,
+  kqlBracketField,
+  kqlDatasetId,
+  kqlFieldKey,
+  kqlFiniteNumber,
+  kqlInteger,
+  kqlStringLiteral,
+  kqlTraceId,
+} from './kqlSafety';
 
 function quoteDataset(): string {
-  // The dataset name must be a simple identifier to embed safely as
-  // dataset="...". We strip any non-safe characters as a cheap guard.
-  return getCurrentDataset().replace(/[^a-zA-Z0-9_-]/g, '');
+  return kqlDatasetId(getCurrentDataset());
 }
 
 function datasetClause(): string {
@@ -195,7 +210,7 @@ function metricsBase(): string {
 
 /** Bracket-quoted field reference for wide-column metric names. */
 function mf(metric: string): string {
-  return `['${metric.replace(/'/g, "\\'")}']`;
+  return kqlBracketField(metric);
 }
 
 /** All distinct service names. */
@@ -208,10 +223,10 @@ export function services(opts?: QueryOpts): string {
 
 /** Operations for a given service. */
 export function operations(service: string, opts?: QueryOpts): string {
-  const s = service.replace(/"/g, '\\"');
+  const s = kqlStringLiteral(service);
   return `${spansBase()}
     | extend svc=${svcExpr(opts)}
-    | where svc=="${s}"
+    | where svc==${s}
     | summarize by name
     | sort by name asc`;
 }
@@ -246,12 +261,10 @@ export function findTraces(params: FindTracesParams): string {
   const spanFilters: string[] = [];
 
   if (params.service) {
-    const s = params.service.replace(/"/g, '\\"');
-    spanFilters.push(`svc=="${s}"`);
+    spanFilters.push(`svc==${kqlStringLiteral(params.service)}`);
   }
   if (params.operation) {
-    const o = params.operation.replace(/"/g, '\\"');
-    spanFilters.push(`name=="${o}"`);
+    spanFilters.push(`name==${kqlStringLiteral(params.operation)}`);
   }
 
   // Tag filters: "error=true http.status_code=500"
@@ -259,9 +272,9 @@ export function findTraces(params: FindTracesParams): string {
     for (const pair of params.tags.split(/\s+/).filter(Boolean)) {
       const eq = pair.indexOf('=');
       if (eq === -1) continue;
-      const k = pair.slice(0, eq).replace(/"/g, '\\"');
-      const v = pair.slice(eq + 1).replace(/"/g, '\\"');
-      spanFilters.push(`tostring(attributes['${k}'])=="${v}"`);
+      const k = kqlFieldKey(pair.slice(0, eq));
+      const v = kqlStringLiteral(pair.slice(eq + 1));
+      spanFilters.push(`tostring(attributes${kqlBracketField(k)})==${v}`);
     }
   }
 
@@ -269,7 +282,7 @@ export function findTraces(params: FindTracesParams): string {
   // SearchPage. Wrapped in parens so any internal `and`/`or` doesn't
   // bind across the surrounding spanFilters.join().
   if (params.predicateKql && params.predicateKql.trim()) {
-    spanFilters.push(`(${params.predicateKql.trim()})`);
+    spanFilters.push(`(${assertKqlPredicate(params.predicateKql)})`);
   }
 
   // Trace-level filters — applied AFTER the summarize. Duration is the
@@ -277,15 +290,15 @@ export function findTraces(params: FindTracesParams): string {
   // filter, matching Jaeger's semantics ("traces where X took ≥ N ms").
   const traceFilters: string[] = [];
   if (params.minDurationUs != null) {
-    traceFilters.push(`trace_dur_us >= ${params.minDurationUs}`);
+    traceFilters.push(`trace_dur_us >= ${kqlFiniteNumber(params.minDurationUs, { min: 0 })}`);
   }
   if (params.maxDurationUs != null) {
-    traceFilters.push(`trace_dur_us <= ${params.maxDurationUs}`);
+    traceFilters.push(`trace_dur_us <= ${kqlFiniteNumber(params.maxDurationUs, { min: 0 })}`);
   }
 
   const spanWhere = spanFilters.length ? `| where ${spanFilters.join(' and ')}` : '';
   const traceWhere = traceFilters.length ? `| where ${traceFilters.join(' and ')}` : '';
-  const lim = params.limit ?? 20;
+  const lim = kqlInteger(params.limit ?? 20, { min: 1, max: 10_000 });
 
   return `${spansBase()}
     | extend svc=${svcExpr(params.opts)}
@@ -305,7 +318,10 @@ export function findTraces(params: FindTracesParams): string {
  * and the single-trace detail view.
  */
 export function traceSpans(traceIds: string[], opts?: QueryOpts): string {
-  const inList = traceIds.map((id) => `"${id}"`).join(', ');
+  if (traceIds.length === 0 || traceIds.length > 1_000) {
+    throw new Error('traceSpans requires between 1 and 1000 trace IDs');
+  }
+  const inList = traceIds.map((id) => kqlStringLiteral(kqlTraceId(id))).join(', ');
   return `${spansBase()}
     | where trace_id in (${inList})
     | project _time, trace_id, span_id, parent_span_id, name, kind,
@@ -367,7 +383,7 @@ function filteredErrorsBranch(svcFilter: string, opts?: QueryOpts): string {
 
 export function serviceSummary(service?: string, opts?: QueryOpts): string {
   const svcFilter = service
-    ? `| where svc=="${service.replace(/"/g, '\\"')}"`
+    ? `| where svc==${kqlStringLiteral(service)}`
     : '';
   // Two branches. Branch A counts requests + percentiles + raw
   // errors without ANY joins (fast). Branch B computes the
@@ -451,12 +467,46 @@ export function prevWindowSummary(): string {
 }
 
 /**
- * Alert evaluator — reads current-window summaries from the cached
- * home_service_summary $vt_results, joins previous-window from the
- * criblapm_alert_prev lookup, computes health, joins alert state
- * from criblapm_alert_states lookup, applies state machine, and
- * exports updated state back. Output goes to $vt_results for the
- * UI.
+ * Join the latest immutable evaluator snapshot for each alert.  The previous
+ * implementation joined a mutable lookup that three same-cron searches raced
+ * to overwrite.  Snapshot events are append-only, and selecting the newest
+ * event makes retry and queue order irrelevant.  Legacy transition rows are
+ * accepted during the upgrade window; v1 evaluation rows are the steady-state
+ * source of truth.
+ */
+function priorAlertStateJoin(): string {
+  return `
+    | join kind=leftouter (
+        ${datasetClause()}
+        | where ${generatedDatatypePredicate(ALERT_EVENT_DATATYPE)}
+        | where isnull(is_canary) or tostring(is_canary) != "true"
+        | where isnull(record_kind) or tostring(record_kind) == "evaluation"
+        | where isnotempty(alert_id)
+        | join kind=inner (
+            ${datasetClause()}
+            | where ${generatedDatatypePredicate(ALERT_EVENT_DATATYPE)}
+            | where isnull(is_canary) or tostring(is_canary) != "true"
+            | where isnull(record_kind) or tostring(record_kind) == "evaluation"
+            | where isnotempty(alert_id)
+            | summarize persisted_time=max(_time) by alert_id
+          ) on alert_id
+        | where _time == persisted_time
+        | summarize persisted_evaluation_id=max(tostring(evaluation_id)),
+                    persisted_status=max(tostring(alert_status)),
+                    persisted_bad=max(tolong(consecutive_bad)),
+                    persisted_good=max(tolong(consecutive_good)),
+                    persisted_fire_count=max(tolong(fire_count))
+          by alert_id
+      ) on alert_id`;
+}
+
+/**
+ * Alert evaluator and immutable commit. It computes health, joins the latest
+ * persisted evaluator event, applies the state machine, then sends the exact
+ * result rows through Local Search with `tee=true`. The send is the durable
+ * state/history write and tee makes those same rows available in $vt_results
+ * for the UI. There is no second state-machine execution or mutable state
+ * export for another same-cron job to race.
  *
  * Runs 1 minute after the summary searches so their results are
  * available.
@@ -553,12 +603,14 @@ export function alertEvaluator(): string {
     // "auto:none:svc" key — meaning the resolving→ok walk never
     // fires, no "resolved" event is emitted, and the Alert Timeline
     // shows the alert as "ongoing" forever. Stable key fixes this.
-    | extend alert_id=strcat("auto:health:", svc)
-    | lookup criblapm_alert_states on alert_id
-    | extend prev_status=iff(isnotnull(alert_status), tostring(alert_status), "ok"),
-             prev_bad=iff(isnotnull(consecutive_bad), tolong(consecutive_bad), 0),
-             prev_good=iff(isnotnull(consecutive_good), tolong(consecutive_good), 0),
-             prev_fire_count=iff(isnotnull(fire_count), tolong(fire_count), 0)
+    | extend alert_id=strcat("auto:health:", svc),
+             evaluation_id=strcat("criblapm-eval:", tostring(bin(now(), 5m)))
+    ${priorAlertStateJoin()}
+    | extend is_retry=iff(isnotnull(persisted_evaluation_id) and persisted_evaluation_id == evaluation_id, true, false),
+             prev_status=iff(isnotnull(persisted_status), persisted_status, "ok"),
+             prev_bad=iff(isnotnull(persisted_bad), persisted_bad, 0),
+             prev_good=iff(isnotnull(persisted_good), persisted_good, 0),
+             prev_fire_count=iff(isnotnull(persisted_fire_count), persisted_fire_count, 0)
     | extend new_bad=iff(is_bad, prev_bad + 1, 0),
              new_good=iff(is_bad, 0, prev_good + 1)
     | extend alert_status=case(
@@ -581,7 +633,8 @@ export function alertEvaluator(): string {
                "")
     | project svc, curr_requests, curr_errors, curr_error_rate,
               prev_requests, prev_errors, prev_error_rate,
-              alert_id, signal_type, is_bad, is_persistent,
+              alert_id, evaluation_id, is_retry,
+              signal_type, is_bad, is_persistent,
               alert_status, consecutive_bad, consecutive_good,
               fire_count, transitioned_to
     | union (
@@ -602,16 +655,18 @@ export function alertEvaluator(): string {
                 and curr_p95_us >= 250000
                 and prev_op_requests >= 20
         | extend alert_id=strcat("auto:latency:", svc, ":", op),
+                 evaluation_id=strcat("criblapm-eval:", tostring(bin(now(), 5m))),
                  signal_type="latency",
                  is_bad=true,
                  is_persistent=false,
                  curr_errors=0.0, curr_error_rate=0.0,
                  prev_requests=prev_op_requests, prev_errors=0.0, prev_error_rate=0.0
-        | lookup criblapm_alert_states on alert_id
-        | extend prev_status=iff(isnotnull(alert_status), tostring(alert_status), "ok"),
-                 prev_bad=iff(isnotnull(consecutive_bad), tolong(consecutive_bad), 0),
-                 prev_good=iff(isnotnull(consecutive_good), tolong(consecutive_good), 0),
-                 prev_fire_count=iff(isnotnull(fire_count), tolong(fire_count), 0)
+        ${priorAlertStateJoin()}
+        | extend is_retry=iff(isnotnull(persisted_evaluation_id) and persisted_evaluation_id == evaluation_id, true, false),
+                 prev_status=iff(isnotnull(persisted_status), persisted_status, "ok"),
+                 prev_bad=iff(isnotnull(persisted_bad), persisted_bad, 0),
+                 prev_good=iff(isnotnull(persisted_good), persisted_good, 0),
+                 prev_fire_count=iff(isnotnull(persisted_fire_count), persisted_fire_count, 0)
         | extend new_bad=prev_bad + 1, new_good=0
         | extend alert_status=case(
                    prev_status == "ok", "pending",
@@ -626,54 +681,59 @@ export function alertEvaluator(): string {
                  transitioned_to=iff(prev_status == "pending" and new_bad >= ${FIRE_AFTER}, "firing", "")
         | project svc, curr_requests, curr_errors, curr_error_rate,
                   prev_requests, prev_errors, prev_error_rate,
-                  alert_id, signal_type, is_bad, is_persistent,
+                  alert_id, evaluation_id, is_retry,
+                  signal_type, is_bad, is_persistent,
                   alert_status, consecutive_bad, consecutive_good,
                   fire_count, transitioned_to
-    )`;
-}
-
-/**
- * Companion to alertEvaluator — exports the state machine columns
- * to the criblapm_alert_states lookup for persistence across cycles.
- * Separate search because | export consumes the rows.
- */
-export function alertEvaluatorExportState(): string {
-  const base = alertEvaluator();
-  // Sentinel-first union — see prevWindowSummary() for the Cribl
-  // planner quirk this pattern works around.
-  return `print alert_id="__sentinel__", alert_status="ok", consecutive_bad=tolong(0), consecutive_good=tolong(0), fire_count=tolong(0)
-    | union (
-        ${base}
-        | where alert_status != "ok" or consecutive_good > 0
-        | project alert_id, alert_status, consecutive_bad, consecutive_good, fire_count
-      )
-    | export mode=overwrite
-             description="Cribl APM - alert state persistence"
-             to lookup criblapm_alert_states`;
-}
-
-/**
- * Sends alert state transition events (firing, resolved) back to
- * the otel dataset as searchable history. Only emits rows where
- * transitioned_to is non-empty — not every evaluation cycle.
- * Uses | send group="search" to route through the Local Search
- * HTTP input, with dataset="otel" so the event lands in the
- * otel lakehouse dataset.
- */
-export function alertHistorySend(): string {
-  const ds = quoteDataset();
-  const base = alertEvaluator();
-  return `${base}
-    | where transitioned_to != ""
-    | project _time=now(), dataset="${ds}",
-              datatype="criblapm_alert",
-              event_type=transitioned_to,
-              alert_id, alert_status, svc,
-              signal_type, is_persistent,
+    )
+    // A platform retry inside the same scheduled cadence bucket must not
+    // advance the state machine again. The first successful send is already
+    // durable; suppressing a retry at the producer is stronger than merely
+    // deduplicating conflicting rows at each reader.
+    | where not(is_retry)
+    | extend evaluated_at=bin(now(), 5m),
+             schema_version=tolong(${GENERATED_EVENT_SCHEMA_VERSION}),
+             producer="criblapm__home_alerts", record_kind="evaluation",
+             event_type=iff(transitioned_to != "", transitioned_to, "evaluated")
+    | extend event_id=strcat("criblapm:alert:", evaluation_id, ":", alert_id)
+    | project _time=now(), dataset="${quoteDataset()}",
+              datatype="${ALERT_EVENT_DATATYPE}", schema_version,
+              event_id, producer, record_kind, evaluation_id, evaluated_at,
+              event_type, alert_id, alert_status, svc,
+              signal_type, is_bad, is_persistent,
               curr_error_rate, prev_error_rate,
               curr_requests, prev_requests,
-              fire_count, consecutive_bad
-    | send group="search"`;
+              fire_count, consecutive_bad, consecutive_good
+    | send tee=true group="search"`;
+}
+
+/** Transition history, deduplicated by stable event ID with legacy dual-read. */
+export function alertHistory(
+  limit = 500,
+  service?: string,
+  order: 'asc' | 'desc' = 'desc',
+): string {
+  const safeLimit = Math.max(1, Math.min(10_000, Math.trunc(limit)));
+  const serviceFilter = service
+    ? `| where svc == ${kqlStringLiteral(service)}`
+    : '';
+  const logicalId = eventIdExpr(['alert_id', '_time', 'event_type']);
+  return `${datasetClause()}
+    | where ${generatedDatatypePredicate(ALERT_EVENT_DATATYPE)}
+    | where event_type in ("firing", "resolved")
+    | where isnull(is_canary) or tostring(is_canary) != "true"
+    ${serviceFilter}
+    | extend logical_event_id=${logicalId}
+    | summarize _time=max(_time)
+      by logical_event_id, schema_version, evaluation_id, event_type,
+         alert_id, alert_status, svc, signal_type, curr_error_rate,
+         prev_error_rate, curr_requests, prev_requests, fire_count
+    | project _time, event_id=logical_event_id, schema_version,
+              evaluation_id, event_type, alert_id, alert_status,
+              svc, signal_type, curr_error_rate, prev_error_rate,
+              curr_requests, prev_requests, fire_count
+    | sort by _time ${order}
+    | limit ${safeLimit}`;
 }
 
 /**
@@ -698,12 +758,18 @@ export function alertHistorySend(): string {
  * $vt_results for later reads.
  */
 export function noiseBudgetByService(): string {
+  const logicalId = eventIdExpr(['alert_id', '_time', 'event_type']);
   return `${datasetClause()}
-    | where datatype == "criblapm_alert"
+    | where ${generatedDatatypePredicate(ALERT_EVENT_DATATYPE)}
     | where event_type == "firing"
-    | extend day=bin(_time, 1d)
+    | where isnull(is_canary) or tostring(is_canary) != "true"
+    | extend logical_event_id=${logicalId},
+             persistent_int=iff(tostring(is_persistent)=="true", 1, 0)
+    | summarize event_time=max(_time), persistent_int=max(persistent_int)
+      by logical_event_id, svc, alert_id
+    | extend day=bin(event_time, 1d)
     | summarize fires=count(),
-                persistent_fires=countif(tostring(is_persistent)=="true"),
+                persistent_fires=countif(persistent_int==1),
                 services_distinct_alerts=dcount(alert_id)
       by svc, day
     | extend noisy_fires=fires - persistent_fires
@@ -719,8 +785,8 @@ export function noiseBudgetByService(): string {
  * 12m before this alert." OTel resources already carry
  * `service.version`; this scheduled search detects when a new
  * (svc, version) tuple first appears in the recent window and emits
- * a `criblapm_deploy` event to the dataset via the same
- * `| send group="search"` pattern as alertHistorySend.
+ * a `criblapm_deploy` event to the dataset via the same immutable,
+ * versioned generated-event contract as alert evaluation snapshots.
  *
  * Window / cadence (see provisionedSearches.ts): scheduled every
  * 30 min over a -1h window. `first_seen` filter selects only
@@ -733,9 +799,8 @@ export function noiseBudgetByService(): string {
  * Event schema:
  *   _time           : emission timestamp (= now() at search run)
  *   dataset         : the lakehouse dataset name (current store)
- *   datatype        : "criblapm_deploy" (matches alertHistorySend's
- *                     convention so | search datatype=="criblapm_*"
- *                     covers both)
+ *   datatype        : "criblapm_deploy" (stored by the platform as
+ *                     data_datatype; readers use the shared dual-read)
  *   svc             : service.name
  *   version         : service.version
  *   first_seen      : min(_time) of spans carrying this (svc, version)
@@ -758,10 +823,31 @@ export function deployEventsSend(): string {
     // cadence so a stable version's first_seen (≈ start-of-window,
     // ~ -1h) never trips this filter again after its first emission.
     | where first_seen >= datetime_add('minute', -30, now())
+    | extend schema_version=tolong(${GENERATED_EVENT_SCHEMA_VERSION}),
+             producer="criblapm__deploy_events", record_kind="deploy",
+             event_id=strcat("criblapm:deploy:", svc, ":", version, ":", tostring(first_seen))
     | project _time=now(), dataset="${ds}",
-              datatype="criblapm_deploy",
+              datatype="${DEPLOY_EVENT_DATATYPE}", schema_version,
+              event_id, producer, record_kind,
               svc, version, first_seen, n_spans
-    | send group="search"`;
+    | send tee=true group="search"`;
+}
+
+/** Recent generated deploy events, with v0 dual-read and logical deduplication. */
+export function recentDeployEvents(limit = 25): string {
+  const safeLimit = Math.max(1, Math.min(1_000, Math.trunc(limit)));
+  const logicalId = eventIdExpr(['svc', 'version', 'first_seen']);
+  return `${datasetClause()}
+    | where ${generatedDatatypePredicate(DEPLOY_EVENT_DATATYPE)}
+    | where isnull(is_canary) or tostring(is_canary) != "true"
+    | extend logical_event_id=${logicalId},
+             svc=tostring(svc), version=tostring(version),
+             first_seen_num=toreal(first_seen), n_spans_num=tolong(n_spans)
+    | summarize first_seen_ms=max(first_seen_num)*1000,
+                n_spans_total=max(n_spans_num)
+      by logical_event_id, svc, version
+    | sort by first_seen_ms desc
+    | limit ${safeLimit}`;
 }
 
 /**
@@ -777,7 +863,8 @@ export function serviceTimeSeries(
   service?: string,
   opts?: QueryOpts,
 ): string {
-  const svcFilter = service ? `| where svc=="${service.replace(/"/g, '\\"')}"` : '';
+  const svcFilter = service ? `| where svc==${kqlStringLiteral(service)}` : '';
+  const bin = kqlInteger(binSeconds, { min: 1, max: 86_400 });
   return `${spansBase()}
     | extend svc=${svcExpr(opts)},
             dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
@@ -789,7 +876,7 @@ export function serviceTimeSeries(
                 p50_us=percentile(dur_us, 50),
                 p95_us=percentile(dur_us, 95),
                 p99_us=percentile(dur_us, 99)
-      by svc, bucket=bin(_time, ${binSeconds}s)
+      by svc, bucket=bin(_time, ${bin}s)
     | sort by svc asc, bucket asc`;
 }
 
@@ -811,7 +898,8 @@ export function serviceTimeSeries(
  * still produce a useful mix.
  */
 export function serviceStatusCodeMix(binSeconds: number, service: string, opts?: QueryOpts): string {
-  const s = service.replace(/"/g, '\\"');
+  const s = kqlStringLiteral(service);
+  const bin = kqlInteger(binSeconds, { min: 1, max: 86_400 });
   // dur_us is computed for streamFilterSpanKqlClause(); without it
   // the injected `| where dur_us < ...` filters every row out.
   return `${spansBase()}
@@ -820,7 +908,7 @@ export function serviceStatusCodeMix(binSeconds: number, service: string, opts?:
              http_status=coalesce(toint(attributes['http.response.status_code']),
                                   toint(attributes['http.status_code'])),
              grpc_status=toint(attributes['rpc.grpc.status_code'])
-    | where svc=="${s}"
+    | where svc==${s}
     ${streamFilterSpanKqlClause()}
     | extend status_class=case(
         http_status == 503, "503",
@@ -831,7 +919,7 @@ export function serviceStatusCodeMix(binSeconds: number, service: string, opts?:
         http_status >= 400 and http_status < 500, "4xx",
         isnotnull(grpc_status) and grpc_status != 0, "grpc_err",
         "ok")
-    | summarize n=count() by status_class, bucket=bin(_time, ${binSeconds}s)
+    | summarize n=count() by status_class, bucket=bin(_time, ${bin}s)
     | sort by bucket asc, status_class asc`;
 }
 
@@ -840,12 +928,12 @@ export function serviceStatusCodeMix(binSeconds: number, service: string, opts?:
  * error rate, and percentile latencies — the core table on Service detail.
  */
 export function serviceOperations(service: string, opts?: QueryOpts): string {
-  const s = service.replace(/"/g, '\\"');
+  const s = kqlStringLiteral(service);
   return `${spansBase()}
     | extend svc=${svcExpr(opts)},
             dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
             is_error=(${statusCodeExpr(opts)}=="2")
-    | where svc=="${s}"
+    | where svc==${s}
     ${streamFilterSpanKqlClause()}
     | summarize requests=count(),
                 errors=countif(is_error),
@@ -866,13 +954,13 @@ export function serviceOperations(service: string, opts?: QueryOpts): string {
  * into the service-level aggregate.
  */
 export function serviceInstances(service: string, opts?: QueryOpts): string {
-  const s = service.replace(/"/g, '\\"');
+  const s = kqlStringLiteral(service);
   return `${spansBase()}
     | extend svc=${svcExpr(opts)},
             instance_id=tostring(resource.attributes['service.instance.id']),
             dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
             is_error=(${statusCodeExpr(opts)}=="2")
-    | where svc=="${s}"
+    | where svc==${s}
     ${streamFilterSpanKqlClause()}
     | summarize requests=count(),
                 errors=countif(is_error),
@@ -921,6 +1009,7 @@ export function allServiceOperations(): string {
  * (≤ 30s) still dwarfs the healthy baseline (~100ms for most ops).
  */
 export function allOperationsSummary(limit: number = 1000): string {
+  const safeLimit = kqlInteger(limit, { min: 1, max: 10_000 });
   return `${spansBase()}
     | extend svc=tostring(resource.attributes['service.name']),
             dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0
@@ -931,7 +1020,7 @@ export function allOperationsSummary(limit: number = 1000): string {
                 p99_us=percentile(dur_us, 99)
       by svc, op=name
     | sort by requests desc
-    | limit ${limit}`;
+    | limit ${safeLimit}`;
 }
 
 /**
@@ -942,7 +1031,7 @@ export function allOperationsSummary(limit: number = 1000): string {
  * stream filter's kafka consumer exemption can reference it.
  */
 export function slowestTraces(service?: string, opts?: QueryOpts): string {
-  const svcFilter = service ? `| where svc=="${service.replace(/"/g, '\\"')}"` : '';
+  const svcFilter = service ? `| where svc==${kqlStringLiteral(service)}` : '';
   return `${spansBase()}
     | extend svc=${svcExpr(opts)},
             parent=tostring(parent_span_id),
@@ -984,6 +1073,7 @@ export function slowestTraces(service?: string, opts?: QueryOpts): string {
  * without changing the summarize shape.
  */
 export function rawSlowestTraces(limit: number = 500): string {
+  const safeLimit = kqlInteger(limit, { min: 1, max: 10_000 });
   return `${spansBase()}
     | extend svc=tostring(resource.attributes['service.name']),
             parent=tostring(parent_span_id),
@@ -1000,7 +1090,7 @@ export function rawSlowestTraces(limit: number = 500): string {
     | where isnotnull(root_svc)
     ${streamFilterKqlClause()}
     | sort by trace_dur_us desc
-    | limit ${limit}`;
+    | limit ${safeLimit}`;
 }
 
 /**
@@ -1023,6 +1113,7 @@ export function rawSlowestTraces(limit: number = 500): string {
  * the Cribl KQL join-truncation behavior we hit during Phase 0.
  */
 export function rawRecentErrorSpans(limit: number = 300, opts?: QueryOpts): string {
+  const safeLimit = kqlInteger(limit, { min: 1, max: 10_000 });
   // Predicate pushed BEFORE the extend block — the accelerated
   // `status_code` column filters out ~99% of spans before any
   // per-row work happens. The extend block then computes 7
@@ -1036,7 +1127,7 @@ export function rawRecentErrorSpans(limit: number = 300, opts?: QueryOpts): stri
              grpc_status=toint(attributes['rpc.grpc.status_code']),
              sid=tostring(span_id)
     | sort by _time desc
-    | limit ${limit}
+    | limit ${safeLimit}
     | project _time, svc, name, span_kind, http_status, grpc_status, msg, trace_id, sid
     ${errorClassificationJoins(opts)}
     | project _time, svc, name, span_kind, http_status, grpc_status,
@@ -1077,7 +1168,7 @@ export function rawRecentErrorSpans(limit: number = 300, opts?: QueryOpts): stri
  */
 export function podUptime(svc?: string, opts?: QueryOpts): string {
   const svcFilter = svc
-    ? `| where svc == "${svc.replace(/"/g, '\\"')}"`
+    ? `| where svc == ${kqlStringLiteral(svc)}`
     : '';
   return `${spansBase()}
     | extend svc=${svcExpr(opts)},
@@ -1243,7 +1334,7 @@ export function traceOriginators(): string {
  * Home and Service detail. Optionally scoped to a service.
  */
 export function recentErrorTraces(service?: string, opts?: QueryOpts): string {
-  const svcFilter = service ? `| where svc=="${service.replace(/"/g, '\\"')}"` : '';
+  const svcFilter = service ? `| where svc==${kqlStringLiteral(service)}` : '';
   return `${spansBase()}
     | extend svc=${svcExpr(opts)},
             is_error=(${statusCodeExpr(opts)}=="2")
@@ -1283,8 +1374,7 @@ export function searchLogs(params: SearchLogsParams): string {
   ];
 
   if (params.service) {
-    const s = params.service.replace(/"/g, '\\"');
-    filters.push(`tostring(resource.attributes['service.name'])=="${s}"`);
+    filters.push(`tostring(resource.attributes['service.name'])==${kqlStringLiteral(params.service)}`);
   }
   // NOTE: do NOT wrap severity_number in toreal() here. The otel
   // dataset stores severity_number as an int; toreal() on an int
@@ -1293,18 +1383,17 @@ export function searchLogs(params: SearchLogsParams): string {
   // `severity_number >= 9` matches all 18k INFO logs. Compare the raw
   // int directly.
   if (params.minSeverity != null) {
-    filters.push(`severity_number >= ${params.minSeverity}`);
+    filters.push(`severity_number >= ${kqlFiniteNumber(params.minSeverity, { min: 0 })}`);
   }
   if (params.maxSeverity != null) {
-    filters.push(`severity_number <= ${params.maxSeverity}`);
+    filters.push(`severity_number <= ${kqlFiniteNumber(params.maxSeverity, { min: 0 })}`);
   }
   if (params.bodyContains) {
     // Cribl's `contains` is case-insensitive by default on strings.
-    const needle = params.bodyContains.replace(/"/g, '\\"');
-    filters.push(`tostring(body) contains "${needle}"`);
+    filters.push(`tostring(body) contains ${kqlStringLiteral(params.bodyContains)}`);
   }
 
-  const lim = params.limit ?? 200;
+  const lim = kqlInteger(params.limit ?? 200, { min: 1, max: 10_000 });
   return `${datasetClause()}
     | where ${filters.join(' and ')}
     | project _time, trace_id, span_id, body, severity_text, severity_number,
@@ -1336,10 +1425,10 @@ export function logServices(): string {
  * end_time_unix_nano.
  */
 export function traceLogs(traceId: string): string {
-  const t = traceId.replace(/"/g, '\\"');
+  const t = kqlStringLiteral(kqlTraceId(traceId));
   return `${datasetClause()}
     | where isnotnull(body) and isnotnull(severity_number)
-    | where trace_id=="${t}"
+    | where trace_id==${t}
     | project _time, trace_id, span_id, body, severity_text, severity_number,
               attributes,
               service_name=tostring(resource.attributes['service.name']),
@@ -1516,14 +1605,14 @@ export const SPOTLIGHT_ATTRIBUTES: readonly string[] = [
  *   - everything else → attributes['k']
  */
 function attrValueExpr(attrName: string): string {
-  const a = attrName.replace(/'/g, "\\'");
+  const a = kqlFieldKey(attrName);
   if (a === 'name' || a === 'kind') {
     return `tostring(${a})`;
   }
   const isResourceAttr = a.startsWith('k8s.') || a.startsWith('service.');
   return isResourceAttr
-    ? `tostring(resource.attributes['${a}'])`
-    : `tostring(attributes['${a}'])`;
+    ? `tostring(resource.attributes${kqlBracketField(a)})`
+    : `tostring(attributes${kqlBracketField(a)})`;
 }
 
 export function attrValueDistribution(
@@ -1531,8 +1620,9 @@ export function attrValueDistribution(
   predicateKql: string,
   limit: number = 20,
 ): string {
-  const a = attrName.replace(/'/g, "\\'");
-  const pre = predicateKql ? `| where ${predicateKql}` : '';
+  const a = kqlFieldKey(attrName);
+  const pre = predicateKql ? `| where ${assertKqlPredicate(predicateKql)}` : '';
+  const safeLimit = kqlInteger(limit, { min: 1, max: 1_000 });
   const valueExpr = attrValueExpr(attrName);
   return `${spansBase()}
     ${pre}
@@ -1540,8 +1630,8 @@ export function attrValueDistribution(
     | where isnotempty(attr_value)
     | summarize n=count() by attr_value
     | sort by n desc
-    | limit ${limit}
-    | extend attr_name="${a}"
+    | limit ${safeLimit}
+    | extend attr_name=${kqlStringLiteral(a)}
     | project attr_name, attr_value, n`;
 }
 
@@ -1586,9 +1676,11 @@ export function spotlightAttrDiff(
    */
   scopeKql?: string,
 ): string {
-  const a = attrName.replace(/'/g, "\\'");
+  const a = kqlFieldKey(attrName);
   const valueExpr = attrValueExpr(attrName);
-  const scope = scopeKql && scopeKql.trim() ? scopeKql.trim() : '';
+  const scope = scopeKql && scopeKql.trim() ? assertKqlPredicate(scopeKql) : '';
+  const selection = selectionKql ? assertKqlPredicate(selectionKql) : 'true';
+  const safeTop = kqlInteger(top, { min: 1, max: 1_000 });
   const scopeWhere = scope ? `| where ${scope}` : '';
   // `not <bool>` is rejected inside countif() by Cribl's KQL
   // parser — explicit `== true` / `== false` comparisons work.
@@ -1598,15 +1690,15 @@ export function spotlightAttrDiff(
   return `${spansBase()}
     ${scopeWhere}
     | extend attr_value=${valueExpr},
-             sel_match=${selectionKql || 'true'}
+             sel_match=${selection}
     | where isnotempty(attr_value)
     | summarize sel_n=countif(sel_match==true),
                 base_n=countif(sel_match==false)
       by attr_value
     | extend total=sel_n+base_n
     | sort by total desc
-    | limit ${top}
-    | extend attr_name="${a}"
+    | limit ${safeTop}
+    | extend attr_name=${kqlStringLiteral(a)}
     | project attr_name, attr_value, sel_n, base_n`;
 }
 
@@ -1655,7 +1747,7 @@ export function listMetricNames(): string {
  * fallback when the scheduled search cache isn't populated yet.
  */
 export function metricSampleRecords(limit: number = 500): string {
-  return `${metricsBase()} | limit ${limit}`;
+  return `${metricsBase()} | limit ${kqlInteger(limit, { min: 1, max: 10_000 })}`;
 }
 
 /**
@@ -1759,14 +1851,15 @@ function metricAggExpr(metric: string, agg: MetricSeriesParams['agg']): string {
  */
 export function metricTimeSeries(params: MetricSeriesParams): string {
   const svcFilter = params.service
-    ? `| where svc == "${params.service.replace(/"/g, '\\"')}"`
+    ? `| where svc == ${kqlStringLiteral(params.service)}`
     : '';
   const aggExpr = metricAggExpr(params.metric, params.agg);
+  const bin = kqlInteger(params.binSeconds, { min: 1, max: 86_400 });
   // Group-by: append a dimension column to the summarize. Dimension
   // values are accessed via bracket-quoted syntax (resource attributes
   // live at the top level of metric records) and coerced to strings.
   const groupExt = params.groupBy
-    ? `, grp=tostring(['${params.groupBy.replace(/'/g, "\\'")}'])`
+    ? `, grp=tostring(${kqlBracketField(params.groupBy)})`
     : '';
   const groupBy = params.groupBy ? ', grp' : '';
   return `${metricsBase()}
@@ -1774,7 +1867,7 @@ export function metricTimeSeries(params: MetricSeriesParams): string {
     | extend svc=tostring(['service.name'])${groupExt}
     ${svcFilter}
     | summarize val=${aggExpr}
-      by bucket=bin(_time, ${params.binSeconds}s)${groupBy}
+      by bucket=bin(_time, ${bin}s)${groupBy}
     | sort by bucket asc`;
 }
 
@@ -1808,12 +1901,13 @@ export function metricSampleRow(metricName: string): string {
  * in the other per-service queries below.
  */
 export function serviceMetricSampleRecords(service: string, limit: number = 500): string {
-  const s = service.replace(/"/g, '\\"');
+  const s = kqlStringLiteral(service);
+  const safeLimit = kqlInteger(limit, { min: 1, max: 10_000 });
   return `${metricsBase()}
     | extend svc=tostring(['service.name']),
              dep=tostring(['k8s.deployment.name'])
-    | where svc == "${s}" or dep == "${s}"
-    | limit ${limit}`;
+    | where svc == ${s} or dep == ${s}
+    | limit ${safeLimit}`;
 }
 
 /**
@@ -1827,12 +1921,12 @@ export function serviceMetricLatest(
   service: string,
   metric: string,
 ): string {
-  const s = service.replace(/"/g, '\\"');
+  const s = kqlStringLiteral(service);
   return `${metricsBase()}
     | where isnotnull(${mf(metric)})
     | extend svc=tostring(['service.name']),
              dep=tostring(['k8s.deployment.name'])
-    | where svc == "${s}" or dep == "${s}"
+    | where svc == ${s} or dep == ${s}
     | sort by _time desc
     | limit 1
     | project val=toreal(${mf(metric)})`;
@@ -1849,14 +1943,14 @@ export function serviceMetricDelta(
   service: string,
   metric: string,
 ): string {
-  const s = service.replace(/"/g, '\\"');
+  const s = kqlStringLiteral(service);
   return `${metricsBase()}
     | where isnotnull(${mf(metric)})
     | extend svc=tostring(['service.name']),
              dep=tostring(['k8s.deployment.name']),
              pod=tostring(['k8s.pod.name']),
              container=tostring(['k8s.container.name'])
-    | where svc == "${s}" or dep == "${s}"
+    | where svc == ${s} or dep == ${s}
     | summarize d=max(toreal(${mf(metric)}))-min(toreal(${mf(metric)}))
       by pod, container
     | summarize delta=sum(d)`;
@@ -1875,7 +1969,8 @@ export function serviceMetricTimeSeries(
   binSeconds: number,
   agg: 'avg' | 'max' | 'p95' = 'p95',
 ): string {
-  const s = service.replace(/"/g, '\\"');
+  const s = kqlStringLiteral(service);
+  const bin = kqlInteger(binSeconds, { min: 1, max: 86_400 });
   const field = `toreal(${mf(metric)})`;
   let aggExpr: string;
   if (agg === 'p95') {
@@ -1889,8 +1984,8 @@ export function serviceMetricTimeSeries(
     | where isnotnull(${mf(metric)})
     | extend svc=tostring(['service.name']),
              dep=tostring(['k8s.deployment.name'])
-    | where svc == "${s}" or dep == "${s}"
-    | summarize val=${aggExpr} by bucket=bin(_time, ${binSeconds}s)
+    | where svc == ${s} or dep == ${s}
+    | summarize val=${aggExpr} by bucket=bin(_time, ${bin}s)
     | sort by bucket asc`;
 }
 
@@ -1930,6 +2025,10 @@ export function operationAnomaliesFromLookup(
   minBaselineRequests: number,
   topN: number,
 ): string {
+  const ratio = kqlFiniteNumber(minRatio, { min: 1 });
+  const currP95 = kqlFiniteNumber(minCurrP95Us, { min: 0 });
+  const baselineRequests = kqlInteger(minBaselineRequests, { min: 0 });
+  const limit = kqlInteger(topN, { min: 1, max: 10_000 });
   return `${spansBase()}
     | extend svc=tostring(resource.attributes['service.name']),
              dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0
@@ -1941,16 +2040,16 @@ export function operationAnomaliesFromLookup(
     | extend prev_p95_us=toreal(p95_us),
              prev_requests=toreal(requests)
     | where isnotnull(prev_p95_us) and prev_p95_us > 0
-    | where curr_p95_us >= prev_p95_us * ${minRatio}
-      and curr_p95_us >= ${minCurrP95Us}
-      and prev_requests >= ${minBaselineRequests}
+    | where curr_p95_us >= prev_p95_us * ${ratio}
+      and curr_p95_us >= ${currP95}
+      and prev_requests >= ${baselineRequests}
     | project svc, op,
               curr_p95_us,
               prev_p95_us,
               requests=curr_count,
               ratio=curr_p95_us/prev_p95_us
     | sort by ratio desc
-    | limit ${topN}`;
+    | limit ${limit}`;
 }
 
 /**
@@ -1965,13 +2064,17 @@ export function serviceMetricsBatch(
   metrics: string[],
   binSeconds: number,
 ): string {
-  const s = service.replace(/"/g, '\\"');
+  const s = kqlStringLiteral(service);
+  const bin = kqlInteger(binSeconds, { min: 1, max: 86_400 });
+  if (metrics.length === 0 || metrics.length > 100) {
+    throw new Error('serviceMetricsBatch requires between 1 and 100 metrics');
+  }
   const whereClause = metrics.map((m) => `isnotnull(${mf(m)})`).join(' or ');
   return `${metricsBase()}
     | where ${whereClause}
     | extend svc=tostring(['service.name']),
              dep=tostring(['k8s.deployment.name'])
-    | where svc == "${s}" or dep == "${s}"
-    | extend bucket=bin(_time, ${binSeconds}s)
+    | where svc == ${s} or dep == ${s}
+    | extend bucket=bin(_time, ${bin}s)
     | sort by bucket asc`;
 }

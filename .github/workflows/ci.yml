@@ -8,30 +8,51 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # The live portion of this job upgrades one owner-approved shared
+    # workspace. Never allow two candidates to reconcile or canary it at once.
+    concurrency:
+      group: apm-live-validation-${{ github.repository }}
+      cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v4
-      # Pin the framework to a SHA recorded in-repo (.framework-sha).
-      # PR #66 shipped a latent break through green CI because we
-      # cloned --depth 1 of framework master with no record of which
-      # SHA we'd built against. Bumping the framework is now a
-      # deliberate one-line PR (see CLAUDE.md "Framework SHA pin").
-      - name: Clone shared framework at pinned SHA
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: ./.github/actions/release-build
+      - name: Retain the exact tested candidate
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-candidate-${{ github.sha }}
+          path: build/apm-*
+          if-no-files-found: error
+          retention-days: 14
+      - name: Install browser for live Cribl smoke tests
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: npx playwright install --with-deps chromium
+      - name: Upgrade the shared validation workspace with the exact candidate
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          CRIBL_BASE_URL: ${{ secrets.CRIBL_RELEASE_VALIDATION_BASE_URL }}
+          CRIBL_CLIENT_ID: ${{ secrets.CRIBL_RELEASE_VALIDATION_CLIENT_ID }}
+          CRIBL_CLIENT_SECRET: ${{ secrets.CRIBL_RELEASE_VALIDATION_CLIENT_SECRET }}
         run: |
           set -euo pipefail
-          SHA=$(tr -d '[:space:]' < .framework-sha)
-          test -n "$SHA" || { echo "::error::.framework-sha is empty"; exit 1; }
-          git clone https://github.com/criblio/cribl-search-app-framework.git ../cribl-search-app-framework
-          git -C ../cribl-search-app-framework checkout "$SHA"
-          echo "Framework pinned to $SHA"
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      - name: Install framework deps
-        run: cd ../cribl-search-app-framework/packages/app-utils && npm ci
-      - run: npm ci
-      - run: npm run lint
-      - name: Unit tests
-        run: npm test
-      - name: Type check
-        run: npx tsc --noEmit
-      - run: npm run build
+          test -n "$CRIBL_BASE_URL"
+          test -n "$CRIBL_CLIENT_ID"
+          test -n "$CRIBL_CLIENT_SECRET"
+          node scripts/deploy.mjs --artifact build/apm-*.tgz
+      - name: Smoke test the candidate through the real Cribl host
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          CRIBL_BASE_URL: ${{ secrets.CRIBL_RELEASE_VALIDATION_BASE_URL }}
+          CRIBL_CLIENT_ID: ${{ secrets.CRIBL_RELEASE_VALIDATION_CLIENT_ID }}
+          CRIBL_CLIENT_SECRET: ${{ secrets.CRIBL_RELEASE_VALIDATION_CLIENT_SECRET }}
+          CRIBL_TEST_EMAIL: ${{ secrets.CRIBL_RELEASE_VALIDATION_TEST_EMAIL }}
+          CRIBL_TEST_PASSWORD: ${{ secrets.CRIBL_RELEASE_VALIDATION_TEST_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test -n "$CRIBL_TEST_EMAIL"
+          test -n "$CRIBL_TEST_PASSWORD"
+          npx playwright test \
+            tests/apm-smoke.spec.ts \
+            tests/resilience-routes.spec.ts \
+            tests/live-generated-events.spec.ts \
+            tests/live-alert-transition.spec.ts \
+            --project=chromium

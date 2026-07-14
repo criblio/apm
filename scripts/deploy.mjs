@@ -1,18 +1,15 @@
 #!/usr/bin/env node
 //
-// Build, package, and deploy the app to Cribl Cloud in one shot.
+// Validate and deploy an exact app artifact to Cribl Cloud.
 //
 // Reads CRIBL_BASE_URL / CRIBL_CLIENT_ID / CRIBL_CLIENT_SECRET from the
 // project root .env (the same file the Cribl MCP server uses) and:
 //
-//   1. Runs `npm run package` to build a fresh tgz
-//   2. Exchanges the client credentials for a Cribl Cloud bearer token
-//   3. PUT /api/v1/apps?filename=… (raw tgz body) → upload, returns source
-//   4. POST /api/v1/apps { source, force: true } → install / replace
-//
-// Endpoint references: criblio/cribl-control-plane-sdk-typescript
-//   src/funcs/packsUpload.ts (PUT /packs)
-//   src/funcs/packsInstall.ts (POST /packs)
+//   1. Uses --artifact as-is, or verifies and builds once when omitted
+//   2. Inspects the tgz locally and runs the server preinstall policy check
+//   3. Exchanges the client credentials for a Cribl Cloud bearer token
+//   4. Installs a missing app or upgrades the exact existing app without force
+//   5. Reconciles scheduled searches and runs post-reconcile canaries
 //
 // Run from the repo root: `npm run deploy`
 
@@ -20,6 +17,7 @@ import { spawn } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { inspectPack } from './inspect-pack.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const APP_ROOT = resolve(__dirname, '..');
@@ -127,47 +125,106 @@ async function uploadPack({ baseUrl, token, filename, body }) {
   return { source, raw: parsed };
 }
 
-async function installPack({ baseUrl, token, source, displayName, version }) {
-  const url = `${baseUrl}/api/v1/apps`;
-  const resp = await fetch(url, {
-    method: 'POST',
+async function apiJson({ baseUrl, token, path, method = 'GET', body }) {
+  const resp = await fetch(`${baseUrl}/api/v1${path}`, {
+    method,
     headers: {
       authorization: `Bearer ${token}`,
       'content-type': 'application/json',
       accept: 'application/json',
     },
-    body: JSON.stringify({ source, force: true, displayName, version }),
+    body: body === undefined ? undefined : JSON.stringify(body),
   });
   const text = await resp.text();
   if (!resp.ok) {
-    throw new Error(`Install failed (${resp.status}): ${text}`);
+    throw new Error(`${method} ${path} failed (${resp.status}): ${text.slice(0, 500)}`);
   }
-  let parsed;
   try {
-    parsed = JSON.parse(text);
+    return text ? JSON.parse(text) : {};
   } catch {
-    parsed = text;
+    throw new Error(`${method} ${path} returned non-JSON: ${text.slice(0, 200)}`);
   }
-  return parsed;
+}
+
+async function preinstallCheck({ baseUrl, token, source }) {
+  const result = await apiJson({
+    baseUrl,
+    token,
+    path: '/apps/preinstall-check',
+    method: 'POST',
+    body: { source },
+  });
+  const item = result.items?.[0] ?? result;
+  const dangerous = item.dangerousFileTypes ?? item.dangerousFiles ?? [];
+  const proxies = item.proxies ?? {};
+  const policies = item.policies ?? {};
+  if ((Array.isArray(dangerous) && dangerous.length > 0) || Object.keys(proxies).length > 0) {
+    throw new Error(
+      `Preinstall check rejected candidate: dangerous=${JSON.stringify(dangerous)}, proxies=${JSON.stringify(proxies)}`,
+    );
+  }
+  if (policies && Object.keys(policies).length > 0) {
+    throw new Error(`Preinstall check found undeclared policies: ${JSON.stringify(policies)}`);
+  }
+}
+
+async function findInstalledApp({ baseUrl, token, appId }) {
+  const result = await apiJson({ baseUrl, token, path: '/apps' });
+  return (result.items ?? []).find((item) => item.id === appId || item.name === appId) ?? null;
+}
+
+async function installPack({ baseUrl, token, source, displayName, version, appId }) {
+  const installed = await findInstalledApp({ baseUrl, token, appId });
+  if (installed) {
+    // CI, master, and a retried tag may validate the same release candidate in
+    // the shared workspace. Cribl correctly rejects a same-version PATCH; the
+    // package was already installed by the first serialized validation run, so
+    // make those later runs idempotent and continue through reconcile/canaries.
+    if (installed.version === version) {
+      console.log(`▶ ${appId} ${version} is already installed; skipping same-version upgrade`);
+      return { items: [installed], count: 1, unchanged: true };
+    }
+    return apiJson({
+      baseUrl,
+      token,
+      path: `/apps/${encodeURIComponent(appId)}`,
+      method: 'PATCH',
+      body: { source, displayName, version },
+    });
+  }
+  return apiJson({
+    baseUrl,
+    token,
+    path: '/apps',
+    method: 'POST',
+    body: { source, displayName, version },
+  });
 }
 
 async function main() {
-  const env = await loadDotEnv(join(REPO_ROOT, '.env')).catch((err) => {
-    throw new Error(`Failed to read ${join(REPO_ROOT, '.env')}: ${err.message}`);
-  });
+  const fileEnv = await loadDotEnv(join(REPO_ROOT, '.env')).catch(() => ({}));
+  const env = { ...fileEnv, ...process.env };
   for (const v of ['CRIBL_BASE_URL', 'CRIBL_CLIENT_ID', 'CRIBL_CLIENT_SECRET']) {
     if (!env[v]) throw new Error(`${v} is not set in ${join(REPO_ROOT, '.env')}`);
   }
   const baseUrl = env.CRIBL_BASE_URL.replace(/\/$/, '');
   const { tokenUrl, audience } = oauthEndpoints(baseUrl);
 
-  console.log('▶ Building & packaging…');
-  await runCommand('npm', ['run', 'package'], APP_ROOT);
-
-  // Locate the freshly-built tgz from package.json {name,version}
   const pkg = JSON.parse(await readFile(join(APP_ROOT, 'package.json'), 'utf8'));
-  const filename = `${pkg.name}-${pkg.version}.tgz`;
-  const tgzPath = join(APP_ROOT, 'build', filename);
+  const artifactIndex = process.argv.indexOf('--artifact');
+  const artifactArg = artifactIndex >= 0 ? process.argv[artifactIndex + 1] : undefined;
+  let tgzPath;
+  if (artifactArg) {
+    tgzPath = resolve(APP_ROOT, artifactArg);
+    console.log(`▶ Using prebuilt candidate ${tgzPath}`);
+  } else {
+    console.log('▶ Verifying, building, and packaging…');
+    await runCommand('npm', ['run', 'verify'], APP_ROOT);
+    await runCommand('npm', ['run', 'package'], APP_ROOT);
+    tgzPath = join(APP_ROOT, 'build', `${pkg.name}-${pkg.version}.tgz`);
+  }
+  await inspectPack(tgzPath);
+  const filename = tgzPath.split('/').pop();
   const body = await readFile(tgzPath);
   console.log(`▶ Read ${filename} (${body.length} bytes)`);
 
@@ -183,13 +240,18 @@ async function main() {
   const { source } = await uploadPack({ baseUrl, token, filename, body });
   console.log(`▶ Upload OK — source: ${source}`);
 
-  console.log('▶ Installing pack (force=true) …');
+  console.log('▶ Running server-side preinstall policy check …');
+  await preinstallCheck({ baseUrl, token, source });
+  console.log('▶ Preinstall policy check OK');
+
+  console.log('▶ Installing or upgrading exact candidate …');
   const installResp = await installPack({
     baseUrl,
     token,
     source,
     displayName: pkg.displayName,
     version: pkg.version,
+    appId: pkg.name,
   });
   console.log('▶ Install OK');
   console.log(JSON.stringify(installResp, null, 2));
