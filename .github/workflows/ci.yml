@@ -15,7 +15,9 @@ jobs:
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - uses: ./.github/actions/release-build
+      - uses: criblio/cribl-search-app-framework/.github/actions/release-build@e6926f5f1238f6a508f175eb51cf1b9565db4e32
+        with:
+          framework-sha: e6926f5f1238f6a508f175eb51cf1b9565db4e32
       - name: Retain the exact tested candidate
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -37,7 +39,7 @@ jobs:
           test -n "$CRIBL_BASE_URL"
           test -n "$CRIBL_CLIENT_ID"
           test -n "$CRIBL_CLIENT_SECRET"
-          node scripts/deploy.mjs --artifact build/apm-*.tgz
+          npm run deploy -- --artifact build/apm-*.tgz
       - name: Smoke test the candidate through the real Cribl host
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         env:

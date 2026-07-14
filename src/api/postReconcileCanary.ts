@@ -31,6 +31,7 @@
  */
 import type { HttpClient } from '@cribl/app-utils/provisioner';
 import { getCurrentDataset } from '@cribl/app-utils/dataset';
+import { runSearchJob } from '@cribl/app-utils/search-job';
 import {
   generatedEventContractCanaryRead,
   generatedEventContractCanarySend,
@@ -42,6 +43,10 @@ import { kqlDatasetId, kqlStringLiteral } from './kqlSafety';
  *  quoteDataset(). Callers must have set the dataset store upstream. */
 function safeDataset(): string {
   return kqlDatasetId(getCurrentDataset());
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**
@@ -79,78 +84,18 @@ export interface CanaryReport {
   eventContract: { ok: boolean; rowCount: number; message: string };
 }
 
-/**
- * Run a single Cribl search via the HttpClient and return rows.
- * Tightly scoped: kicks off a job, polls for completion (max ~45s),
- * fetches results. NDJSON results come back as a string from
- * HttpClient (the json parse fails and HttpClient returns text);
- * we split + parse line-by-line.
- *
- * Not exposed: this is canary-specific. If the broader app ever
- * needs a Node-side runQuery, promote it to @cribl/app-utils.
- */
 async function runCanaryQuery(
   http: HttpClient,
   kql: string,
   earliest: string,
   latest: string,
 ): Promise<Record<string, unknown>[]> {
-  const createResp = (await http.post('/m/default_search/search/jobs', {
-    query: kql,
+  return runSearchJob(http, kql, {
     earliest,
     latest,
-  })) as { items?: Array<{ id?: string; status?: string }> };
-  const job = createResp.items?.[0];
-  if (!job?.id) throw new Error('canary: job creation returned no items[0].id');
-
-  let status = job.status ?? 'queued';
-  const jobId = job.id;
-  // Total wait budget ~45 s — matches the user-visible app pattern.
-  for (let i = 0; i < 110 && !isTerminal(status); i++) {
-    await delay(400);
-    const poll = (await http.get(
-      `/m/default_search/search/jobs/${encodeURIComponent(jobId)}`,
-    )) as { items?: Array<{ status?: string }> };
-    status = poll.items?.[0]?.status ?? status;
-  }
-  if (status !== 'completed') {
-    throw new Error(`canary: job ${jobId} ended status=${status}`);
-  }
-
-  // Results are NDJSON. HttpClient's auto-parse can confuse this:
-  //   - body has rows → multi-line NDJSON, JSON.parse fails, we get a string ✓
-  //   - body is empty → just the header line "{...}\n", JSON.parse
-  //     succeeds, we get an object instead of NDJSON text.
-  // Handle both shapes; arrays would be the future "results parsed
-  // server-side" case.
-  const raw = await http.get(
-    `/m/default_search/search/jobs/${encodeURIComponent(jobId)}/results?offset=0&limit=100`,
-  );
-  if (Array.isArray(raw)) return raw as Record<string, unknown>[];
-  if (typeof raw !== 'string') {
-    // HttpClient JSON-parsed a single-line response. That single
-    // line is the header (no rows after it), so the result set is
-    // empty.
-    return [];
-  }
-  const lines = raw.split('\n').filter((l) => l.length > 0);
-  const rows: Record<string, unknown>[] = [];
-  for (let i = 1; i < lines.length; i++) {
-    try {
-      rows.push(JSON.parse(lines[i]) as Record<string, unknown>);
-    } catch {
-      // Malformed NDJSON line — skip rather than abort the canary.
-    }
-  }
-  return rows;
-}
-
-function isTerminal(s: string): boolean {
-  return s === 'completed' || s === 'failed' || s === 'canceled';
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
+    limit: 100,
+    timeoutMs: 45_000,
+  });
 }
 
 /**

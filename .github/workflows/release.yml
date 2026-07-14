@@ -26,7 +26,9 @@ jobs:
             echo "::error::Tag $GITHUB_REF_NAME ($TAG_VERSION) does not match package.json version ($PKG_VERSION)"
             exit 1
           fi
-      - uses: ./.github/actions/release-build
+      - uses: criblio/cribl-search-app-framework/.github/actions/release-build@e6926f5f1238f6a508f175eb51cf1b9565db4e32
+        with:
+          framework-sha: e6926f5f1238f6a508f175eb51cf1b9565db4e32
       - name: Upgrade the shared validation workspace with the exact candidate
         env:
           CRIBL_BASE_URL: ${{ secrets.CRIBL_RELEASE_VALIDATION_BASE_URL }}
@@ -37,7 +39,7 @@ jobs:
           test -n "$CRIBL_BASE_URL"
           test -n "$CRIBL_CLIENT_ID"
           test -n "$CRIBL_CLIENT_SECRET"
-          node scripts/deploy.mjs --artifact build/apm-*.tgz
+          npm run deploy -- --artifact build/apm-*.tgz
       - name: Install browser for live Cribl smoke tests
         run: npx playwright install --with-deps chromium
       - name: Smoke test the candidate through the real Cribl host
