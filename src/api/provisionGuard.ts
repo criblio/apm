@@ -16,9 +16,36 @@ export interface GuardTarget {
   /** Identifier used in error messages (search id or `seed:<lookup>`). */
   id: string;
   query: string;
+  /** Human-readable saved-search name, when the target is a search.
+   * Seed-lookup targets have no name and skip the name check. */
+  name?: string;
 }
 
 const EXPORT_TO_LOOKUP_RE = /\bexport\b[^|]*\bto\s+lookup\b/;
+
+/** Cribl's saved-search API rejects any `name` outside this pattern
+ * with an HTTP 400 at create time. Letters, digits, spaces,
+ * underscores and dashes only — no slashes, parens or commas. */
+const SAVED_SEARCH_NAME_RE = /^[a-zA-Z0-9 _-]+$/;
+
+/**
+ * Validate a saved-search `name` against the pattern Cribl enforces.
+ *
+ * v0.10.0 shipped two searches whose names contained `/`, `(`, `)`
+ * and `,` (criblapm__deploy_events, criblapm__noise_budget). Both
+ * failed to create with a 400 — but only in a user's browser, at
+ * provision time, long after CI went green. Nothing checked names
+ * locally, so the plan looked healthy right up to the API call.
+ */
+export function validateName(id: string, name: string): string[] {
+  if (!SAVED_SEARCH_NAME_RE.test(name)) {
+    const bad = [...new Set(name.split('').filter((c) => !/[a-zA-Z0-9 _-]/.test(c)))];
+    return [
+      `${id}: saved-search name ${JSON.stringify(name)} contains character(s) Cribl rejects (${bad.map((c) => JSON.stringify(c)).join(', ')}); names must match ${SAVED_SEARCH_NAME_RE.source} or the API returns HTTP 400 at create time`,
+    ];
+  }
+  return [];
+}
 
 /** Drop `//` comment lines so prose mentioning `(?i)` or `mv-expand`
  * (e.g. the traceOriginators comment block) doesn't trip the checks
@@ -108,5 +135,8 @@ export function validateQuery(id: string, rawQuery: string): string[] {
 
 /** Validate the full plan. Returns all violations across targets. */
 export function validateProvisionPlan(targets: GuardTarget[]): string[] {
-  return targets.flatMap((t) => validateQuery(t.id, t.query));
+  return targets.flatMap((t) => [
+    ...validateQuery(t.id, t.query),
+    ...(t.name === undefined ? [] : validateName(t.id, t.name)),
+  ]);
 }
