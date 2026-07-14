@@ -31,18 +31,18 @@ after this gate is green.
 | RG.1 generated-event contract | Complete | The deployed post-reconcile canary emitted and read two rows/two datatypes at schema v1 through the real `send` boundary. All alert/deploy readers dual-read `data_datatype` and legacy `datatype`, filter canaries, and use stable logical event IDs. |
 | RG.2 ordered/exactly-once alerts | Complete | The two racing state/history jobs were deleted from the live workspace. One immutable evaluator now commits state and history. A live isolated `ok → pending → firing → resolving → ok` traversal replayed every evaluation and produced exactly five durable IDs, one firing, one resolved, and `fire_count=1`. |
 | RG.3 read-only KQL boundary | Complete | Shared serializers now cover datasets, strings, identifiers, numbers, times, trace/span IDs, and predicates. The advanced editor is predicate-only. Investigator approval is app-controlled and every model query is read-only validated. Hostile pipeline, field, route, and prompt tests pass. |
-| RG.4 reproducible release | Complete locally; PR CI confirmation pending | CI and release use the same framework-pinned composite action and build once. `apm-0.11.2.tgz` rebuilt twice at SHA-256 `610613d197f4f276e82870bc22f2c248f4dda4bdc51682adc1e3bda869f9410c`, which is the exact artifact installed in staging. Pack inspection, lock/framework/source metadata, deterministic production SBOM, checksums, and provenance are wired. The owner-approved existing workspace is now the serialized CI/release upgrade target; both workflows reconcile the exact tgz and run the real-host route, generated-event, and exactly-once alert smoke suite before promotion. |
+| RG.4 reproducible release | Complete | CI and release use the same framework-pinned composite action and build once. `apm-0.11.2.tgz` rebuilt twice at SHA-256 `610613d197f4f276e82870bc22f2c248f4dda4bdc51682adc1e3bda869f9410c`, which is the exact artifact installed in staging. Pack inspection, lock/framework/source metadata, deterministic production SBOM, checksums, and provenance are wired. PR #106 recorded a successful serialized upgrade/reconcile and real-host route, generated-event, and exactly-once alert smoke suite against the owner-approved existing workspace. |
 | RG.5 least privilege/product honesty | Complete | The packaged proxy manifest is empty and archive inspection rejects domains, injected headers, scripts, or dependencies. The non-functional notification-target selector and persisted dead settings were removed. |
 | RG.6 dependencies/supply chain | Complete | Full-tree and production audits report zero vulnerabilities. React Router/Vite and transitive findings are patched; Node is pinned to a supported floor; Dependabot, dependency review, license denial, secret scanning, and SHA-pinned Actions are enforced. |
 | RG.7 runtime containment | Complete | Root, route, and major-panel boundaries isolate failures. Secondary query failures render explicit unavailable/unknown state with Retry. `/configuration` replaces the host-conflicting route and wildcard recovery is present. All top-level routes plus forwarded `popstate` pass in the real Cribl iframe; deterministic route-level fault injection keeps Overview alive and labels missing data. |
 
-**Stop-ship publication decision:** engineering criteria and the manual
-live upgrade are green. The release is **READY FOR REVIEW**; merge/tag
-remains held until this PR's serialized live CI run passes against the
-owner-approved existing Cribl workspace. A second disposable workspace
-is not required for this gate. Fresh-install, legacy-upgrade, and clean-
-uninstall coverage remain explicit RG.18 work when a safe disposable
-tenant or equivalent reset mechanism is available.
+**Stop-ship publication decision:** the gate is **CLEARED**. Engineering
+criteria, the manual rehearsal, dependency review, and the serialized
+PR live CI upgrade/smoke run are green. Version 0.11.2 is ready for code
+review and may be merged/tagged after approval. A second disposable
+workspace is not required for this gate. Fresh-install, legacy-upgrade,
+and clean-uninstall coverage remain explicit RG.18 work when a safe
+disposable tenant or equivalent reset mechanism is available.
 
 ### Evidence behind the gate
 
