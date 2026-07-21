@@ -58,3 +58,16 @@ jobs:
             tests/live-generated-events.spec.ts \
             tests/live-alert-transition.spec.ts \
             --project=chromium
+      - name: Preserve Playwright failure evidence (screenshots, traces, ARIA report)
+        # always() so a failing smoke step still uploads its screenshots,
+        # traces, videos and the HTML report's ARIA snapshots — otherwise the
+        # only evidence of a live-host failure dies with the runner.
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: playwright-results-${{ github.sha }}
+          path: |
+            test-results/
+            playwright-report/
+          if-no-files-found: ignore
+          retention-days: 14
