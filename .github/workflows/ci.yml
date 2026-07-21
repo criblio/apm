@@ -15,9 +15,9 @@ jobs:
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - uses: criblio/cribl-search-app-framework/.github/actions/release-build@142866a0c7739e5123f1d0ef2a8cb3dbb3337040
+      - uses: criblio/cribl-search-app-framework/.github/actions/release-build@b1e3e6949f723f61cfd319929695a4178738434a
         with:
-          framework-sha: 142866a0c7739e5123f1d0ef2a8cb3dbb3337040
+          framework-sha: b1e3e6949f723f61cfd319929695a4178738434a
       - name: Retain the exact tested candidate
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
