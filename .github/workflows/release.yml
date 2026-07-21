@@ -26,9 +26,9 @@ jobs:
             echo "::error::Tag $GITHUB_REF_NAME ($TAG_VERSION) does not match package.json version ($PKG_VERSION)"
             exit 1
           fi
-      - uses: criblio/cribl-search-app-framework/.github/actions/release-build@1d10110da4b12c10f66e95ce54f9658544ea3d07
+      - uses: criblio/cribl-search-app-framework/.github/actions/release-build@b1e3e6949f723f61cfd319929695a4178738434a
         with:
-          framework-sha: 1d10110da4b12c10f66e95ce54f9658544ea3d07
+          framework-sha: b1e3e6949f723f61cfd319929695a4178738434a
       - name: Upgrade the shared validation workspace with the exact candidate
         env:
           CRIBL_BASE_URL: ${{ secrets.CRIBL_RELEASE_VALIDATION_BASE_URL }}

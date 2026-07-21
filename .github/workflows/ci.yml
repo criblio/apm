@@ -15,9 +15,9 @@ jobs:
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - uses: criblio/cribl-search-app-framework/.github/actions/release-build@1d10110da4b12c10f66e95ce54f9658544ea3d07
+      - uses: criblio/cribl-search-app-framework/.github/actions/release-build@b1e3e6949f723f61cfd319929695a4178738434a
         with:
-          framework-sha: 1d10110da4b12c10f66e95ce54f9658544ea3d07
+          framework-sha: b1e3e6949f723f61cfd319929695a4178738434a
       - name: Retain the exact tested candidate
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -58,3 +58,16 @@ jobs:
             tests/live-generated-events.spec.ts \
             tests/live-alert-transition.spec.ts \
             --project=chromium
+      - name: Preserve Playwright failure evidence (screenshots, traces, ARIA report)
+        # always() so a failing smoke step still uploads its screenshots,
+        # traces, videos and the HTML report's ARIA snapshots — otherwise the
+        # only evidence of a live-host failure dies with the runner.
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: playwright-results-${{ github.sha }}
+          path: |
+            test-results/
+            playwright-report/
+          if-no-files-found: ignore
+          retention-days: 14

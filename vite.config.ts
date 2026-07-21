@@ -70,7 +70,11 @@ export default defineConfig({
     // `react` imports inside the framework's source — those imports start
     // their lookup from the framework's directory, which has no React.
     // Dedupe redirects them to the consumer's node_modules.
-    dedupe: ['react', 'react-dom'],
+    // @capra/core joined the list when the Investigator chat shell moved
+    // into @cribl/app-utils (it's an optional peer dep there) — without
+    // dedupe the bundle would carry two @capra/core copies, one resolved
+    // from each package's node_modules.
+    dedupe: ['react', 'react-dom', '@capra/core', 'd3-array', 'd3-scale', 'd3-shape', 'd3-time-format'],
   },
   server: {
     cors: true,

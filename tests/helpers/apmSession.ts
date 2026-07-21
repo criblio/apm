@@ -160,6 +160,42 @@ export async function gotoApm(page: Page, inAppPath = '/'): Promise<void> {
     .locator('iframe[src*="/app-ui/apm"]')
     .first()
     .waitFor({ state: 'attached', timeout: 30_000 });
+  await dismissHostAnnouncements(page);
+}
+
+/**
+ * Dismiss workspace-level announcement modals raised by the Cribl host
+ * shell — NOT by the app under test.
+ *
+ * The host periodically rolls a centered modal over the whole page
+ * (e.g. "Introducing AI-accelerated workflows") that overlays the app
+ * iframe and intercepts pointer events, so the first in-app click a spec
+ * makes is swallowed by the modal backdrop. These are host features
+ * unrelated to APM; they persist per-user until acknowledged. Clicking
+ * the primary "Continue" once clears them for the session.
+ *
+ * Best-effort and idempotent: if no announcement is showing (already
+ * acknowledged, or none rolled out), this is a no-op. Keyed on known
+ * announcement signatures rather than blindly clicking any "Continue"
+ * so we never dismiss a modal the app itself raised. Add new host
+ * announcements to KNOWN_HOST_ANNOUNCEMENTS as they appear.
+ */
+const KNOWN_HOST_ANNOUNCEMENTS = [/Introducing AI-accelerated workflows/i];
+
+export async function dismissHostAnnouncements(page: Page): Promise<void> {
+  for (const signature of KNOWN_HOST_ANNOUNCEMENTS) {
+    const banner = page.locator('body').getByText(signature).first();
+    try {
+      if (!(await banner.isVisible({ timeout: 1_500 }).catch(() => false))) continue;
+      await page
+        .getByRole('button', { name: 'Continue', exact: true })
+        .first()
+        .click({ timeout: 5_000 });
+      await banner.waitFor({ state: 'hidden', timeout: 10_000 }).catch(() => {});
+    } catch {
+      /* best-effort — a host modal we can't dismiss shouldn't crash the spec here */
+    }
+  }
 }
 
 /**
