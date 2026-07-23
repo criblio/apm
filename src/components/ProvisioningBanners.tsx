@@ -33,6 +33,7 @@ import { createBrowserHttpClient } from '@cribl/app-utils/provisioner';
 import { useDataset } from '@cribl/app-utils/dataset';
 import { planOnly, type PlanAction } from '../api/provisioner';
 import { getStatus as getDatasetStatus } from '../api/datasetProvisioner';
+import { CONFIGURATION_PATH } from '../routes/paths';
 import s from './ProvisioningBanners.module.css';
 
 export default function ProvisioningBanners() {
@@ -92,26 +93,34 @@ export default function ProvisioningBanners() {
         },
       ];
     },
-    // dataset is intentionally the only dep: it forces a sources
-    // rebuild (and a re-check via useProvisioningBanners) when the
-    // dataset changes, even though the closure doesn't read it.
+    // These deps force a `sources` rebuild — and thus a re-check via
+    // useProvisioningBanners — even though the closure reads neither.
+    //   - dataset:   planOnly() builds its plan from getCurrentDataset(),
+    //     so a dataset change must recompute the diff.
+    //   - pathname:  the banner lives in the persistent AppShell, so
+    //     without this it checks once and never again. After the user
+    //     provisions on the Configuration page and navigates away, the
+    //     path change re-runs planOnly() so a now-complete plan clears
+    //     the banner instead of it lingering until a full app reload.
+    //     planOnly() is a saved-search list (one cheap GET), not a
+    //     search job, so re-checking per navigation is inexpensive.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [dataset],
+    [dataset, location.pathname],
   );
 
   const banners = useProvisioningBanners(sources);
 
-  // Suppress on Settings page itself — the panels there already
-  // tell the user what's missing, and the banner pointing at the
-  // page they're on adds noise.
-  if (location.pathname === '/settings') return null;
+  // Suppress on the Configuration page itself — the panels there
+  // already tell the user what's missing, and the banner pointing at
+  // the page they're on adds noise.
+  if (location.pathname === CONFIGURATION_PATH) return null;
   if (banners.length === 0) return null;
 
   return (
     <div className={s.stack}>
       {banners.map((b) => (
         <Banner key={b.id} {...b}>
-          <Link to="/settings" className={s.bannerAction}>
+          <Link to={CONFIGURATION_PATH} className={s.bannerAction}>
             Open settings
           </Link>
         </Banner>

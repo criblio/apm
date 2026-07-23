@@ -17,6 +17,7 @@ import ServicesListPage from './routes/ServicesListPage';
 import AlertsPage from './routes/AlertsPage';
 import ErrorsPage from './routes/ErrorsPage';
 import NotFoundPage from './routes/NotFoundPage';
+import { CONFIGURATION_PATH } from './routes/paths';
 import ResilienceBoundary from './components/ResilienceBoundary';
 
 function contained(name: string, page: ReactNode): ReactNode {
@@ -55,7 +56,7 @@ export default function App() {
             <Route path="/alerts" element={contained('Alerts', <AlertsPage />)} />
             <Route path="/errors" element={contained('Errors', <ErrorsPage />)} />
             <Route path="/investigate" element={contained('Investigator', <InvestigatePage />)} />
-            <Route path="/configuration" element={contained('Configuration', <SettingsPage />)} />
+            <Route path={CONFIGURATION_PATH} element={contained('Configuration', <SettingsPage />)} />
             <Route path="/trace/:traceId" element={contained('Trace', <TraceView />)} />
             <Route path="/compare" element={contained('Trace Compare', <ComparePage />)} />
             <Route path="/compare/:idA/:idB" element={contained('Trace Compare', <ComparePage />)} />

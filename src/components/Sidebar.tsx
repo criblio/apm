@@ -13,6 +13,7 @@
  */
 import { useLocation, useNavigate } from 'react-router-dom';
 import { VerticalNavigation } from '@capra/core';
+import { CONFIGURATION_PATH } from '../routes/paths';
 
 interface NavItem {
   label: string;
@@ -146,7 +147,7 @@ const sections: NavItem[][] = [
 
 const settingsItem: NavItem = {
   label: 'Configuration',
-  to: '/configuration',
+  to: CONFIGURATION_PATH,
   icon: (
     <svg {...ICON_PROPS}>
       <circle cx="12" cy="12" r="3" />
