@@ -1,180 +1,79 @@
 # Cribl APM
 
-**Cribl APM** is a [Cribl App Platform](AGENTS.md) app that delivers an
-APM experience — service health overview, distributed traces, system
-architecture, and AI-driven anomaly investigation — on top of
-OpenTelemetry traces, logs, and metrics landing in a Cribl Search
-dataset. It runs as a sandboxed iframe inside Cribl Search and ships to
-Cribl Cloud as an installable pack.
+Cribl APM gives you an APM experience — service health, distributed
+traces, dependency maps, and AI-driven root-cause investigation — over
+OpenTelemetry data landing in Cribl Search. It runs as a sandboxed
+[Cribl App Platform](AGENTS.md) app inside your Cribl Cloud workspace.
 
-## Features
+Cribl APM is a **UI over data you already have** — it doesn't ingest or
+store anything. You point it at a Cribl Search dataset that's receiving
+OpenTelemetry traces, logs, and metrics.
 
-- **Home** — multi-service health board with golden-signal sparklines,
-  top slow / error trace classes, and operation-level anomaly
-  highlights.
-- **Search** — Jaeger-style trace search by service / operation / time
-  range, returning matching traces with root operation, span count,
-  duration, and started-at.
-- **Trace detail** — full waterfall span tree with timeline, service
-  color coding, and a per-span detail panel (tags, events, references,
-  process tags). Reachable from any search row or via `/trace/:id`.
-- **System Architecture** — force-directed service dependency graph
-  computed from `parent_span_id` self-joins. Click any node to jump to
-  Search filtered to that service.
-- **Compare** — structural diff between two traces, with rows coloured
-  by shared / only-in-A / only-in-B and per-side durations. Deep
-  linkable as `/compare/:idA/:idB`.
-- **Investigate** — embedded Cribl Copilot Investigator: a chat UI that
-  takes a seed (service + symptom, or free-form prompt) and walks the
-  dataset via approved tool calls to surface a root cause.
-- **Service detail** — per-service drilldown with metric cards and
-  recent traces, reachable from anywhere a service name is rendered.
+## Getting started
 
-## Prerequisites — telemetry source
+Four steps from install to your services on screen.
 
-Cribl APM is a UI; it does not ingest data. It expects OpenTelemetry
-traces, logs, and metrics to already be landing in a Cribl Search
-dataset (default name: `otel`, configurable on the in-app Settings
-page and persisted to the pack-scoped KV store).
+### 1. Land OpenTelemetry data in a Cribl Search dataset
 
-The companion repo
-**[`criblio/otel-demo-criblcloud`](https://github.com/criblio/otel-demo-criblcloud)**
-is the Terraform-orchestrated pipeline that runs the OpenTelemetry Demo
-and ships its OTLP traffic into Cribl Cloud. Standing that up — or
-otherwise feeding equivalent OTel data into a Cribl Search dataset — is
-a prerequisite for non-empty pages in this app.
+Cribl APM reads from a dataset that already contains OTel data (default
+name `otel`). The dataset needs:
 
-The dataset must contain:
-
-- **Spans** — OTel span shape with `end_time_unix_nano` populated
-- **Logs** — `body` field populated
+- **Spans** — OTel span rows with `end_time_unix_nano` populated
+- **Logs** — rows with a `body` field
 - **Metrics** — rows where `datatype == "generic_metrics"`
 
-See `src/api/agentContext.ts` for the exact KQL filters the app uses.
+No OTel data flowing yet? The companion repo
+[`criblio/otel-demo-criblcloud`](https://github.com/criblio/otel-demo-criblcloud)
+stands up the OpenTelemetry Demo and ships it into Cribl Cloud.
 
-## Install
+### 2. Install the pack
 
-### From a tagged release
+1. Download `apm-<version>.tgz` from the
+   [Releases page](https://github.com/criblio/apm/releases).
+2. In your Cribl Cloud workspace, upload it via the **Apps** UI.
+3. The app appears in your workspace nav at **`/apps/apm`**.
 
-Each `v*` tag on this repo triggers the GitHub Actions release workflow,
-which builds and attaches `apm-<version>.tgz` to a new
-[GitHub Release](https://github.com/criblio/apm/releases). To install:
+### 3. Point it at your data and provision
 
-1. Download `apm-<version>.tgz` from the Releases page.
-2. Upload the tgz to your Cribl Cloud workspace via the Apps UI, or
-   PUT it to `/api/v1/packs?filename=apm-<version>.tgz` then POST
-   `{source, force: true}` to `/api/v1/packs`.
-3. The app appears at `/apps/apm` in your workspace nav.
+Open the app, go to the **Configuration** tab, and:
 
-### From source
+1. **Workspace → Dataset** — set to the dataset receiving your OTel data
+   (default `otel`).
+2. **Setup → Scheduled searches** — click **Preview plan**, then
+   **Apply**. This creates the cached searches the pages read from.
+3. **Setup → Dataset acceleration** — click **Apply** to index the fields
+   the queries filter on.
 
-`npm run deploy` automates the same upload from a local checkout. It
-reads OAuth credentials from `.env` (`CRIBL_BASE_URL`,
-`CRIBL_CLIENT_ID`, `CRIBL_CLIENT_SECRET` — the same triple the Cribl
-MCP server uses) and auto-detects production vs. staging from the
-workspace hostname. The two underlying scripts:
+The **Setup status** card at the top of the page turns green once both
+provisioning steps are done.
 
-- `npm run package` — `tsc -b && vite build && node scripts/package.mjs`,
-  produces `build/apm-<version>.tgz`.
-- `npm run deploy` — runs `package` then PUTs the tgz to
-  `/api/v1/packs?filename=…` and POSTs `{source, force: true}` to
-  `/api/v1/packs` to install/replace.
+### 4. Open it
 
-## How it talks to Cribl Search
+Give the scheduled searches a few minutes to run, then open **Home** — it
+fills with your services, golden-signal sparklines, and the slowest and
+most error-prone traces.
 
-All data comes from the Cribl Search REST API via the standard pack-scoped
-fetch proxy that the Cribl App Platform injects into the iframe. There are
-no external API calls — `config/proxies.yml` doesn't need entries for any
-runtime data source.
+## What you get
 
-The query layer lives in `src/api/`:
+- **Home** — multi-service health board with golden-signal sparklines and
+  top slow / error trace classes.
+- **Search** — Jaeger-style trace search by service, operation, and time.
+- **Trace detail** — full waterfall span tree with per-span detail.
+- **System Architecture** — force-directed service dependency graph.
+- **Compare** — structural diff between two traces.
+- **Investigate** — embedded Cribl Copilot: seed a symptom and it walks
+  the data to surface a root cause.
 
-| File | Role |
-|---|---|
-| `cribl.ts` | Thin client for `/m/default_search/search/jobs` (create → poll → NDJSON results) |
-| `queries.ts` | KQL builders for services, operations, findTraces, traceSpans, dependencies |
-| `transform.ts` | Maps raw OTel span rows → Jaeger-shaped `{trace, spans, processes}` |
-| `search.ts` | High-level verbs the UI calls (`listServices`, `findTraces`, `getTrace`, etc.) |
+## Notes
 
-`findTraces` is a 2-stage pipeline: stage 1 returns trace IDs participating
-in the filter (any depth, not just root spans — matching Jaeger semantics),
-stage 2 fetches all spans for those IDs in one query and the client computes
-the actual root span.
+- **Shareable URLs**: the host router flattens externally-pasted deep
+  links (e.g. `/apps/apm/trace/abc`) to the default page. Navigate inside
+  the app instead — tabs, clicks, and back/forward all work.
 
-## Local development
+## Developing
 
-This app is meant to run **inside Cribl Search's iframe**, not standalone.
-The platform injects `window.CRIBL_API_URL` and proxies `fetch()` calls
-through the parent window with auth + pack scoping. Hitting
-`http://localhost:5173/` directly in a regular tab will load the chrome
-correctly but every API call will fail.
-
-### The dev loop
-
-1. Run `npm run dev` — Vite serves on `localhost:5173` and exposes a
-   `/package.tgz?dev=true` endpoint that the Cribl App Platform's
-   `__local__` slot consumes.
-2. In your Cribl Cloud workspace, open the URL **`/apps/__local__`**
-   (e.g. `https://your-workspace.cribl.cloud/apps/__local__`). The
-   platform iframes `localhost:5173` and wires up `window.CRIBL_API_URL`
-   for you.
-3. Save any file → Vite HMR reloads inside the iframe → live data,
-   instant feedback.
-
-CSP is already whitelisted for `http://localhost:5173` on the Cribl Cloud
-side, so the iframe loads cleanly.
-
-When you're ready to ship a build to a real workspace, see the
-[Install](#install) section above — `npm run deploy` is the source-side
-path.
-
-## Project layout
-
-```
-src/
-├── api/                # Cribl Search client + KQL + transforms
-├── components/         # AppShell, NavBar, SearchForm, TraceTable,
-│                       # SpanTree, SpanDetail, DependencyGraph, …
-├── routes/             # SearchPage, TraceView, SystemArchPage, ComparePage
-├── styles/             # tokens.css (Cribl Design System subset) + base.css
-├── utils/              # spans.ts (timeline + service color), diff.ts
-├── App.tsx             # Router (basename = window.CRIBL_BASE_PATH)
-└── main.tsx
-config/
-└── proxies.yml         # Empty — no external API calls
-scripts/
-├── package.mjs         # Build the production tgz
-├── pkgutil.mjs         # Cribl-supplied helper used by Vite + package.mjs
-├── deploy.mjs          # OAuth + upload + install
-├── browser.js          # Playwright-over-CDP helper for dev automation
-├── browser-smoke.js    # CDP pipeline smoke test (npm run browser:smoke)
-└── chromium-vnc.sh     # Relaunch local Chromium with CDP port exposed
-vite.config.ts          # Vite + Cribl App Platform plugins
-```
-
-## Known limitation — external deep links are flattened by the host
-
-The Cribl App Platform host router strips sub-paths and query strings from
-any externally-loaded app URL. Navigating a browser directly to
-`/apps/apm/trace/abc123`, `/apps/apm/architecture`, or
-`/apps/apm/search?service=frontend` always lands on the app's default
-route (`/search`) with empty state. Internal navigation (clicking a tab,
-clicking a trace in the results table, navigating via `useNavigate()`) works
-fine — the URL bar updates via `CRIBL_NAV` postMessages from the iframe up
-to the parent, and back-button history works as expected.
-
-This means the app's routes are not currently shareable via pasted URLs. A
-bug has been filed upstream; when it's fixed, no app-side changes should be
-needed — the route definitions in `App.tsx` already cover the relevant
-deep-link patterns.
-
-The `navItems` entry in `package.json` declares the app's routes in case the
-host ever starts using it to permit deep-link navigation; it is harmless
-today if ignored.
-
-## Visual style
-
-The chrome mirrors Cribl Search: dark navy nav bar, teal brand accent,
-green primary buttons, Open Sans, the same `--cds-*` design tokens
-(subset). See `src/styles/tokens.css` for the ~30 CSS custom properties
-in use.
+Building or contributing to Cribl APM? See
+**[docs/development.md](docs/development.md)** for the local dev loop,
+architecture, deploy-from-source, and project layout — plus
+[AGENTS.md](AGENTS.md) (platform reference) and [CLAUDE.md](CLAUDE.md)
+(repo conventions).
