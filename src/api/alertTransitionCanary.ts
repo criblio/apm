@@ -87,7 +87,7 @@ export function alertTransitionCanaryStep(
               evaluated_at, event_type, alert_id, alert_status, svc,
               signal_type, is_bad, is_canary, fire_count,
               consecutive_bad, consecutive_good
-    | send tee=true group="search"`;
+    | export tee=true to search "${ds}"`;
 }
 
 export function alertTransitionCanaryRead(canaryId: string, dataset: string): string {
