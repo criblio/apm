@@ -502,11 +502,11 @@ function priorAlertStateJoin(): string {
 
 /**
  * Alert evaluator and immutable commit. It computes health, joins the latest
- * persisted evaluator event, applies the state machine, then sends the exact
- * result rows through Local Search with `tee=true`. The send is the durable
- * state/history write and tee makes those same rows available in $vt_results
- * for the UI. There is no second state-machine execution or mutable state
- * export for another same-cron job to race.
+ * persisted evaluator event, applies the state machine, then writes the exact
+ * result rows back to the dataset with `| export tee=true to search`. The
+ * export is the durable state/history write and `tee=true` makes those same
+ * rows available in $vt_results for the UI. There is no second state-machine
+ * execution or mutable state export for another same-cron job to race.
  *
  * Runs 1 minute after the summary searches so their results are
  * available.
@@ -704,7 +704,7 @@ export function alertEvaluator(): string {
               curr_error_rate, prev_error_rate,
               curr_requests, prev_requests,
               fire_count, consecutive_bad, consecutive_good
-    | send tee=true group="search"`;
+    | export tee=true to search "${quoteDataset()}"`;
 }
 
 /** Transition history, deduplicated by stable event ID with legacy dual-read. */
@@ -830,7 +830,7 @@ export function deployEventsSend(): string {
               datatype="${DEPLOY_EVENT_DATATYPE}", schema_version,
               event_id, producer, record_kind,
               svc, version, first_seen, n_spans
-    | send tee=true group="search"`;
+    | export tee=true to search "${ds}"`;
 }
 
 /** Recent generated deploy events, with v0 dual-read and logical deduplication. */

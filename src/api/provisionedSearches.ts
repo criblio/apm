@@ -322,9 +322,9 @@ export function getProvisioningPlan(): ProvisionedSearch[] {
     //
     // prev_summary maintains the comparison baseline. The evaluator
     // reads its prior state from immutable generated events, emits one
-    // versioned snapshot per alert, and uses send tee=true so that the
-    // exact committed rows also populate $vt_results for the UI. No
-    // same-cron consumer can race a mutable state lookup.
+    // versioned snapshot per alert, and uses `export tee=true to search`
+    // so that the exact committed rows also populate $vt_results for the
+    // UI. No same-cron consumer can race a mutable state lookup.
     {
       id: 'criblapm__home_alerts_prev',
       name: 'Cribl APM - previous window summary',
@@ -340,7 +340,7 @@ export function getProvisioningPlan(): ProvisionedSearch[] {
       id: 'criblapm__home_alerts',
       name: 'Cribl APM - alert evaluator',
       description:
-        'Cribl APM: computes health and debounce state from the latest immutable evaluator event, emits a versioned snapshot through Local Search, and retains that exact commit in $vt_results via send tee=true.',
+        'Cribl APM: computes health and debounce state from the latest immutable evaluator event, exports a versioned snapshot to the dataset, and retains that exact commit in $vt_results via export tee=true to search.',
       query: Q.alertEvaluator(),
       // -15m window so fresh fault-injection bursts on low-traffic
       // services aren't diluted by healthy traffic from the prior
@@ -462,7 +462,7 @@ export function getProvisioningPlan(): ProvisionedSearch[] {
     // ── Deploy / change correlation events (P2.2 phase 1) ───
     //
     // Detects new (service.name, service.version) tuples and emits
-    // a criblapm_deploy event to the dataset via | send. Read-side
+    // a criblapm_deploy event to the dataset via `export to search`. Read-side
     // surfaces (Investigator context, Service Detail markers,
     // "deployed Nm before alert" chip in Detected Issues) land in
     // follow-up PRs. Cadence: every 30 min so a fresh deploy
@@ -472,7 +472,7 @@ export function getProvisioningPlan(): ProvisionedSearch[] {
       id: 'criblapm__deploy_events',
       name: 'Cribl APM - deploy change correlation events',
       description:
-        'Cribl APM: detects new (service.name, service.version) tuples in the last hour and emits criblapm_deploy events via | send group="search" so the deploy history is searchable from the dataset. Read by Investigator context and (eventually) Service Detail RED-chart markers.',
+        'Cribl APM: detects new (service.name, service.version) tuples in the last hour and emits criblapm_deploy events via `export to search` so the deploy history is searchable from the dataset. Read by Investigator context and (eventually) Service Detail RED-chart markers.',
       query: Q.deployEventsSend(),
       earliest: '-1h',
       latest: 'now',
