@@ -646,6 +646,61 @@ DO NOT compose a custom \`parent_span_id\`-self-join over raw
 spans for this — the edge metrics already have per-edge call + error
 counts; recomputing from spans is slow and adds nothing.
 
+### Client-side timeout & survivorship bias — a healthy downstream does NOT exonerate it
+
+The most seductive wrong turn in this whole preamble: the upstream
+service returns 500s, you check its downstream, the downstream looks
+perfectly healthy (0 errors, sub-ms p95, edge \`outcome="ok"\`), so you
+"rule out the downstream" and blame the upstream's own handler. **That
+reasoning is invalid whenever the upstream failure is a client-side
+timeout on the outbound call.** Two independent tells, both computable
+from data you already gather:
+
+1. **A tight latency cluster at a round boundary is a fixed client
+   timeout, not organic handler latency.** When the erroring spans have
+   p50 ≈ p95 ≈ p99 all pinned within a few ms of a round number
+   (~1s / ~5s / ~10s / ~30s) — e.g. p50/p95/p99 = 5016/5033/5049 ms —
+   that is a *constant*, not a distribution. Real handler-latency and
+   real saturation tails are spread out (p99 ≫ p50). A pinned cluster is
+   a client/RPC deadline firing: the caller gave up at its configured
+   (often **default, silent**) timeout. It is NOT evidence of a bug in
+   the caller's business logic — a logic bug wouldn't produce a
+   fixed-constant latency.
+
+2. **A healthy downstream is survivorship bias under a client timeout.**
+   When the client abandons a call at its deadline, the downstream span
+   for that request never completes/records — so the downstream's
+   telemetry (its server error rate, its p95, and the \`outcome="ok"\`
+   edge counter) *structurally cannot show the failed requests*. "0
+   downstream errors" then means "the downstream never saw the ones that
+   failed," not "the downstream is fine." \`criblapm_edge_calls_total\`
+   under-counts timeouts the same way. The disambiguating signal is the
+   **attempt-vs-success count gap on the upstream**: compare an
+   upstream "started the call" marker (e.g. a \`Requesting quote\` log /
+   request-received count) against a "call succeeded" marker (e.g.
+   \`Sending Quote\`). If (attempts − successes) ≈ the error count, the
+   requests are being dropped at the client boundary *while waiting on a
+   slow/saturated downstream* — the downstream is the bottleneck even
+   though its own numbers look clean.
+
+So for a timeout-shaped failure the real cause is one of: (a) the
+**downstream is slow / concurrency-saturated** (the usual case — a
+single-threaded or replica-starved dependency that can't drain the
+burst), or (b) the client's timeout is set too tight (frequently an
+unset default). The fix is scaling/relaxing the downstream and/or an
+explicit client timeout + retry — **never** "patch the caller's handler."
+
+**Confidence discipline.** Separate *where the error surfaced* (high
+confidence — the upstream span returns the 500) from *what caused it*
+(the mechanism). Never assign high confidence to a remediation that
+contradicts your own evidence: recommending "fix the handler" while your
+latency numbers are a pinned 5s timeout cluster is internally
+inconsistent. If the disambiguating evidence (attempt/success gap,
+client error message = \`DeadlineExceeded\`/\`cancelled\`/\`timeout\`,
+downstream saturation) is missing or unchecked, say so and rank the
+downstream-saturation alternative explicitly rather than declaring the
+downstream "ruled out."
+
 ### Common failure modes to check (in priority order)
 
 If the leak signature above doesn't fit (e.g. the error pattern is a
@@ -1366,6 +1421,62 @@ named upstream and that upstream's own server spans look fine,
 attribution down into a healthy upstream is the cascading-
 inference regression — apply rule 1's L7 proxy attribution
 illusion disambiguation instead.
+
+### Counterexample — labeled WRONG answer (client-timeout survivorship, 2026-07-25)
+
+The exact trap from the "Client-side timeout & survivorship bias"
+rule above, from a real transcript. When you find yourself "ruling
+out" a healthy downstream and blaming the caller's handler, stop and
+re-read that rule.
+
+\`\`\`
+WRONG conclusion shape:
+
+  Evidence the agent gathered:
+    shipping POST /get-quote: 270 HTTP 500s, ~591-701 ok
+    error-span latency cluster: p50 5016.7ms, p95 5033.4ms,
+                                p99 5049.5ms  (all pinned ~5000ms)
+    edge shipping->quote: 1792 calls, ALL outcome=ok, edge p95 0.31ms
+    quote SERVER spans: 972 POST /getquote, 0 errors, p95 0.38ms
+    shipping logs: 974 "Requesting quote", 705 "Sending Quote"
+                   (delta 269 ~ the 270 failures)
+
+  Wrong reasoning (the regression):
+    "Downstream quote is healthy (0 errors, sub-ms, edge all ok), so
+     the downstream is ruled out. Root cause is localized to
+     shipping's own POST /get-quote handler timing out at ~5s.
+     Recommend: roll back / patch the shipping handler."
+
+  Why this is wrong:
+  1. p50 ≈ p95 ≈ p99 pinned within ~30ms of 5000ms is a FIXED CLIENT
+     TIMEOUT, not a handler-latency distribution and not a business-
+     logic bug (a logic bug wouldn't produce a constant 5s). It's the
+     caller's outbound-call deadline firing — here awc's silent 5s
+     default.
+  2. "quote is healthy" is SURVIVORSHIP BIAS. The requests that timed
+     out at 5s never produced a completed quote span, so quote's 0
+     errors / sub-ms p95 / edge outcome=ok structurally exclude the
+     failures. A healthy downstream does NOT exonerate it under a
+     client timeout.
+  3. The decisive tell is the "Requesting quote" (974) minus "Sending
+     Quote" (705) = ~269 gap matching the 270 errors: requests entered,
+     waited on a slow downstream, and were cut at the client deadline.
+     The downstream is the bottleneck (concurrency-saturated under the
+     burst) even though its own numbers look clean.
+
+  Correct conclusion:
+    Failure mode = downstream-saturation surfaced as an upstream
+    client-timeout (not a caller-handler bug).
+    Remediation = scale / relax the downstream's concurrency ceiling,
+    and/or set an explicit client timeout + retry on the outbound
+    call. Patching the shipping handler fixes nothing.
+\`\`\`
+
+If the erroring spans cluster tightly at a round-number latency AND the
+"failing" service's downstream looks perfectly healthy, that
+combination is the signature — the downstream is the suspect, not the
+exonerated party. Confidence in "downstream ruled out" should be LOW
+until you've checked the attempt-vs-success gap.
 
 ### Signals to explicitly ignore as noise
 
