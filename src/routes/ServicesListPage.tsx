@@ -1,3 +1,4 @@
+import { newQueryGeneration, captureQueryGeneration } from '../api/queryGeneration';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Button, Menu } from '@capra/core';
@@ -11,6 +12,8 @@ import TraceClassList, { type ClassItem } from '../components/TraceClassList';
 import OperationAnomalyList from '../components/OperationAnomalyList';
 import {
   listServiceSummaries,
+  listServiceCounts,
+  listServiceLatencies,
   getServiceTimeSeries,
   listSlowTraceClasses,
   listErrorClasses,
@@ -188,9 +191,12 @@ export default function ServicesListPage() {
   const streamFilterEnabled = useStreamFilterEnabled();
 
   const fetchAll = useCallback(async () => {
+    newQueryGeneration(); // cancel the prior page/fetch's in-flight reads
+    const isCurrent = captureQueryGeneration(); // guard stale async setState
     setError(null);
     setPartialFailures({});
     const recordFailure = (panel: string, value: unknown) => {
+      if (!isCurrent()) return;
       setPartialFailures((cur) => ({
         ...cur,
         [panel]: value instanceof Error ? value.message : String(value),
@@ -204,72 +210,99 @@ export default function ServicesListPage() {
     setLoadingAnomalies(true);
     setPanelCacheUpdatedMs(null);
 
-    const prev = previousWindow(range);
-    listServiceSummaries(prev.earliest, prev.latest)
-      .then((r) => setPrevSummaries(r))
-      .catch((err: unknown) => recordFailure('Prior-window comparison', err));
-
-    getDependencies(range, 'now')
-      .then((r) => setEdges(r))
-      .catch((err: unknown) => recordFailure('Service dependencies', err));
-
-    listOperationAnomalies(range, 'now')
-      .then((r) => setAnomalies(r))
-      .catch((err: unknown) => recordFailure('Operation anomalies', err))
-      .finally(() => setLoadingAnomalies(false));
-
-    if (range === '-1h' && streamFilterEnabled) {
-      try {
-        const cached = await listCachedHomePanels();
-        if (cached.serviceSummaries && cached.serviceBuckets && cached.slowClasses) {
-          setSummaries(cached.serviceSummaries);
-          setBuckets(cached.serviceBuckets);
-          setSlowClasses(cached.slowClasses);
-          setLoadingSummaries(false);
-          setLoadingBuckets(false);
-          setLoadingSlow(false);
-          setPanelCacheUpdatedMs(cached.lastUpdatedMs);
-
-          if (cached.errorClasses && cached.errorClasses.length > 0) {
-            setErrorClasses(cached.errorClasses);
-            setLoadingErrors(false);
-          } else {
-            void listErrorClasses(range, 'now')
-              .then((r) => setErrorClasses(r))
-              .catch((err: unknown) => recordFailure('Error trace classes', err))
-              .finally(() => setLoadingErrors(false));
-          }
-          setLastRefresh(Date.now());
-          return;
-        }
-      } catch { /* fall through */ }
-    }
-
-    const pSummaries = listServiceSummaries(range, 'now')
-      .then((r) => setSummaries(r))
+    // PRIORITY: render the catalog from the ~114ms counter read FIRST and
+    // await it, BEFORE firing anything else. The slow reads below —
+    // prev-window / anomalies / slow+error cache are KQL *search jobs*
+    // (create→poll→…→results, many round-trips) — hog the browser's ~6
+    // connections; firing them first starves the counter and the whole
+    // catalog waits seconds. Counts-first + this ordering = counter-speed
+    // table. Latency (p50/p95/p99) enriches asynchronously.
+    const pSummaries = listServiceCounts(range, 'now')
+      .then((r) => {
+        if (!isCurrent()) return;
+        setSummaries(r);
+        void listServiceLatencies(range, 'now')
+          .then((lat) => {
+            if (!lat || !isCurrent()) return;
+            setSummaries((prevS) =>
+              prevS.map((sv) => {
+                const l = lat.get(sv.service);
+                return l ? { ...sv, ...l } : sv;
+              }),
+            );
+          })
+          .catch(() => { /* latency enrichment is best-effort */ });
+      })
       .catch((e: unknown) => {
+        if (!isCurrent()) return;
         setError(e instanceof Error ? e.message : String(e));
         setSummaries([]);
       })
-      .finally(() => setLoadingSummaries(false));
+      .finally(() => { if (isCurrent()) setLoadingSummaries(false); });
+    await pSummaries;
+
+    // Secondary panels — fired only AFTER the catalog counter resolves so
+    // they don't contend for connections during first paint.
+    const prev = previousWindow(range);
+    listServiceSummaries(prev.earliest, prev.latest)
+      .then((r) => { if (isCurrent()) setPrevSummaries(r); })
+      .catch((err: unknown) => recordFailure('Prior-window comparison', err));
+
+    getDependencies(range, 'now')
+      .then((r) => { if (isCurrent()) setEdges(r); })
+      .catch((err: unknown) => recordFailure('Service dependencies', err));
+
+    listOperationAnomalies(range, 'now')
+      .then((r) => { if (isCurrent()) setAnomalies(r); })
+      .catch((err: unknown) => recordFailure('Operation anomalies', err))
+      .finally(() => { if (isCurrent()) setLoadingAnomalies(false); });
 
     const pBuckets = getServiceTimeSeries(binSeconds, undefined, range, 'now')
-      .then((r) => setBuckets(r))
+      .then((r) => { if (isCurrent()) setBuckets(r); })
       .catch((err: unknown) => recordFailure('Service time series', err))
-      .finally(() => setLoadingBuckets(false));
+      .finally(() => { if (isCurrent()) setLoadingBuckets(false); });
 
-    const pSlow = listSlowTraceClasses(range, 'now')
-      .then((r) => setSlowClasses(r))
-      .catch((err: unknown) => recordFailure('Slow trace classes', err))
-      .finally(() => setLoadingSlow(false));
+    // $vt_results panels (slow trace classes, error classes) are NOT
+    // metric-shaped. Load them NON-BLOCKING from the precomputed cache at
+    // -1h (fast), else live — either way they never gate the RED panels.
+    const pSlowErrors = (async () => {
+      let slowDone = false;
+      let errorsDone = false;
+      if (range === '-1h' && streamFilterEnabled) {
+        try {
+          const cached = await listCachedHomePanels();
+          if (!isCurrent()) return;
+          setPanelCacheUpdatedMs(cached.lastUpdatedMs);
+          if (cached.slowClasses) {
+            setSlowClasses(cached.slowClasses);
+            setLoadingSlow(false);
+            slowDone = true;
+          }
+          if (cached.errorClasses && cached.errorClasses.length > 0) {
+            setErrorClasses(cached.errorClasses);
+            setLoadingErrors(false);
+            errorsDone = true;
+          }
+        } catch { /* fall through to live */ }
+      }
+      const live: Promise<unknown>[] = [];
+      if (!slowDone) {
+        live.push(listSlowTraceClasses(range, 'now')
+          .then((r) => { if (isCurrent()) setSlowClasses(r); })
+          .catch((err: unknown) => recordFailure('Slow trace classes', err))
+          .finally(() => { if (isCurrent()) setLoadingSlow(false); }));
+      }
+      if (!errorsDone) {
+        live.push(listErrorClasses(range, 'now')
+          .then((r) => { if (isCurrent()) setErrorClasses(r); })
+          .catch((err: unknown) => recordFailure('Error trace classes', err))
+          .finally(() => { if (isCurrent()) setLoadingErrors(false); }));
+      }
+      await Promise.allSettled(live);
+    })();
 
-    const pErrors = listErrorClasses(range, 'now')
-      .then((r) => setErrorClasses(r))
-      .catch((err: unknown) => recordFailure('Error trace classes', err))
-      .finally(() => setLoadingErrors(false));
-
-    await Promise.allSettled([pSummaries, pBuckets, pSlow, pErrors]);
-    setLastRefresh(Date.now());
+    await Promise.allSettled([pSummaries, pBuckets, pSlowErrors]);
+    if (isCurrent()) setLastRefresh(Date.now());
   }, [range, streamFilterEnabled]);
 
   useEffect(() => { void fetchAll(); }, [fetchAll]);

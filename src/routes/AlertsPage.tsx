@@ -6,6 +6,7 @@ import StatusBanner from '../components/StatusBanner';
 import AlertTimeline from '../components/AlertTimeline';
 import InvestigateButton from '../components/InvestigateButton';
 import { runQuery } from '../api/cribl';
+import { newQueryGeneration, captureQueryGeneration } from '../api/queryGeneration';
 import * as Q from '../api/queries';
 import { serviceColor } from '../utils/spans';
 import type { CachedAlertRow } from '../api/panelCache';
@@ -142,29 +143,38 @@ export default function AlertsPage() {
 
   const hasData = useRef(false);
   const fetchAlerts = useCallback(async (silent = false) => {
+    newQueryGeneration(); // cancel prior page/poll's in-flight KQL on nav/refresh
+    const isCurrent = captureQueryGeneration();
     if (!silent) { setLoading(true); setError(null); }
     try {
-      const [alertRows, historyRows] = await Promise.all([
-        runQuery('dataset="$vt_results" | where jobName == "criblapm__home_alerts"', '-1h', 'now', 500),
-        runQuery(
-          Q.alertHistory(500, undefined, 'asc'),
-          historyRange, 'now', 500,
-        ),
-      ]);
+      // PRIMARY: the Active-alerts table. Paint this first.
+      const alertRows = await runQuery(
+        'dataset="$vt_results" | where jobName == "criblapm__home_alerts"',
+        '-1h', 'now', 500,
+      );
+      if (!isCurrent()) return;
       setAlerts(parseAlertRows(alertRows));
-      setHistory(historyRows.map((r) => ({
-        time: Number(r._time) * 1000,
-        eventType: String(r.event_type ?? ''),
-        service: String(r.svc ?? ''),
-        signalType: String(r.signal_type ?? ''),
-        errorRate: Number(r.curr_error_rate ?? 0),
-        prevErrorRate: Number(r.prev_error_rate ?? 0),
-      })));
       hasData.current = true;
-    } catch (e) {
-      if (!silent) setError(e instanceof Error ? e.message : String(e));
-    } finally {
       if (!silent) setLoading(false);
+
+      // SECONDARY: alert history (timeline + incidents). Fire AFTER the
+      // primary table so its search job doesn't contend on first paint.
+      runQuery(Q.alertHistory(500, undefined, 'asc'), historyRange, 'now', 500)
+        .then((historyRows) => {
+          if (!isCurrent()) return;
+          setHistory(historyRows.map((r) => ({
+            time: Number(r._time) * 1000,
+            eventType: String(r.event_type ?? ''),
+            service: String(r.svc ?? ''),
+            signalType: String(r.signal_type ?? ''),
+            errorRate: Number(r.curr_error_rate ?? 0),
+            prevErrorRate: Number(r.prev_error_rate ?? 0),
+          })));
+        })
+        .catch(() => { /* history is best-effort; primary already shown */ });
+    } catch (e) {
+      if (!isCurrent()) return;
+      if (!silent) { setError(e instanceof Error ? e.message : String(e)); setLoading(false); }
     }
   }, [historyRange]);
 
@@ -184,6 +194,7 @@ export default function AlertsPage() {
   const filteredIncidents = useMemo(() => {
     if (!timelineSelection) return incidents;
     return incidents.filter((inc) => {
+      // eslint-disable-next-line react-hooks/purity -- live "now" for open incidents
       const end = inc.endTime ?? Date.now();
       return inc.startTime <= timelineSelection[1] && end >= timelineSelection[0];
     });
@@ -278,6 +289,7 @@ export default function AlertsPage() {
                   <td>
                     {inc.duration != null ? fmtDuration(inc.duration) : (
                       <span style={{ color: 'var(--cds-color-danger)' }}>
+                        {/* eslint-disable-next-line react-hooks/purity -- live "so far" duration */}
                         {fmtDuration(Date.now() - inc.startTime)} so far
                       </span>
                     )}

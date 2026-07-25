@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import SpotlightPanel from './SpotlightPanel';
 import PartialFailureBanner from './PartialFailureBanner';
 import { SPOTLIGHT_ATTRIBUTES } from '../api/queries';
@@ -75,13 +75,38 @@ export default function SpotlightSection({
   const [failures, setFailures] = useState<Record<string, string>>({});
   const [retryNonce, setRetryNonce] = useState(0);
 
+  // LAZY: Spotlight fires ~18 live KQL span-scans. Firing them eagerly on
+  // every Service Detail load saturated the worker pool (measured: 45 jobs
+  // / 12s to settle). Only fetch once the section has scrolled into view.
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [visible, setVisible] = useState(false);
   useEffect(() => {
+    const el = containerRef.current;
+    if (!el || visible) return;
+    if (typeof IntersectionObserver === 'undefined') { setVisible(true); return; }
+    const obs = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) { setVisible(true); obs.disconnect(); }
+    }, { rootMargin: '200px' });
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [visible]);
+
+  useEffect(() => {
+    if (!visible) return;
+    // OWN cancellation scope — NOT the global nav generation. As a child
+    // component, Spotlight's effect runs before the parent page's fetch;
+    // using the generation signal would let the parent's
+    // `newQueryGeneration()` abort these queries the instant it fetched
+    // (that was the "Spotlight completely broken" bug). This controller
+    // aborts only when Spotlight itself re-runs or unmounts (nav-away).
+    const controller = new AbortController();
     let cancelled = false;
     setDiff(new Map());
     setLoading(true);
     setFailures({});
     getSpotlightDiff(attributes, selectionKql, earliest, latest, {
       scopeKql,
+      signal: controller.signal,
       onAttr: (attr, rows) => {
         if (cancelled) return;
         if (rows.length > 0) setLoading(false);
@@ -106,8 +131,9 @@ export default function SpotlightSection({
       });
     return () => {
       cancelled = true;
+      controller.abort();
     };
-  }, [selectionKql, scopeKql, earliest, latest, attributes, retryNonce]);
+  }, [visible, selectionKql, scopeKql, earliest, latest, attributes, retryNonce]);
 
   const handlePick = useCallback(
     (attr: string, value: string) => onPickValue?.(attr, value),
@@ -115,7 +141,7 @@ export default function SpotlightSection({
   );
 
   return (
-    <div className={s.section}>
+    <div className={s.section} ref={containerRef}>
       {title && <h4 className={s.title}>{title}</h4>}
       <PartialFailureBanner
         failures={failures}

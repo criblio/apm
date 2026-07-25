@@ -99,6 +99,38 @@ volume relative to that request rate may have its logger
 back-pressured by its own SDK. See "Common failure modes" rule on
 log-volume vs request-volume comparison.
 
+### Fast RED numbers — use \`run_metrics_query\` first
+
+There is a precomputed **metrics store** with span-derived RED
+metrics, queried with the \`run_metrics_query\` tool (PromQL, NOT
+KQL). It returns in ~100ms — far faster than a \`run_search\` span
+scan or the \`$vt_results\` caches below — so for **request rate,
+error rate, and latency percentiles reach for \`run_metrics_query\`
+before writing KQL.** The span/KQL paths remain the fallback when a
+metric doesn't cover the question (specific traces, arbitrary
+attributes, log bodies).
+
+Key series (all \`criblapm_\` prefixed; core PromQL only — no
+\`label_replace\`, no vector \`or\`):
+
+- \`criblapm_requests_total{svc,operation,outcome}\` — **delta**
+  counter; total with \`sum_over_time\`, NOT \`rate\`/\`increase\`:
+  \`sum(sum_over_time(criblapm_requests_total[15m])) by (svc)\`.
+  Error rate = the \`outcome="error"\` slice over the total.
+- \`criblapm_request_latency_ms{svc,quantile}\` and
+  \`criblapm_op_latency_ms{svc,operation,quantile}\` — precomputed
+  latency **gauges** in ms, \`quantile\`∈{p50,p95,p99}; read with
+  \`avg_over_time\`:
+  \`avg(avg_over_time(criblapm_request_latency_ms{svc="frontend",quantile="p95"}[15m]))\`.
+- \`criblapm_edge_calls_total{parent,child,outcome}\` +
+  \`criblapm_edge_latency_ms{parent,child,quantile}\` — service→service
+  RPC edges (downstream dependency health).
+- \`criblapm_status_class_total{svc,status_class}\` — HTTP/gRPC
+  status mix.
+
+Pass \`step\` (seconds) for a time series (trend/slope); omit it for
+an instant snapshot over \`[earliest, latest]\`.
+
 ### Field access rules (CRITICAL — Cribl KQL dialect)
 
 Two distinct cases. **Most OTel field access is case A** (nested

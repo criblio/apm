@@ -28,6 +28,16 @@ export interface AppSettings {
    *  default; re-provision after toggling so the alert search picks
    *  up the new KQL. See ROADMAP §P1.2. */
   lowVolumeMode?: boolean;
+  /** Metrics emit (M3): when true, the provisioner includes the
+   *  span-derived metric emitter scheduled searches (`criblapm__metric_*`)
+   *  that `export to metrics` into the fast PromQL store. Off by default;
+   *  re-provision after toggling (the emit KQL is baked in at creation).
+   *  See docs/metrics-migration-plan.md. */
+  metricsEmit?: boolean;
+  /** Metrics read (M2, dark): when true, RED panels try the fast metrics
+   *  store first and fall back to $vt_results / live. Off by default;
+   *  read per-render, so no re-provision needed to toggle. */
+  metricsRead?: boolean;
   [k: string]: unknown;
 }
 

@@ -57,11 +57,54 @@ export const APM_TOOL_DEFINITIONS: AgentToolDefinition[] = [
         confirmBeforeRunning: {
           type: 'boolean',
           description:
-            'Compatibility hint only. Cribl APM independently requires human approval for every run_search call.',
-          default: true,
+            'Compatibility hint only. Read-only queries run immediately in Cribl APM; the read-only guard is enforced independently.',
+          default: false,
         },
       },
       required: ['query', 'description', 'confirmBeforeRunning'],
+    },
+  },
+  {
+    id: 'run_metrics_query',
+    description:
+      'Run a PromQL query against the fast Cribl APM metrics store. MUCH faster than run_search for RED numbers (rate, error rate, latency) — prefer it whenever a metric answers the question. Omit step for an instant snapshot; provide step (seconds) for a range/time-series. ' +
+      'Span-derived RED metrics (all prefixed criblapm_): ' +
+      'criblapm_requests_total{svc,operation,outcome} — DELTA counter, read with sum_over_time (NOT rate/increase), e.g. sum(sum_over_time(criblapm_requests_total[15m])) by (svc); error rate is the outcome="error" slice over the total. ' +
+      'criblapm_request_latency_ms{svc,quantile} and criblapm_op_latency_ms{svc,operation,quantile} — precomputed latency GAUGES in ms labelled quantile=p50|p95|p99, read with avg_over_time, e.g. avg(avg_over_time(criblapm_request_latency_ms{svc="frontend",quantile="p95"}[15m])). ' +
+      'criblapm_edge_calls_total{parent,child,outcome} + criblapm_edge_latency_ms{parent,child,quantile} for service→service RPC edges; criblapm_messaging_total + criblapm_msg_latency_ms for messaging; criblapm_status_class_total{svc,status_class} for HTTP/gRPC status mix. ' +
+      'Raw OTel metrics (dotted names like process.runtime.go.goroutines, postgresql.backends) are also present — reach them with {__name__="the.dotted.name"}. Only core PromQL is supported (no label_replace, no vector `or`).',
+    schema: {
+      type: 'object',
+      properties: {
+        query: {
+          type: 'string',
+          description:
+            'PromQL expression, e.g. sum(sum_over_time(criblapm_requests_total[15m])) by (svc)',
+          minLength: 1,
+        },
+        earliest: {
+          type: ['string', 'number'],
+          description: 'Earliest time. Relative ("-1h") or absolute unix seconds.',
+          default: '-1h',
+        },
+        latest: {
+          type: ['string', 'number'],
+          description: 'Latest time. Relative ("now", "-5m") or absolute unix seconds.',
+          default: 'now',
+        },
+        step: {
+          type: 'number',
+          description:
+            'Range-query step in seconds. Omit for an instant query (one sample per series at latest).',
+          minimum: 15,
+        },
+        description: {
+          type: 'string',
+          description: 'A short description of the metrics query about to run',
+          maxLength: 100,
+        },
+      },
+      required: ['query', 'description'],
     },
   },
   {

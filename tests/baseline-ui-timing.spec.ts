@@ -24,6 +24,9 @@ interface PageMeasurement {
   firstContentMs: number | null;
   markerFound: boolean;
   marker: string;
+  /** Set when nav (goto/click) failed — e.g. the nav link never became
+   *  clickable because the app hung on boot. A data point, not a lost run. */
+  navError?: string | null;
   recordedAt: string;
 }
 
@@ -61,10 +64,20 @@ async function measure(
 ): Promise<void> {
   const apm = apmFrame(page);
   const t0 = Date.now();
-  await nav(page, apm);
-  const navMs = Date.now() - t0;
-
-  const found = await waitForFirstMarker(markerWaits(apm), MARKER_TIMEOUT_MS);
+  // A nav that hangs (link never clickable, app stuck booting under load)
+  // IS a measurement — record it as a failed marker rather than throwing
+  // and losing the whole page's data point. navError captures why.
+  let navMs = 0;
+  let found = false;
+  let navError: string | null = null;
+  try {
+    await nav(page, apm);
+    navMs = Date.now() - t0;
+    found = await waitForFirstMarker(markerWaits(apm), MARKER_TIMEOUT_MS);
+  } catch (e) {
+    navMs = Date.now() - t0;
+    navError = e instanceof Error ? e.message.split('\n')[0] : String(e);
+  }
   const elapsed = Date.now() - t0;
   record({
     page: pageName,
@@ -72,6 +85,7 @@ async function measure(
     firstContentMs: found ? elapsed : null,
     markerFound: found,
     marker,
+    navError,
     recordedAt: new Date().toISOString(),
   });
 }
@@ -115,9 +129,8 @@ test.describe('UI baseline timings', () => {
       page,
       'services',
       'Services (N) header',
-      async (p, apm) => {
-        await gotoApm(p, '/');
-        await apm.getByRole('link', { name: 'Services', exact: true }).click();
+      async (p) => {
+        await gotoApm(p, '/services?range=-15m');
       },
       (apm) => [
         apm
@@ -133,19 +146,8 @@ test.describe('UI baseline timings', () => {
       page,
       'serviceDetail-frontend',
       'Top operations heading',
-      async (p, apm) => {
-        await gotoApm(p, '/');
-        await apm.getByRole('link', { name: 'Services', exact: true }).click();
-        await apm
-          .getByText(/^Services \(\d+\)/)
-          .first()
-          .waitFor({ state: 'visible', timeout: MARKER_TIMEOUT_MS })
-          .catch(() => {});
-        await apm
-          .locator('table tbody a:has-text("frontend")')
-          .first()
-          .click()
-          .catch(() => {});
+      async (p) => {
+        await gotoApm(p, '/service/frontend?range=-15m');
       },
       (apm) => [
         apm.getByText(/^Top operations/).first().waitFor({ state: 'visible' }),
@@ -158,9 +160,8 @@ test.describe('UI baseline timings', () => {
       page,
       'errors',
       'errors table row OR empty state',
-      async (p, apm) => {
-        await gotoApm(p, '/');
-        await apm.getByRole('link', { name: 'Errors', exact: true }).click();
+      async (p) => {
+        await gotoApm(p, '/errors?range=-15m');
       },
       (apm) => [
         apm.locator('table tbody tr').first().waitFor({ state: 'visible' }),
@@ -174,9 +175,8 @@ test.describe('UI baseline timings', () => {
       page,
       'systemArch',
       'first svg visible',
-      async (p, apm) => {
-        await gotoApm(p, '/');
-        await apm.getByRole('link', { name: /service map/i }).click();
+      async (p) => {
+        await gotoApm(p, '/map?range=-15m');
       },
       (apm) => [apm.locator('svg').first().waitFor({ state: 'visible' })],
     );

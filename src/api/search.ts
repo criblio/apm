@@ -4,6 +4,17 @@
  */
 import { runQuery } from './cribl';
 import { listCachedMetricCatalog } from './panelCache';
+import {
+  listServiceSummariesViaMetrics,
+  listServiceCountsViaMetrics,
+  listServiceLatenciesUsViaMetrics,
+  readServiceBucketsViaMetrics,
+  readServiceStatusMixViaMetrics,
+  readServiceOperationsViaMetrics,
+  readDependencyEdgesViaMetrics,
+  readOperationAnomaliesViaMetrics,
+} from './metricsPanels';
+import { getMetricsRead } from './metricsRead';
 import { applyFilterRulesToRaw, DEFAULT_FILTER_RULES } from './errorFilter';
 import * as Q from './queries';
 import { flatFieldsAvailable } from './featureDetect';
@@ -238,6 +249,16 @@ export interface SpotlightDiffOptions {
   onAttr?: (attr: string, rows: SpotlightBucket[]) => void;
   /** Reports individual attribute failures without discarding successful results. */
   onError?: (attr: string, error: unknown) => void;
+  /**
+   * Cancellation signal OWNED BY THE CALLER (SpotlightSection's own
+   * per-effect controller), NOT the global navigation generation.
+   * Spotlight is a child component that fires in its own effect BEFORE
+   * the parent page's fetch runs `newQueryGeneration()`; if these queries
+   * used the generation signal they'd be aborted the instant the parent
+   * fetched. Passing an explicit signal opts them out of that — they
+   * cancel only when Spotlight itself unmounts / re-runs.
+   */
+  signal?: AbortSignal;
 }
 
 export async function getSpotlightDiff(
@@ -247,9 +268,10 @@ export async function getSpotlightDiff(
   latest = 'now',
   options: SpotlightDiffOptions = {},
 ): Promise<Map<string, SpotlightBucket[]>> {
-  const { topPerAttr = 20, scopeKql, onAttr, onError } = options;
+  const { topPerAttr = 20, scopeKql, onAttr, onError, signal } = options;
   const out = new Map<string, SpotlightBucket[]>();
   await runWithLimit(attrs, SPOTLIGHT_CONCURRENCY, async (attr) => {
+    if (signal?.aborted) return;
     let rows: Record<string, unknown>[];
     try {
       rows = await runQuery(
@@ -257,6 +279,7 @@ export async function getSpotlightDiff(
         earliest,
         latest,
         topPerAttr,
+        signal,
       );
     } catch (error) {
       onError?.(attr, error);
@@ -278,6 +301,12 @@ export async function getDependencies(
   earliest = '-1h',
   latest = 'now',
 ): Promise<DependencyEdge[]> {
+  // Metrics-first (M4), current-window only. See listServiceSummaries.
+  if (latest === 'now') {
+    const m = await readDependencyEdgesViaMetrics(earliest);
+    if (m) return m;
+    if (getMetricsRead()) return []; // metrics on: don't cascade to live scan
+  }
   const flatFields = await flatFieldsAvailable();
   const [rpcRows, msgRows] = await Promise.all([
     runQuery(Q.dependencies({ flatFields }), earliest, latest, 1000),
@@ -330,6 +359,25 @@ export async function listServiceSummaries(
   latest = 'now',
   service?: string,
 ): Promise<ServiceSummary[]> {
+  // Metrics-first (M4): a synchronous PromQL read off the search worker
+  // pool, for ANY window — including the prior comparison window
+  // (-2h..-1h). The metrics store is backfilled, so the metrics reader
+  // covers [earliest, latest] via promWindow(); prev-window reads hit
+  // metrics too instead of a KQL search job. Returns null when metricsRead
+  // is off / no data / error, so we fall through to the live span query.
+  // See docs/metrics-migration-plan.md.
+  // Pass `service` so the metrics reader scopes its queries to it in-PromQL
+  // (`{svc="X"}`) — on Service Detail this turns the RED-card + prev-window
+  // latency reads from all-service histogram_quantiles into single-service
+  // ones, a large saving on the metrics engine.
+  const viaMetrics = await listServiceSummariesViaMetrics(earliest, latest, undefined, service);
+  if (viaMetrics) {
+    return service ? viaMetrics.filter((s) => s.service === service) : viaMetrics;
+  }
+  // Metrics ON but empty/aborted: do NOT fall back to a live span scan.
+  // A nav-cancelled read returns null here, and cascading to a KQL search
+  // job would spawn dozens of uncancellable jobs per navigation.
+  if (getMetricsRead()) return [];
   const flatFields = await flatFieldsAvailable();
   const rows = await runQuery(
     Q.serviceSummary(service, { flatFields, cachedPropagation: true }),
@@ -359,6 +407,38 @@ export async function listServiceSummaries(
 }
 
 /**
+ * FAST counts-only service summaries (requests / errors / error rate) —
+ * one ~114ms counter read. Latency fields are 0 until enriched via
+ * `listServiceLatencies`. This is the counts-first hot path: the catalog
+ * renders immediately, and the slow histogram_quantile latency reads fill
+ * the p50/p95/p99 columns a moment later without blocking. Falls back to
+ * the full live `listServiceSummaries` (which includes latency) when
+ * metrics are off / unavailable, so a fallback needs no enrichment.
+ */
+export async function listServiceCounts(
+  earliest = '-1h',
+  latest = 'now',
+  service?: string,
+): Promise<ServiceSummary[]> {
+  const m = await listServiceCountsViaMetrics(earliest, latest);
+  if (m) return service ? m.filter((s) => s.service === service) : m;
+  if (getMetricsRead()) return []; // metrics on: don't cascade to a live scan
+  return listServiceSummaries(earliest, latest, service);
+}
+
+/**
+ * Per-service latency (p50/p95/p99 in µs) for merging into counts-first
+ * summaries. Returns null when latency should come from the counts path
+ * itself (metrics off / non-current window → the fallback already has it).
+ */
+export async function listServiceLatencies(
+  earliest = '-1h',
+  latest = 'now',
+): Promise<Map<string, { p50Us: number; p95Us: number; p99Us: number }> | null> {
+  return listServiceLatenciesUsViaMetrics(earliest, latest);
+}
+
+/**
  * Fetch time-bucketed per-service aggregates.
  *
  * Reads the flat acceleration columns (service_name / status_code)
@@ -372,7 +452,30 @@ export async function getServiceTimeSeries(
   service?: string,
   earliest = '-1h',
   latest = 'now',
+  /**
+   * Counts-first hook: fires with request/error buckets as soon as the
+   * cheap counter resolves, before the slow latency quantiles. Lets
+   * Service Detail paint its rate + error-rate charts (~600ms) without
+   * waiting on the ~1–2s histogram_quantile duration series.
+   */
+  onPartial?: (buckets: ServiceBucket[]) => void,
 ): Promise<ServiceBucket[]> {
+  // Metrics-first (M4). Per-service detail needs all quantile lines; the
+  // all-services catalog sparklines only plot request rate + p95, so skip
+  // p50/p99 there. Time-series is only ever current-window.
+  if (latest === 'now') {
+    // Pass `service` so the reader scopes every query to it in-PromQL; the
+    // result is already single-service, so no client-side filter needed.
+    const m = await readServiceBucketsViaMetrics(
+      earliest,
+      binSeconds,
+      service,
+      undefined,
+      onPartial,
+    );
+    if (m) return m;
+    if (getMetricsRead()) return []; // metrics on: don't cascade to live scan
+  }
   const flatFields = await flatFieldsAvailable();
   const rows = await runQuery(
     Q.serviceTimeSeries(binSeconds, service, { flatFields }),
@@ -405,6 +508,13 @@ export async function getServiceStatusCodeMix(
   earliest = '-1h',
   latest = 'now',
 ): Promise<StatusCodeMixBucket[]> {
+  // Metrics-first (current-window): read the criblapm_status_class_total
+  // counter instead of a live span scan. See listServiceSummaries.
+  if (latest === 'now') {
+    const m = await readServiceStatusMixViaMetrics(binSeconds, service, earliest);
+    if (m) return m;
+    if (getMetricsRead()) return []; // metrics on: don't cascade to live scan
+  }
   const flatFields = await flatFieldsAvailable();
   const rows = await runQuery(
     Q.serviceStatusCodeMix(binSeconds, service, { flatFields }),
@@ -431,6 +541,12 @@ export async function listOperationSummaries(
   earliest = '-1h',
   latest = 'now',
 ): Promise<OperationSummary[]> {
+  // Metrics-first (M4), current-window only. See listServiceSummaries.
+  if (latest === 'now') {
+    const m = await readServiceOperationsViaMetrics(earliest, service);
+    if (m) return m;
+    if (getMetricsRead()) return []; // metrics on: don't cascade to live scan
+  }
   const flatFields = await flatFieldsAvailable();
   const rows = await runQuery(Q.serviceOperations(service, { flatFields }), earliest, latest, 100);
   return rows.map((r) => ({
@@ -856,6 +972,13 @@ export async function listOperationAnomalies(
   latest: string = 'now',
   topN: number = 20,
 ): Promise<OperationAnomaly[]> {
+  // Metrics-first: current-window p95 vs 24h-baseline p95, computed from
+  // metrics — no KQL search job, no op_baselines lookup.
+  if (latest === 'now') {
+    const m = await readOperationAnomaliesViaMetrics(earliest, topN);
+    if (m) return m;
+    if (getMetricsRead()) return []; // metrics on: don't cascade to live scan
+  }
   const rows = await runQuery(
     Q.operationAnomaliesFromLookup(
       ANOMALY_MIN_RATIO,

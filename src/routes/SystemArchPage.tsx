@@ -1,3 +1,4 @@
+import { newQueryGeneration } from '../api/queryGeneration';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Button, Menu } from '@capra/core';
@@ -14,7 +15,6 @@ import {
   getServiceTimeSeries,
   listOperationSummaries,
 } from '../api/search';
-import { listCachedSysarchPanels } from '../api/panelCache';
 import { binSecondsFor } from '../components/timeRanges';
 import { previousWindow } from '../utils/timeRange';
 import { useStreamFilterEnabled } from '../hooks/useStreamFilter';
@@ -78,6 +78,7 @@ export default function SystemArchPage() {
   // the stream filter is on; falls through to live queries on
   // cache miss or non-default range.
   useEffect(() => {
+    newQueryGeneration(); // cancel the prior page/fetch's in-flight reads
     let cancelled = false;
     const binSeconds = binSecondsFor(lookback);
     setLoadingDeps(true);
@@ -101,33 +102,12 @@ export default function SystemArchPage() {
         }
       });
 
-    const tryCache = async (): Promise<boolean> => {
-      if (lookback !== '-1h' || !streamFilterEnabled) return false;
-      try {
-        const cached = await listCachedSysarchPanels();
-        if (
-          cached.serviceSummaries &&
-          cached.serviceBuckets &&
-          cached.dependencies
-        ) {
-          if (cancelled) return true;
-          setSummaries(cached.serviceSummaries);
-          setBuckets(cached.serviceBuckets);
-          setEdges(cached.dependencies);
-          setLoadingDeps(false);
-          return true;
-        }
-      } catch {
-        /* fall through to live */
-      }
-      return false;
-    };
-
     (async () => {
-      const cacheHit = await tryCache();
-      if (cacheHit || cancelled) return;
+      if (cancelled) return;
 
-      // Cache miss — live queries.
+      // All three panels here (dependencies, summaries, time series) are
+      // metric-backed — read metrics-first via the source functions, each
+      // non-blocking so the graph renders as soon as edges land.
       const pDeps = getDependencies(lookback, 'now')
         .then((e) => {
           if (!cancelled) setEdges(e);

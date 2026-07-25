@@ -10,6 +10,19 @@
 import { getCurrentDataset } from '@cribl/app-utils/dataset';
 import { streamFilterKqlClause, streamFilterSpanKqlClause } from './streamFilter';
 import { getLowVolumeMode } from './lowVolumeMode';
+import {
+  METRIC_REQUESTS_TOTAL,
+  METRIC_REQUEST_DURATION_MS,
+  METRIC_EDGE_CALLS_TOTAL,
+  METRIC_EDGE_DURATION_MS,
+  METRIC_MESSAGING_TOTAL,
+  METRIC_MESSAGING_DURATION_MS,
+  METRIC_STATUS_CLASS_TOTAL,
+  METRIC_REQUEST_LATENCY_MS,
+  METRIC_OP_LATENCY_MS,
+  METRIC_EDGE_LATENCY_MS,
+  METRIC_MSG_LATENCY_MS,
+} from './metricNames';
 import { DEFAULT_FILTER_RULES, compileFilterRulesToKql } from './errorFilter';
 import {
   ALERT_EVENT_DATATYPE,
@@ -35,6 +48,44 @@ function quoteDataset(): string {
 
 function datasetClause(): string {
   return `dataset="${quoteDataset()}"`;
+}
+
+/**
+ * KQL predicate that keeps only the spans a service handles as a request
+ * ENTRY POINT: inbound SERVER spans (kind 2 — HTTP/gRPC) and CONSUMER
+ * spans (kind 5 — message processing). Excludes CLIENT (3), PRODUCER (4),
+ * and INTERNAL (1) spans, which are outbound calls or sub-operations.
+ *
+ * Without this, RED "duration" and "requests" aggregate EVERY span kind,
+ * so services with many fast client spans read far too low — e.g.
+ * checkout's true server p95 is ~4.4s but the all-spans p95 was ~0.28s
+ * (its 14k client spans @ 277ms swamped its 1.4k server spans). Scoping to
+ * entry-point spans makes duration = request-handling latency and requests
+ * = inbound request count, which is the RED convention. Kinds are stored
+ * numerically (`tostring(kind)` → "2"/"5"). Pure consumers (accounting,
+ * fraud-detection) have only kind 5, so CONSUMER must be included.
+ */
+function entrySpanKindClause(): string {
+  return `| where tostring(kind) in ("2", "5")`;
+}
+
+const HEX_DIGITS = '0123456789abcdef';
+
+/**
+ * Deterministic per-span sampling clause for BACKFILL histogram emits. The
+ * first hex char of `span_id` is uniformly distributed (verified ~1/16
+ * each), so keeping spans whose first char falls in the first
+ * `round(rate*16)` hex digits yields an unbiased `rate` sample. Percentiles
+ * are preserved (the distribution SHAPE is unchanged by unbiased sampling),
+ * only the per-bucket counts shrink — which is exactly what makes backfill
+ * fast. `rate >= 1` (or ≤0) → no clause (full fidelity, used by the LIVE
+ * scheduled searches). Must appear BEFORE `span_id` is projected away.
+ */
+function sampleFirstHexClause(rate: number): string {
+  if (!(rate > 0) || rate >= 1) return '';
+  const k = Math.min(16, Math.max(1, Math.round(rate * 16)));
+  const chars = HEX_DIGITS.slice(0, k).split('').map((c) => `"${c}"`).join(', ');
+  return `| where substring(tolower(tostring(span_id)), 0, 1) in (${chars})`;
 }
 
 function spansBase(): string {
@@ -870,6 +921,7 @@ export function serviceTimeSeries(
             dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
             is_error=(${statusCodeExpr(opts)}=="2")
     ${svcFilter}
+    ${entrySpanKindClause()}
     ${streamFilterSpanKqlClause()}
     | summarize requests=count(),
                 errors=countif(is_error),
@@ -934,6 +986,7 @@ export function serviceOperations(service: string, opts?: QueryOpts): string {
             dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
             is_error=(${statusCodeExpr(opts)}=="2")
     | where svc==${s}
+    ${entrySpanKindClause()}
     ${streamFilterSpanKqlClause()}
     | summarize requests=count(),
                 errors=countif(is_error),
@@ -961,6 +1014,7 @@ export function serviceInstances(service: string, opts?: QueryOpts): string {
             dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
             is_error=(${statusCodeExpr(opts)}=="2")
     | where svc==${s}
+    ${entrySpanKindClause()}
     ${streamFilterSpanKqlClause()}
     | summarize requests=count(),
                 errors=countif(is_error),
@@ -984,6 +1038,7 @@ export function allServiceOperations(): string {
     | extend svc=tostring(resource.attributes['service.name']),
             dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
             is_error=(tostring(status.code)=="2")
+    ${entrySpanKindClause()}
     ${streamFilterSpanKqlClause()}
     | summarize requests=count(),
                 errors=countif(is_error),
@@ -1579,6 +1634,29 @@ export const SPOTLIGHT_ATTRIBUTES: readonly string[] = [
 ] as const;
 
 /**
+ * Curated Spotlight subset for embedded surfaces (Service Detail) that
+ * fetch this ALONGSIDE the rest of a heavy page. Each attribute is one
+ * live KQL span-scan; the full ~27-attr set fired on every Service Detail
+ * load and dominated the worker pool (45 jobs / 12s to settle). This
+ * ~9-attr set keeps the strongest "why is this service erroring?"
+ * differentiators — operation, request shape, downstream peer, pod /
+ * deployment, and the demo's input-side product id — and drops the
+ * high-cardinality user/session and rarely-populated net.* attrs. Pair
+ * with lazy (scroll-into-view) loading in SpotlightSection.
+ */
+export const SPOTLIGHT_ATTRIBUTES_SERVICE_DETAIL: readonly string[] = [
+  'name',
+  'http.route',
+  'http.target',
+  'rpc.method',
+  'peer.service',
+  'k8s.pod.name',
+  'k8s.deployment.name',
+  'db.system',
+  'app.product.id',
+] as const;
+
+/**
  * Per-(attribute, value) row count over a filtered span set.
  * Used by the facet panel: "of the spans matching this filter,
  * what are the top values of <attr_name>?"
@@ -1740,6 +1818,293 @@ export function listMetricNames(): string {
       by name=tostring(_metric)
     | sort by name asc
     | limit 500`;
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Span-derived metric emitters — `export to metrics` into the fast
+// PromQL store. These replace the read-side of the `$vt_results` RED
+// panel caches; see docs/metrics-migration-plan.md. Validated live
+// 2026-07-23 (session log §"Phase 0 write-path — VALIDATED").
+//
+// Two syntax rules baked in below (both cost a session to find):
+//  1. After `summarize … by bin(_time,1m)` the time column is
+//     `bin_time_1m`; rename it to `_time` or the export drops every
+//     event with no error.
+//  2. Histogram type is the LITERAL `type=histogram` param; counter is
+//     `typeField=<field>` (the literal `type=` only accepts histogram,
+//     and `"histogram"` via typeField drops as invalid_type).
+// Always confirm an emit with the export output table
+// (eventsOut/eventsDropped/dropReasons) — a `completed` job can drop
+// 100% of events.
+// ─────────────────────────────────────────────────────────────────
+
+/**
+ * Request/error counter emitter. Emits `criblapm_requests_total` as a
+ * per-1-minute **delta** counter labelled by (svc, outcome) where
+ * outcome ∈ {ok, error}. One metric labelled by outcome (rather than two
+ * metrics) so error-rate is `{outcome="error"} / all` at read time.
+ *
+ * Read with `sum_over_time` — NOT `rate()`. The store keeps each emitted
+ * per-bin count verbatim (delta storage), so `rate()`/`increase()` (which
+ * assume a cumulative counter) return nonsense. See metricNames.ts.
+ *
+ * Stream filter applied so idle-poll noise doesn't inflate counts,
+ * matching serviceSummary()/serviceTimeSeries().
+ */
+export function metricRequestsExport(): string {
+  return `${spansBase()}
+    | extend svc=tostring(resource.attributes['service.name']),
+            operation=tostring(name),
+            dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
+            outcome=iff(tostring(status.code)=="2", "error", "ok")
+    | where isnotempty(svc)
+    ${entrySpanKindClause()}
+    ${streamFilterSpanKqlClause()}
+    | summarize value=count() by bin(_time, 1m), svc, operation, outcome
+    | project-rename _time=bin_time_1m
+    | extend name="${METRIC_REQUESTS_TOTAL}", type="counter"
+    | export to metrics typeField=type timeField=_time nameField=name valueField=value labelFields=[svc, operation, outcome]`;
+}
+
+/**
+ * HTTP/gRPC status-class counter emitter. Emits `criblapm_status_class_total`
+ * as a per-1-minute delta counter labelled by (svc, status_class), powering
+ * the Service Detail "Status mix" chart from metrics instead of a live KQL
+ * span scan. Same entry-span scope + stream filter + status_class case as
+ * the KQL `serviceStatusCodeMix()` so the two read paths agree. Read with
+ * `sum_over_time` (delta storage).
+ */
+export function metricStatusClassExport(): string {
+  return `${spansBase()}
+    | extend svc=tostring(resource.attributes['service.name']),
+            dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
+            http_status=coalesce(toint(attributes['http.response.status_code']),
+                                 toint(attributes['http.status_code'])),
+            grpc_status=toint(attributes['rpc.grpc.status_code'])
+    | where isnotempty(svc)
+    ${entrySpanKindClause()}
+    ${streamFilterSpanKqlClause()}
+    | extend status_class=case(
+        http_status == 503, "503",
+        http_status == 504, "504",
+        http_status == 502, "502",
+        http_status == 500, "500",
+        http_status >= 500 and http_status < 600, "other_5xx",
+        http_status >= 400 and http_status < 500, "4xx",
+        isnotnull(grpc_status) and grpc_status != 0, "grpc_err",
+        "ok")
+    | summarize value=count() by bin(_time, 1m), svc, status_class
+    | project-rename _time=bin_time_1m
+    | extend name="${METRIC_STATUS_CLASS_TOTAL}", type="counter"
+    | export to metrics typeField=type timeField=_time nameField=name valueField=value labelFields=[svc, status_class]`;
+}
+
+const QUANTILE_LABEL: Record<number, string> = { 50: 'p50', 95: 'p95', 99: 'p99' };
+
+/**
+ * PRECOMPUTED latency-percentile GAUGE emitter. Computes
+ * `percentile(dur_ms, q)` from raw entry spans per (svc[, operation]) per
+ * minute and emits it as a gauge labelled `quantile`. One search per
+ * (family, quantile) — Cribl's `export to metrics` drops rows when 3
+ * percentiles are unioned into one export, but a single-percentile export
+ * is clean. These REPLACE the `histogram_quantile` reads, which were slow
+ * and wrong for bimodal latency (the auto-bucketed histogram lost the slow
+ * tail). Read with promServiceLatencyGauge / promOpLatencyGauge.
+ */
+export function metricLatencyPercentileExport(
+  q: 50 | 95 | 99,
+  opts?: { byOperation?: boolean },
+): string {
+  const byOp = !!opts?.byOperation;
+  const name = byOp ? METRIC_OP_LATENCY_MS : METRIC_REQUEST_LATENCY_MS;
+  const groupBy = byOp ? 'bin(_time, 1m), svc, operation' : 'bin(_time, 1m), svc';
+  const labels = byOp ? '[svc, operation, quantile]' : '[svc, quantile]';
+  const opExtend = byOp ? '\n            operation=tostring(name),' : '';
+  return `${spansBase()}
+    | extend svc=tostring(resource.attributes['service.name']),${opExtend}
+            dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
+            dur_ms=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000000.0
+    | where isnotempty(svc) and dur_ms >= 0
+    ${entrySpanKindClause()}
+    ${streamFilterSpanKqlClause()}
+    | summarize value=percentile(dur_ms, ${q}) by ${groupBy}
+    | project-rename _time=bin_time_1m
+    | extend name="${name}", type="gauge", quantile="${QUANTILE_LABEL[q]}"
+    | export to metrics typeField=type timeField=_time nameField=name valueField=value labelFields=${labels}`;
+}
+
+/**
+ * Latency histogram emitter. Emits `criblapm_request_duration_ms` as a
+ * `hist_default` by feeding **raw per-span durations** (many rows share
+ * the 1-minute `_time`, name, and svc label); the store buckets them.
+ * Read percentiles with `histogram_quantile(...)`.
+ *
+ * Volume note: one row per span. On busy windows the search's ~50k input
+ * cap can bias the histogram (dropped spans). The scheduled search runs
+ * over a narrow incremental window (see provisionedSearches.ts) to stay
+ * under the cap; revisit with sampling if `eventsDropped` shows up.
+ */
+export function metricDurationExport(opts?: { sampleRate?: number }): string {
+  return `${spansBase()}
+    | extend svc=tostring(resource.attributes['service.name']),
+            operation=tostring(name),
+            dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
+            dur_ms=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000000.0,
+            _time=bin(_time, 1m)
+    | where isnotempty(svc) and dur_ms >= 0
+    ${entrySpanKindClause()}
+    ${sampleFirstHexClause(opts?.sampleRate ?? 1)}
+    ${streamFilterSpanKqlClause()}
+    | project _time, svc, operation, dur_ms
+    | extend name="${METRIC_REQUEST_DURATION_MS}"
+    | export to metrics type=histogram timeField=_time nameField=name valueField=dur_ms labelFields=[svc, operation]`;
+}
+
+/**
+ * Service→service RPC edge call counter. Same parent_span_id self-join
+ * as dependencies() — each edge is (caller → callee) with the call count
+ * split by outcome. Emitted as a delta counter labelled by (parent,
+ * child, outcome); read for the System Architecture graph. The self-join
+ * is the heaviest emitter, but runs over the incremental window only.
+ */
+export function metricEdgeCallsExport(): string {
+  return `${spansBase()}
+    | extend svc=tostring(resource.attributes['service.name']),
+            parent_sid=tostring(parent_span_id),
+            dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
+            outcome=iff(tostring(status.code)=="2", "error", "ok")
+    | where parent_sid != "" and isnotempty(parent_sid)
+    ${streamFilterSpanKqlClause()}
+    | project _time, trace_id, parent_sid, svc, outcome
+    | join kind=inner (
+        ${spansBase()}
+        | extend psvc=tostring(resource.attributes['service.name']),
+                psid=tostring(span_id)
+        | project trace_id, psid, psvc
+      ) on trace_id, $left.parent_sid == $right.psid
+    | where svc != psvc
+    | summarize value=count() by bin(_time, 1m), parent=psvc, child=svc, outcome
+    | project-rename _time=bin_time_1m
+    | extend name="${METRIC_EDGE_CALLS_TOTAL}", type="counter"
+    | export to metrics typeField=type timeField=_time nameField=name valueField=value labelFields=[parent, child, outcome]`;
+}
+
+/** Edge latency histogram — child-span duration per (parent, child). */
+export function metricEdgeDurationExport(): string {
+  return `${spansBase()}
+    | extend svc=tostring(resource.attributes['service.name']),
+            parent_sid=tostring(parent_span_id),
+            dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
+            dur_ms=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000000.0,
+            _time=bin(_time, 1m)
+    | where parent_sid != "" and isnotempty(parent_sid) and dur_ms >= 0
+    ${streamFilterSpanKqlClause()}
+    | project _time, trace_id, parent_sid, svc, dur_ms
+    | join kind=inner (
+        ${spansBase()}
+        | extend psvc=tostring(resource.attributes['service.name']),
+                psid=tostring(span_id)
+        | project trace_id, psid, psvc
+      ) on trace_id, $left.parent_sid == $right.psid
+    | where svc != psvc
+    | project _time, parent=psvc, child=svc, dur_ms
+    | extend name="${METRIC_EDGE_DURATION_MS}"
+    | export to metrics type=histogram timeField=_time nameField=name valueField=dur_ms labelFields=[parent, child]`;
+}
+
+/** Edge latency p95 GAUGE emitter — precomputed percentile(dur_ms,95) per
+ *  (parent, child) per minute. Replaces the histogram_quantile edge read. */
+export function metricEdgeLatencyP95Export(): string {
+  return `${spansBase()}
+    | extend svc=tostring(resource.attributes['service.name']),
+            parent_sid=tostring(parent_span_id),
+            dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
+            dur_ms=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000000.0,
+            _time=bin(_time, 1m)
+    | where parent_sid != "" and isnotempty(parent_sid) and dur_ms >= 0
+    ${streamFilterSpanKqlClause()}
+    | project _time, trace_id, parent_sid, svc, dur_ms
+    | join kind=inner (
+        ${spansBase()}
+        | extend psvc=tostring(resource.attributes['service.name']),
+                psid=tostring(span_id)
+        | project trace_id, psid, psvc
+      ) on trace_id, $left.parent_sid == $right.psid
+    | where svc != psvc
+    | summarize value=percentile(dur_ms, 95) by _time, parent=psvc, child=svc
+    | extend name="${METRIC_EDGE_LATENCY_MS}", type="gauge", quantile="p95"
+    | export to metrics typeField=type timeField=_time nameField=name valueField=value labelFields=[parent, child, quantile]`;
+}
+
+/** Messaging (kafka etc.) edge counter, labelled by (svc, dest, op,
+ *  system, outcome). Mirrors messagingDependencies(). */
+export function metricMessagingExport(): string {
+  return `${spansBase()}
+    | extend svc=tostring(resource.attributes['service.name']),
+            dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
+            outcome=iff(tostring(status.code)=="2", "error", "ok"),
+            op=tostring(attributes['messaging.operation']),
+            dest=tostring(attributes['messaging.destination.name']),
+            system=tostring(attributes['messaging.system'])
+    | where isnotempty(dest) and isnotempty(op)
+    ${streamFilterSpanKqlClause()}
+    | summarize value=count() by bin(_time, 1m), svc, dest, op, system, outcome
+    | project-rename _time=bin_time_1m
+    | extend name="${METRIC_MESSAGING_TOTAL}", type="counter"
+    | export to metrics typeField=type timeField=_time nameField=name valueField=value labelFields=[svc, dest, op, system, outcome]`;
+}
+
+/** Messaging latency histogram per (svc, dest, op, system). */
+export function metricMessagingDurationExport(): string {
+  return `${spansBase()}
+    | extend svc=tostring(resource.attributes['service.name']),
+            dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
+            dur_ms=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000000.0,
+            _time=bin(_time, 1m),
+            op=tostring(attributes['messaging.operation']),
+            dest=tostring(attributes['messaging.destination.name']),
+            system=tostring(attributes['messaging.system'])
+    | where isnotempty(dest) and isnotempty(op) and dur_ms >= 0
+    ${streamFilterSpanKqlClause()}
+    | project _time, svc, dest, op, system, dur_ms
+    | extend name="${METRIC_MESSAGING_DURATION_MS}"
+    | export to metrics type=histogram timeField=_time nameField=name valueField=dur_ms labelFields=[svc, dest, op, system]`;
+}
+
+/** Messaging latency p95 GAUGE emitter — precomputed percentile(dur_ms,95)
+ *  per (svc, dest, op, system) per minute. Replaces the histogram read. */
+export function metricMessagingLatencyP95Export(): string {
+  return `${spansBase()}
+    | extend svc=tostring(resource.attributes['service.name']),
+            dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
+            dur_ms=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000000.0,
+            _time=bin(_time, 1m),
+            op=tostring(attributes['messaging.operation']),
+            dest=tostring(attributes['messaging.destination.name']),
+            system=tostring(attributes['messaging.system'])
+    | where isnotempty(dest) and isnotempty(op) and dur_ms >= 0
+    ${streamFilterSpanKqlClause()}
+    | summarize value=percentile(dur_ms, 95) by _time, svc, dest, op, system
+    | extend name="${METRIC_MSG_LATENCY_MS}", type="gauge", quantile="p95"
+    | export to metrics typeField=type timeField=_time nameField=name valueField=value labelFields=[svc, dest, op, system, quantile]`;
+}
+
+/**
+ * Span counts per coarse bin — the "count first" pass for metrics
+ * backfill (src/api/metricsBackfill.ts). Matches the request-duration
+ * emitter's input scope (all stream-filtered spans, the largest emitter)
+ * so the chunk sizing is conservative for every emitter. Output columns:
+ * `t` (bin start, epoch seconds) and `n` (span count).
+ */
+export function backfillSpanCounts(binSeconds: number): string {
+  const bin = kqlInteger(binSeconds, { min: 60, max: 86_400 });
+  return `${spansBase()}
+    | extend svc=tostring(resource.attributes['service.name']),
+            dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0
+    | where isnotempty(svc)
+    ${streamFilterSpanKqlClause()}
+    | summarize n=count() by t=bin(_time, ${bin}s)
+    | sort by t asc`;
 }
 
 /**

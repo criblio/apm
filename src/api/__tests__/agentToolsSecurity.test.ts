@@ -13,16 +13,13 @@ function runSearch(argumentsObject: Record<string, unknown>) {
 }
 
 describe('Investigator query security boundary', () => {
-  it('requires approval even when the model explicitly asks to skip it', () => {
-    expect(
-      requiresApproval(
-        runSearch({
-          query: 'dataset="otel" | limit 1',
-          description: 'probe',
-          confirmBeforeRunning: false,
-        }),
-      ),
-    ).toBe(true);
+  it('auto-runs queries without a prompt — safety is the read-only guard, not approval', () => {
+    // The investigator no longer pauses for human approval (both data
+    // tools are read-only). The security boundary is enforced at
+    // execution time by assertReadOnlyKql / dataset scoping — see the
+    // side-effect and scope-escape tests below, which hold regardless of
+    // confirmBeforeRunning.
+    expect(requiresApproval()).toBe(false);
   });
 
   it('blocks side-effect KQL before creating a search job', async () => {

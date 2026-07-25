@@ -198,6 +198,13 @@ function mergeDependencyEdges(
  * scheduled search hasn't run yet. The caller falls back to the
  * live query path for any null field.
  */
+// NOTE: RED panels (service summary, time series, dependencies) are read
+// metrics-first at the source functions in search.ts — NOT here. This
+// cache reader serves only the non-metric-shaped panels the pages need
+// (slow trace classes, error classes, alerts). Pages fetch it
+// **non-blocking** so it never gates the fast metrics-backed RED panels.
+// See docs/metrics-migration-plan.md.
+
 export async function listCachedHomePanels(
   rules: import('./errorFilter').ErrorFilterRule[] = DEFAULT_FILTER_RULES,
 ): Promise<CachedPanels> {

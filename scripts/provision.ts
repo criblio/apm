@@ -32,6 +32,10 @@ import {
 import { setSearchCadence } from '@cribl/app-utils/cadence';
 import { setCurrentDataset } from '@cribl/app-utils/dataset';
 import { setLowVolumeMode } from '../src/api/lowVolumeMode.js';
+import { setMetricsEmit, getMetricsEmit } from '../src/api/metricsEmit.js';
+import { getMetricEmitters } from '../src/api/provisionedSearches.js';
+import { runMetricsBackfill } from '../src/api/metricsBackfill.js';
+import { makeNodeBackfillDeps } from './metricsBackfillDeps.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..');
@@ -80,6 +84,9 @@ async function loadAppSettingsFromKV(http: HttpClient): Promise<void> {
       }
       if (settings.lowVolumeMode === true) {
         setLowVolumeMode(true);
+      }
+      if (typeof settings.metricsEmit === 'boolean') {
+        setMetricsEmit(settings.metricsEmit);
       }
     }
   } catch {
@@ -194,6 +201,44 @@ async function main(): Promise<void> {
   if (!canary.ok) {
     console.error('▶ Canary FAILED — reconcile applied but workspace is unhealthy.');
     process.exit(1);
+  }
+
+  await maybeBackfillMetrics();
+}
+
+/**
+ * Backfill the metrics store from raw spans so panels work across all
+ * time ranges immediately, not just from emitter-start forward. Runs only
+ * when metric emitters are provisioned (metricsEmit on).
+ *
+ * v2 (shared core, src/api/metricsBackfill.ts — same as the Settings UI):
+ * per-metric idempotency (each family probes its own coverage and backfills
+ * only its uncovered gap, so adding a NEW metric backfills ONLY that one),
+ * newest→oldest, sampled histograms + big counter windows, zero-drop. See
+ * docs/sessions/backfill-v2-design.md.
+ */
+async function maybeBackfillMetrics(): Promise<void> {
+  if (!getMetricsEmit()) return;
+  const horizonSec = Number(process.env.METRICS_BACKFILL_HORIZON_SEC ?? 86_400); // 24h default
+  const nowSec = Math.floor(Date.now() / 1000);
+
+  console.log(`▶ Metrics backfill (horizon ${Math.round(horizonSec / 3600)}h, per-metric idempotent, reverse) …`);
+  const deps = await makeNodeBackfillDeps((m) => console.log(m));
+  const res = await runMetricsBackfill(deps, getMetricEmitters(), { horizonSec, nowSec });
+
+  for (const e of res.emitters) {
+    if (e.skipped) {
+      console.log(`✓  · ${e.id}: already covered`);
+    } else {
+      const cov = e.windowsCovered ? `, ${e.windowsCovered} window(s) already covered` : '';
+      const drop = e.totalDropped ? `, ${e.totalDropped} DROPPED` : '';
+      console.log(`✓  ~ ${e.id}: ${e.exportsRun} exports, ${e.totalOut} out${cov}${drop}`);
+    }
+  }
+  const icon = res.totalDropped === 0 ? '✓' : '✗';
+  console.log(`${icon}  backfill: ${res.exportsRun} exports total, ${res.totalOut} events out, ${res.totalDropped} dropped`);
+  if (res.totalDropped > 0) {
+    console.error('▶ Backfill had dropped events in dense minutes — history is incomplete for those.');
   }
 }
 
