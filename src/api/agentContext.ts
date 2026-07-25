@@ -306,13 +306,27 @@ The app maintains a set of scheduled-search lookups and cached
 re-aggregating raw spans** and most of the time has the answer
 the user wants:
 
-| Lookup / cached panel | What it has | Read pattern |
+**RED, dependency, and per-operation numbers now live in the metrics
+store — get them with \`run_metrics_query\`, not \`$vt_results\`** (see the
+"Fast RED numbers" section above). The old \`$vt_results\` caches
+(\`criblapm__home_service_summary\`, \`__sysarch_dependencies\`,
+\`__sysarch_messaging_deps\`, \`__svc_operations\`) still exist but are
+slower and legacy — only fall back to them if a metrics read returns
+nothing. Concretely:
+
+- **"what does service X call, and how are those calls failing?"** →
+  \`sum(sum_over_time(criblapm_edge_calls_total{parent="X"}[1h])) by (child, outcome)\`
+  (error rate per child = its \`error\` slice ÷ total) and
+  \`avg(avg_over_time(criblapm_edge_latency_ms{parent="X",quantile="p95"}[1h])) by (child)\`.
+- **messaging edges** → \`criblapm_messaging_total\` / \`criblapm_msg_latency_ms\`.
+- **per-(svc, op) RED** → \`criblapm_requests_total{svc="X"}\` by \`operation\` /
+  \`criblapm_op_latency_ms{svc="X"}\`.
+
+These KQL lookups are NOT in metrics — read them with \`run_search\`:
+
+| Lookup | What it has | Read pattern |
 |---|---|---|
 | \`criblapm_error_rate_history\` lookup | yesterday + 5 prior days of per-service error-rate %, pivoted one row per svc with columns \`d1_pct .. d6_pct\` | \`take 1 | project svc="X" | lookup criblapm_error_rate_history on svc\` |
-| \`$vt_results\` of \`criblapm__home_service_summary\` | last 1h per-service requests / errors / error_rate / p50/p95/p99 (5-min cadence) | \`dataset="$vt_results" | where jobName == "criblapm__home_service_summary"\` |
-| \`$vt_results\` of \`criblapm__sysarch_dependencies\` | parent-service → child-service call counts and edge error rates (5-min cadence). **This is the answer to "what does service X call, and how are those calls failing?"** | \`dataset="$vt_results" | where jobName == "criblapm__sysarch_dependencies" | where parent=="X"\` |
-| \`$vt_results\` of \`criblapm__sysarch_messaging_deps\` | kafka / messaging edges | same pattern, \`messaging_deps\` |
-| \`$vt_results\` of \`criblapm__svc_operations\` | per-(svc, op) request count, error rate, p95 (5-min cadence) | filter by \`jobName\` and \`svc\` |
 | \`criblapm_trace_originators\` lookup | per-root-service classification (user / service / unknown) | \`lookup criblapm_trace_originators on root_svc\` |
 | \`criblapm_attr_catalog\` lookup | per-(svc, attr_name) catalog of which attribute names exist on which service | \`lookup criblapm_attr_catalog on svc\` |
 | \`criblapm_op_baselines\` lookup | rolling 24h per-(svc, op) p50/p95/p99 baseline for the anomaly detector | \`lookup criblapm_op_baselines on svc, op\` |
@@ -596,31 +610,26 @@ This is the most common steady-state question and has a fast
 answer that doesn't require raw-span scans. Two reads, then a
 trace render.
 
-1. **Read the cached dependency edges.** \`criblapm__sysarch_dependencies\`
-   already computed per-edge error rates over the last hour:
-   \`\`\`kql
-   dataset="$vt_results" | where jobName == "criblapm__sysarch_dependencies"
-     | where parent == "<implicated service>"
-     | project parent, child, callCount, errorCount, p95DurUs,
-               edge_err_rate=round(100.0*todouble(errorCount)/todouble(callCount), 2)
-     | sort by errorCount desc
+1. **Read the dependency edges from metrics** with \`run_metrics_query\`
+   (fast — ~100ms, no span scan):
+   \`\`\`promql
+   sum(sum_over_time(criblapm_edge_calls_total{parent="<implicated service>"}[1h])) by (child, outcome)
    \`\`\`
-   The row(s) with high \`edge_err_rate\` name the downstream
-   responsible for the symptom. If the implicated service makes
-   no calls (it's a leaf), this returns empty — that means the
-   service itself is the origin, not propagation.
+   The error rate for each downstream \`child\` is its \`outcome="error"\`
+   slice ÷ that child's total; the child(ren) with high error rate name
+   the downstream responsible for the symptom. Add
+   \`avg(avg_over_time(criblapm_edge_latency_ms{parent="<implicated service>",quantile="p95"}[1h])) by (child)\`
+   for per-edge p95. If the service makes no calls (a leaf), this
+   returns empty — the service itself is the origin, not propagation.
 
-2. **Read the cached operation breakdown.** \`criblapm__svc_operations\`
-   has per-(svc, op) error rates:
-   \`\`\`kql
-   dataset="$vt_results" | where jobName == "criblapm__svc_operations"
-     | where svc == "<implicated service>"
-     | project svc, name, requests, errors, error_rate, p95_us
-     | sort by errors desc
-     | limit 10
+2. **Read the per-operation breakdown from metrics** with
+   \`run_metrics_query\`:
+   \`\`\`promql
+   sum(sum_over_time(criblapm_requests_total{svc="<implicated service>"}[1h])) by (operation, outcome)
    \`\`\`
-   This tells you which operations on the service are the worst
-   offenders.
+   (error rate per operation = its \`error\` slice ÷ total); pair with
+   \`avg(avg_over_time(criblapm_op_latency_ms{svc="<implicated service>",quantile="p95"}[1h])) by (operation)\`
+   for p95. This tells you which operations are the worst offenders.
 
 3. **Render one representative trace.** Look up a recent erroring
    trace for the worst (svc, op) pair from step 2, then
@@ -628,14 +637,14 @@ trace render.
    visually.
 
 That's the whole flow. **STOP and call \`present_investigation_summary\`
-after step 3** — findings = the dependency edge row(s) + the top
-erroring operation row + the rendered trace. Conclusion = name
+after step 3** — findings = the dependency edge result + the top
+erroring operation + the rendered trace. Conclusion = name
 the downstream service from step 1 (or the operation from step
 2 if there's no downstream call).
 
 DO NOT compose a custom \`parent_span_id\`-self-join over raw
-spans for this. The cached dependency panel already did exactly
-that work; recomputing is slow and adds nothing.
+spans for this — the edge metrics already have per-edge call + error
+counts; recomputing from spans is slow and adds nothing.
 
 ### Common failure modes to check (in priority order)
 
