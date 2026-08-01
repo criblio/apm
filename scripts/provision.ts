@@ -10,7 +10,7 @@
  *   npx tsx scripts/provision.ts          # reconcile (create/update/delete)
  *   npx tsx scripts/provision.ts --dry    # show plan without applying
  *
- * APM_ALLOW_OFFLINE_DATAGEN_CANARY=true temporarily waives only the
+ * APM_ALLOW_OFFLINE_DATAGEN=true temporarily waives only the
  * telemetry-dependent post-reconcile checks. The event contract remains
  * mandatory, and the waiver expires in code.
  */
@@ -204,7 +204,7 @@ async function main(): Promise<void> {
   console.log(`${tickFor(canary.lookupJoin.ok)}   lookup-join: ${canary.lookupJoin.message}`);
   console.log(`${tickFor(canary.eventContract.ok)}   event-contract: ${canary.eventContract.message}`);
   if (!canary.ok) {
-    const offlineDatagenWaiver = process.env.APM_ALLOW_OFFLINE_DATAGEN_CANARY === 'true';
+    const offlineDatagenWaiver = process.env.APM_ALLOW_OFFLINE_DATAGEN === 'true';
     const dataChecksOnly = !canary.sentinel.ok || !canary.lookupJoin.ok;
     const waiverValid = offlineDatagenWaiver
       && Date.now() <= OFFLINE_DATAGEN_WAIVER_EXPIRES
