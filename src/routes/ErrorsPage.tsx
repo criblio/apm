@@ -6,6 +6,7 @@ import StatusBanner from '../components/StatusBanner';
 import InvestigateButton from '../components/InvestigateButton';
 import SpotlightSection from '../components/SpotlightSection';
 import { listErrorClasses } from '../api/search';
+import { SPOTLIGHT_ATTRIBUTES_SERVICE_DETAIL } from '../api/queries';
 import { listCachedErrorClasses } from '../api/panelCache';
 import { useStreamFilterEnabled } from '../hooks/useStreamFilter';
 import { serviceColor } from '../utils/spans';
@@ -241,6 +242,7 @@ export default function ErrorsPage() {
                             scopeKql={spotlightScopeFor(ec)}
                             selectionKql={SPOTLIGHT_ERROR_SELECTION}
                             earliest={range}
+                            attributes={SPOTLIGHT_ATTRIBUTES_SERVICE_DETAIL}
                             selectionNoun="errors"
                             title={`Spotlight — error rate per attribute for ${ec.service} / ${ec.operation}`}
                             caption="For each attribute, what percentage of this operation's calls with that value failed? Values with an unusually high error rate point at the source of the failures. Click Search to see the matching spans."

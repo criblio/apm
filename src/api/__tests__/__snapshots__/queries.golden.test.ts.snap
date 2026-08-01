@@ -255,6 +255,7 @@ exports[`queries.ts — golden snapshots + invariants > allServiceOperations > s
     | extend svc=tostring(resource.attributes['service.name']),
             dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
             is_error=(tostring(status.code)=="2")
+    | where tostring(kind) in ("2", "5")
     | where dur_us < 30000000
     | summarize requests=count(),
                 errors=countif(is_error),
@@ -289,6 +290,16 @@ exports[`queries.ts — golden snapshots + invariants > attrValueDistribution > 
     | limit 20
     | extend attr_name="http.method"
     | project attr_name, attr_value, n"
+`;
+
+exports[`queries.ts — golden snapshots + invariants > backfillSpanCounts > snapshot stable 1`] = `
+"dataset="otel" | where isnotnull(end_time_unix_nano)
+    | extend svc=tostring(resource.attributes['service.name']),
+            dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0
+    | where isnotempty(svc)
+    | where dur_us < 30000000
+    | summarize n=count() by t=bin(_time, 300s)
+    | sort by t asc"
 `;
 
 exports[`queries.ts — golden snapshots + invariants > dependencies > snapshot stable 1`] = `
@@ -442,6 +453,196 @@ exports[`queries.ts — golden snapshots + invariants > messagingDependencies > 
     | sort by spans desc"
 `;
 
+exports[`queries.ts — golden snapshots + invariants > metricDurationExport > snapshot stable 1`] = `
+"dataset="otel" | where isnotnull(end_time_unix_nano)
+    | extend svc=tostring(resource.attributes['service.name']),
+            operation=tostring(name),
+            dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
+            dur_ms=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000000.0,
+            _time=bin(_time, 1m)
+    | where isnotempty(svc) and dur_ms >= 0
+    | where tostring(kind) in ("2", "5")
+
+    | where dur_us < 30000000
+    | project _time, svc, operation, dur_ms
+    | extend name="criblapm_request_duration_ms"
+    | export to metrics type=histogram timeField=_time nameField=name valueField=dur_ms labelFields=[svc, operation]"
+`;
+
+exports[`queries.ts — golden snapshots + invariants > metricDurationExportSampled > snapshot stable 1`] = `
+"dataset="otel" | where isnotnull(end_time_unix_nano)
+    | extend svc=tostring(resource.attributes['service.name']),
+            operation=tostring(name),
+            dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
+            dur_ms=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000000.0,
+            _time=bin(_time, 1m)
+    | where isnotempty(svc) and dur_ms >= 0
+    | where tostring(kind) in ("2", "5")
+    | where substring(tolower(tostring(span_id)), 0, 1) in ("0", "1", "2", "3")
+    | where dur_us < 30000000
+    | project _time, svc, operation, dur_ms
+    | extend name="criblapm_request_duration_ms"
+    | export to metrics type=histogram timeField=_time nameField=name valueField=dur_ms labelFields=[svc, operation]"
+`;
+
+exports[`queries.ts — golden snapshots + invariants > metricEdgeCallsExport > snapshot stable 1`] = `
+"dataset="otel" | where isnotnull(end_time_unix_nano)
+    | extend svc=tostring(resource.attributes['service.name']),
+            parent_sid=tostring(parent_span_id),
+            dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
+            outcome=iff(tostring(status.code)=="2", "error", "ok")
+    | where parent_sid != "" and isnotempty(parent_sid)
+    | where dur_us < 30000000
+    | project _time, trace_id, parent_sid, svc, outcome
+    | join kind=inner (
+        dataset="otel" | where isnotnull(end_time_unix_nano)
+        | extend psvc=tostring(resource.attributes['service.name']),
+                psid=tostring(span_id)
+        | project trace_id, psid, psvc
+      ) on trace_id, $left.parent_sid == $right.psid
+    | where svc != psvc
+    | summarize value=count() by bin(_time, 1m), parent=psvc, child=svc, outcome
+    | project-rename _time=bin_time_1m
+    | extend name="criblapm_edge_calls_total", type="counter"
+    | export to metrics typeField=type timeField=_time nameField=name valueField=value labelFields=[parent, child, outcome]"
+`;
+
+exports[`queries.ts — golden snapshots + invariants > metricEdgeDurationExport > snapshot stable 1`] = `
+"dataset="otel" | where isnotnull(end_time_unix_nano)
+    | extend svc=tostring(resource.attributes['service.name']),
+            parent_sid=tostring(parent_span_id),
+            dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
+            dur_ms=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000000.0,
+            _time=bin(_time, 1m)
+    | where parent_sid != "" and isnotempty(parent_sid) and dur_ms >= 0
+    | where dur_us < 30000000
+    | project _time, trace_id, parent_sid, svc, dur_ms
+    | join kind=inner (
+        dataset="otel" | where isnotnull(end_time_unix_nano)
+        | extend psvc=tostring(resource.attributes['service.name']),
+                psid=tostring(span_id)
+        | project trace_id, psid, psvc
+      ) on trace_id, $left.parent_sid == $right.psid
+    | where svc != psvc
+    | project _time, parent=psvc, child=svc, dur_ms
+    | extend name="criblapm_edge_duration_ms"
+    | export to metrics type=histogram timeField=_time nameField=name valueField=dur_ms labelFields=[parent, child]"
+`;
+
+exports[`queries.ts — golden snapshots + invariants > metricEdgeLatencyP95Export > snapshot stable 1`] = `
+"dataset="otel" | where isnotnull(end_time_unix_nano)
+    | extend svc=tostring(resource.attributes['service.name']),
+            parent_sid=tostring(parent_span_id),
+            dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
+            dur_ms=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000000.0,
+            _time=bin(_time, 1m)
+    | where parent_sid != "" and isnotempty(parent_sid) and dur_ms >= 0
+    | where dur_us < 30000000
+    | project _time, trace_id, parent_sid, svc, dur_ms
+    | join kind=inner (
+        dataset="otel" | where isnotnull(end_time_unix_nano)
+        | extend psvc=tostring(resource.attributes['service.name']),
+                psid=tostring(span_id)
+        | project trace_id, psid, psvc
+      ) on trace_id, $left.parent_sid == $right.psid
+    | where svc != psvc
+    | summarize value=percentile(dur_ms, 95) by _time, parent=psvc, child=svc
+    | extend name="criblapm_edge_latency_ms", type="gauge", quantile="p95"
+    | export to metrics typeField=type timeField=_time nameField=name valueField=value labelFields=[parent, child, quantile]"
+`;
+
+exports[`queries.ts — golden snapshots + invariants > metricLatencyPercentileExport > snapshot stable 1`] = `
+"dataset="otel" | where isnotnull(end_time_unix_nano)
+    | extend svc=tostring(resource.attributes['service.name']),
+            dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
+            dur_ms=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000000.0
+    | where isnotempty(svc) and dur_ms >= 0
+    | where tostring(kind) in ("2", "5")
+    | where dur_us < 30000000
+    | summarize value=percentile(dur_ms, 95) by bin(_time, 1m), svc
+    | project-rename _time=bin_time_1m
+    | extend name="criblapm_request_latency_ms", type="gauge", quantile="p95"
+    | export to metrics typeField=type timeField=_time nameField=name valueField=value labelFields=[svc, quantile]"
+`;
+
+exports[`queries.ts — golden snapshots + invariants > metricLatencyPercentileExport op > snapshot stable 1`] = `
+"dataset="otel" | where isnotnull(end_time_unix_nano)
+    | extend svc=tostring(resource.attributes['service.name']),
+            operation=tostring(name),
+            dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
+            dur_ms=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000000.0
+    | where isnotempty(svc) and dur_ms >= 0
+    | where tostring(kind) in ("2", "5")
+    | where dur_us < 30000000
+    | summarize value=percentile(dur_ms, 50) by bin(_time, 1m), svc, operation
+    | project-rename _time=bin_time_1m
+    | extend name="criblapm_op_latency_ms", type="gauge", quantile="p50"
+    | export to metrics typeField=type timeField=_time nameField=name valueField=value labelFields=[svc, operation, quantile]"
+`;
+
+exports[`queries.ts — golden snapshots + invariants > metricMessagingDurationExport > snapshot stable 1`] = `
+"dataset="otel" | where isnotnull(end_time_unix_nano)
+    | extend svc=tostring(resource.attributes['service.name']),
+            dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
+            dur_ms=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000000.0,
+            _time=bin(_time, 1m),
+            op=tostring(attributes['messaging.operation']),
+            dest=tostring(attributes['messaging.destination.name']),
+            system=tostring(attributes['messaging.system'])
+    | where isnotempty(dest) and isnotempty(op) and dur_ms >= 0
+    | where dur_us < 30000000
+    | project _time, svc, dest, op, system, dur_ms
+    | extend name="criblapm_messaging_duration_ms"
+    | export to metrics type=histogram timeField=_time nameField=name valueField=dur_ms labelFields=[svc, dest, op, system]"
+`;
+
+exports[`queries.ts — golden snapshots + invariants > metricMessagingExport > snapshot stable 1`] = `
+"dataset="otel" | where isnotnull(end_time_unix_nano)
+    | extend svc=tostring(resource.attributes['service.name']),
+            dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
+            outcome=iff(tostring(status.code)=="2", "error", "ok"),
+            op=tostring(attributes['messaging.operation']),
+            dest=tostring(attributes['messaging.destination.name']),
+            system=tostring(attributes['messaging.system'])
+    | where isnotempty(dest) and isnotempty(op)
+    | where dur_us < 30000000
+    | summarize value=count() by bin(_time, 1m), svc, dest, op, system, outcome
+    | project-rename _time=bin_time_1m
+    | extend name="criblapm_messaging_total", type="counter"
+    | export to metrics typeField=type timeField=_time nameField=name valueField=value labelFields=[svc, dest, op, system, outcome]"
+`;
+
+exports[`queries.ts — golden snapshots + invariants > metricMessagingLatencyP95Export > snapshot stable 1`] = `
+"dataset="otel" | where isnotnull(end_time_unix_nano)
+    | extend svc=tostring(resource.attributes['service.name']),
+            dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
+            dur_ms=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000000.0,
+            _time=bin(_time, 1m),
+            op=tostring(attributes['messaging.operation']),
+            dest=tostring(attributes['messaging.destination.name']),
+            system=tostring(attributes['messaging.system'])
+    | where isnotempty(dest) and isnotempty(op) and dur_ms >= 0
+    | where dur_us < 30000000
+    | summarize value=percentile(dur_ms, 95) by _time, svc, dest, op, system
+    | extend name="criblapm_msg_latency_ms", type="gauge", quantile="p95"
+    | export to metrics typeField=type timeField=_time nameField=name valueField=value labelFields=[svc, dest, op, system, quantile]"
+`;
+
+exports[`queries.ts — golden snapshots + invariants > metricRequestsExport > snapshot stable 1`] = `
+"dataset="otel" | where isnotnull(end_time_unix_nano)
+    | extend svc=tostring(resource.attributes['service.name']),
+            operation=tostring(name),
+            dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
+            outcome=iff(tostring(status.code)=="2", "error", "ok")
+    | where isnotempty(svc)
+    | where tostring(kind) in ("2", "5")
+    | where dur_us < 30000000
+    | summarize value=count() by bin(_time, 1m), svc, operation, outcome
+    | project-rename _time=bin_time_1m
+    | extend name="criblapm_requests_total", type="counter"
+    | export to metrics typeField=type timeField=_time nameField=name valueField=value labelFields=[svc, operation, outcome]"
+`;
+
 exports[`queries.ts — golden snapshots + invariants > metricSampleRecords > snapshot stable 1`] = `"dataset="otel" | where datatype == "generic_metrics" | limit 500"`;
 
 exports[`queries.ts — golden snapshots + invariants > metricSampleRow > snapshot stable 1`] = `
@@ -457,6 +658,31 @@ exports[`queries.ts — golden snapshots + invariants > metricServices > snapsho
     | where isnotempty(svc)
     | summarize by svc
     | sort by svc asc"
+`;
+
+exports[`queries.ts — golden snapshots + invariants > metricStatusClassExport > snapshot stable 1`] = `
+"dataset="otel" | where isnotnull(end_time_unix_nano)
+    | extend svc=tostring(resource.attributes['service.name']),
+            dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
+            http_status=coalesce(toint(attributes['http.response.status_code']),
+                                 toint(attributes['http.status_code'])),
+            grpc_status=toint(attributes['rpc.grpc.status_code'])
+    | where isnotempty(svc)
+    | where tostring(kind) in ("2", "5")
+    | where dur_us < 30000000
+    | extend status_class=case(
+        http_status == 503, "503",
+        http_status == 504, "504",
+        http_status == 502, "502",
+        http_status == 500, "500",
+        http_status >= 500 and http_status < 600, "other_5xx",
+        http_status >= 400 and http_status < 500, "4xx",
+        isnotnull(grpc_status) and grpc_status != 0, "grpc_err",
+        "ok")
+    | summarize value=count() by bin(_time, 1m), svc, status_class
+    | project-rename _time=bin_time_1m
+    | extend name="criblapm_status_class_total", type="counter"
+    | export to metrics typeField=type timeField=_time nameField=name valueField=value labelFields=[svc, status_class]"
 `;
 
 exports[`queries.ts — golden snapshots + invariants > metricTimeSeries (basic) > snapshot stable 1`] = `
@@ -709,6 +935,7 @@ exports[`queries.ts — golden snapshots + invariants > serviceInstances > snaps
             dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
             is_error=(tostring(status.code)=="2")
     | where svc=="test-svc"
+    | where tostring(kind) in ("2", "5")
     | where dur_us < 30000000
     | summarize requests=count(),
                 errors=countif(is_error),
@@ -778,6 +1005,7 @@ exports[`queries.ts — golden snapshots + invariants > serviceOperations > snap
             dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
             is_error=(tostring(status.code)=="2")
     | where svc=="test-svc"
+    | where tostring(kind) in ("2", "5")
     | where dur_us < 30000000
     | summarize requests=count(),
                 errors=countif(is_error),
@@ -920,6 +1148,7 @@ exports[`queries.ts — golden snapshots + invariants > serviceTimeSeries > snap
             dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0,
             is_error=(tostring(status.code)=="2")
 
+    | where tostring(kind) in ("2", "5")
     | where dur_us < 30000000
     | summarize requests=count(),
                 errors=countif(is_error),

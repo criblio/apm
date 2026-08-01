@@ -31,6 +31,15 @@ function safeDataset(): string {
 const cachedByDataset = new Map<string, Promise<boolean>>();
 
 /**
+ * Feature detection is session-scoped and idempotent, not tied to any
+ * one page. Give the probe a signal that never aborts so a navigation
+ * can't cancel it mid-flight — an aborted probe would otherwise cache
+ * `false` and force every live-KQL fallback onto the slow dotted path
+ * for the rest of the session.
+ */
+const NEVER_ABORT = new AbortController().signal;
+
+/**
  * Probe the otel dataset for a single span and check whether
  * `service_name` and `status_code` are populated at the top level.
  * Returns true if both are present (acceleration in effect),
@@ -51,6 +60,7 @@ export function flatFieldsAvailable(): Promise<boolean> {
           '-10m',
           'now',
           1,
+          NEVER_ABORT,
         );
         const r = rows[0] as { sn?: unknown; sc?: unknown } | undefined;
         return !!(r && r.sn != null && r.sc != null);

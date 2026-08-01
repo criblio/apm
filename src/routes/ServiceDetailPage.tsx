@@ -1,4 +1,5 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import { newQueryGeneration, captureQueryGeneration } from '../api/queryGeneration';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import TimeRangePicker from '../components/TimeRangePicker';
 import { binSecondsFor } from '../components/timeRanges';
@@ -15,6 +16,7 @@ import SpotlightSection from '../components/SpotlightSection';
 
 import {
   listServiceSummaries,
+  listServiceCounts,
   getServiceTimeSeries,
   getServiceStatusCodeMix,
   listOperationSummaries,
@@ -29,11 +31,9 @@ import {
 import { runQuery } from '../api/cribl';
 import * as Q from '../api/queries';
 import { kqlStringLiteral } from '../api/kqlSafety';
-import { listCachedSvcDetailPanels } from '../api/panelCache';
 import { serviceColor } from '../utils/spans';
 import { previousWindow } from '../utils/timeRange';
 import { useRangeParam } from '../hooks/useRangeParam';
-import { useStreamFilterEnabled } from '../hooks/useStreamFilter';
 import DeltaChip from '../components/DeltaChip';
 import InvestigateButton from '../components/InvestigateButton';
 import type { InvestigationSeed } from '../api/agentContext';
@@ -253,6 +253,7 @@ export default function ServiceDetailPage() {
   const [prevSummary, setPrevSummary] = useState<ServiceSummary | null>(null);
   const [buckets, setBuckets] = useState<ServiceBucket[]>([]);
   const [statusMix, setStatusMix] = useState<StatusCodeMixBucket[]>([]);
+  const [loadingStatusMix, setLoadingStatusMix] = useState(true);
   const [operations, setOperations] = useState<OperationSummary[]>([]);
   const [expandedOps, setExpandedOps] = useState<Set<string>>(new Set());
   const [podUptimes, setPodUptimes] = useState<PodUptime[]>([]);
@@ -265,6 +266,10 @@ export default function ServiceDetailPage() {
   const [edges, setEdges] = useState<DependencyEdge[]>([]);
   const [loadingSummary, setLoadingSummary] = useState(true);
   const [loadingBuckets, setLoadingBuckets] = useState(true);
+  // Latency (duration chart) lands after the request/error counts —
+  // tracked separately so the rate + error charts render from the fast
+  // counter while the slow histogram_quantile series is still loading.
+  const [loadingLatency, setLoadingLatency] = useState(true);
   const [loadingOps, setLoadingOps] = useState(true);
   const [loadingErrors, setLoadingErrors] = useState(true);
   const [loadingInstances, setLoadingInstances] = useState(true);
@@ -277,7 +282,6 @@ export default function ServiceDetailPage() {
   const [alertHistory, setAlertHistory] = useState<AlertHistoryEntry[]>([]);
   // Trigger a re-fetch when the Settings stream-filter toggle changes,
   // so the Recent errors panel doesn't keep stale server-filtered data.
-  const streamFilterEnabled = useStreamFilterEnabled();
   // Catalog of metrics this service emits (by name). Used by the
   // Protocol / Runtime / Infrastructure cards to hide sections the
   // service doesn't actually have data for, and to pick between old
@@ -292,6 +296,25 @@ export default function ServiceDetailPage() {
   const [cardSeriesByMetric, setCardSeriesByMetric] = useState<
     Map<string, Array<{ t: number; v: number }>> | undefined
   >(undefined);
+
+  // The metric cards (runtime/container gauges) sit below the fold and
+  // fire ~20 live KQL lakehouse probes — measured as the dominant chunk
+  // of Service Detail's initial load (10.6s, 31 jobs). Gate their fetch
+  // on scroll-into-view so they're off the first-paint critical path;
+  // the metric-backed panels above render immediately. (Data-store
+  // migration to the fast PromQL store is tracked separately.)
+  const metricCardsRef = useRef<HTMLDivElement | null>(null);
+  const [metricCardsVisible, setMetricCardsVisible] = useState(false);
+  useEffect(() => {
+    const el = metricCardsRef.current;
+    if (!el || metricCardsVisible) return;
+    if (typeof IntersectionObserver === 'undefined') { setMetricCardsVisible(true); return; }
+    const obs = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) { setMetricCardsVisible(true); obs.disconnect(); }
+    }, { rootMargin: '200px' });
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [metricCardsVisible]);
 
   const recordPartialFailure = useCallback((panel: string, value: unknown) => {
     setPartialFailures((cur) => ({
@@ -310,174 +333,183 @@ export default function ServiceDetailPage() {
   }, []);
 
   const fetchAll = useCallback(async () => {
+    newQueryGeneration(); // cancel the prior page/fetch's in-flight reads
+    const isCurrent = captureQueryGeneration(); // guard stale async setState
     setError(null);
     setNotFound(false);
     setLoadingSummary(true);
     setLoadingBuckets(true);
+    setLoadingLatency(true);
+    setLoadingStatusMix(true);
     setLoadingOps(true);
     setLoadingErrors(true);
     setLoadingInstances(true);
     setLoadingDeps(true);
     const binSeconds = binSecondsFor(range);
 
-    // Previous-window summary for delta chips. Always live because
-    // the previous window changes with every range pick and isn't
-    // part of the cacheable set. Non-fatal on error.
+    // Previous-window (delta chips) is computed in the deferred group
+    // below so its quantile queries don't contend with the hero charts.
     const prev = previousWindow(range);
-    listServiceSummaries(prev.earliest, prev.latest, serviceName)
+
+    // ── PHASE 1: metric-backed panels fire FIRST ──────────────────
+    // Summary, time series, operations, and dependencies read
+    // metrics-first (fast cached GETs, off the worker pool). Fire them
+    // immediately and un-gated so the page paints from metrics right
+    // away. The heavy live-KQL panels (status mix, error traces,
+    // instances, uptime) are deferred to PHASE 2 below so they don't
+    // contend with these for the browser's ~6 connections on first paint.
+    // RED cards: COUNTS-only read (fast counter, no latency quantiles). The
+    // cards' current p50/p95/p99 are DERIVED from the duration chart's
+    // latest bucket below — reusing those quantiles instead of firing three
+    // more histogram_quantile reads. On this engine each quantile is
+    // ~0.8–3s and firing cards + charts + prev + ops at once (~12 of them)
+    // was the real cause of the ~15s Service Detail load.
+    const pSummary = listServiceCounts(range, 'now', serviceName)
       .then((all) => {
-        setPrevSummary(all.find((x) => x.service === serviceName) ?? null);
-        clearPartialFailure('Prior-window comparison');
-      })
-      .catch((err: unknown) => {
-        setPrevSummary(null);
-        recordPartialFailure('Prior-window comparison', err);
-      });
-
-    // Status-code mix runs unconditionally — it's not cached in
-    // $vt_results today and the cache-fast-path below returns early,
-    // so it has to fire before the cache branch. Cheap (one
-    // summarize over the same span set, projected to a status class).
-    // Powers the Status mix chart that breaks the flat error rate
-    // apart into 503 (capacity) vs 504 (upstream timeout) vs 500
-    // (upstream bug). See
-    // docs/sessions/2026-05-20-smooth-climb-misdiagnosis.md.
-    getServiceStatusCodeMix(binSeconds, serviceName, range, 'now')
-      .then((rows) => {
-        setStatusMix(rows);
-        clearPartialFailure('HTTP status mix');
-      })
-      .catch((err: unknown) => {
-        setStatusMix([]);
-        recordPartialFailure('HTTP status mix', err);
-      });
-
-    // Cache-fast path: when the user is on the default -1h range
-    // with the stream filter enabled, read all five ServiceDetail
-    // panels from $vt_results in one batched query. The cached
-    // scheduled searches run every 5 minutes and contain per-service
-    // data — the reader filters client-side to `serviceName`.
-    // Any cache miss falls through to the live query fan-out below.
-    if (range === '-1h' && streamFilterEnabled) {
-      try {
-        const cached = await listCachedSvcDetailPanels(serviceName);
-        if (cached.summary && cached.buckets && cached.operations) {
-          setSummary(cached.summary);
-          setNotFound(false);
-          setLoadingSummary(false);
-          setBuckets(cached.buckets);
-          setLoadingBuckets(false);
-          setOperations(cached.operations);
-          setLoadingOps(false);
-          clearPartialFailure('Service time series');
-          clearPartialFailure('Operation summaries');
-          if (cached.dependencies) {
-            setEdges(cached.dependencies);
-            setLoadingDeps(false);
-            clearPartialFailure('Service dependencies');
-          } else {
-            void getDependencies(range, 'now')
-              .then((e) => {
-                setEdges(e);
-                clearPartialFailure('Service dependencies');
-              })
-              .catch((err: unknown) => recordPartialFailure('Service dependencies', err))
-              .finally(() => setLoadingDeps(false));
-          }
-          if (cached.recentErrors && cached.recentErrors.length > 0) {
-            setErrorTraces(cached.recentErrors);
-            setLoadingErrors(false);
-            clearPartialFailure('Recent error traces');
-          } else {
-            // Tighten the fallback to -15m instead of the full range.
-            // The cache miss means the 5-min scheduled search hasn't
-            // caught the recent errors yet; scanning the full -1h
-            // range is expensive and the errors we want are recent.
-            void listRecentErrorTraces(serviceName, '-15m', 'now')
-              .then((et) => {
-                setErrorTraces(et);
-                clearPartialFailure('Recent error traces');
-              })
-              .catch((err: unknown) => recordPartialFailure('Recent error traces', err))
-              .finally(() => setLoadingErrors(false));
-          }
-          // Instances aren't cached — always live.
-          void listServiceInstances(serviceName, range, 'now')
-            .then((inst) => {
-              setInstances(inst);
-              clearPartialFailure('Service instances');
-            })
-            .catch((err: unknown) => recordPartialFailure('Service instances', err))
-            .finally(() => setLoadingInstances(false));
-          return;
-        }
-      } catch {
-        // Cache read failed — fall through to live.
-      }
-    }
-
-    // Live query fan-out — either the user picked a non-default
-    // range, or the cache came back empty.
-    listServiceSummaries(range, 'now', serviceName)
-      .then((all) => {
+        if (!isCurrent()) return;
         const mine = all.find((x) => x.service === serviceName);
         setSummary(mine ?? null);
         setNotFound(!mine);
       })
       .catch((err) => {
+        if (!isCurrent()) return;
         setError(err instanceof Error ? err.message : String(err));
       })
-      .finally(() => setLoadingSummary(false));
+      .finally(() => { if (isCurrent()) setLoadingSummary(false); });
 
-    getServiceTimeSeries(binSeconds, serviceName, range, 'now')
+    const pBuckets = getServiceTimeSeries(binSeconds, serviceName, range, 'now', (partial) => {
+      // Counts-first: rate + error-rate charts render from the ~600ms
+      // counter without waiting on the ~1–2s latency quantile series.
+      if (!isCurrent()) return;
+      setBuckets(partial);
+      setLoadingBuckets(false);
+    })
       .then((rows) => {
-        setBuckets(rows);
+        if (!isCurrent()) return;
+        setBuckets(rows); // latency merged in — duration chart fills
+        // Derive the RED cards' current latency from the latest chart bucket
+        // that has data (avoids 3 separate card histogram_quantile reads).
+        const withLat = rows.filter((b) => b.p95Us > 0);
+        const latest = withLat[withLat.length - 1];
+        if (latest) {
+          setSummary((prevS) => (prevS
+            ? { ...prevS, p50Us: latest.p50Us, p95Us: latest.p95Us, p99Us: latest.p99Us }
+            : prevS));
+        }
         clearPartialFailure('Service time series');
       })
-      .catch((err: unknown) => recordPartialFailure('Service time series', err))
-      .finally(() => setLoadingBuckets(false));
+      .catch((err: unknown) => { if (isCurrent()) recordPartialFailure('Service time series', err); })
+      .finally(() => { if (isCurrent()) { setLoadingBuckets(false); setLoadingLatency(false); } });
 
-    listOperationSummaries(serviceName, range, 'now')
-      .then((ops) => {
-        setOperations(ops);
-        clearPartialFailure('Operation summaries');
-      })
-      .catch((err: unknown) => recordPartialFailure('Operation summaries', err))
-      .finally(() => setLoadingOps(false));
-    // Pod uptime — cheap (30m window, one summarize per service)
-    // and feeds the Investigator's leak-fingerprint signal.
-    listPodUptime(serviceName, '-30m', 'now')
+    // ── PHASE 1.5: secondary metric reads, deferred behind the hero ──
+    // The RED cards (summary) + RED charts (buckets) each fire 3
+    // histogram_quantile queries; so do the ops table and the prev-window
+    // delta. Firing all of them at once saturates the metrics engine and
+    // pushed the Duration chart to ~3.7s. Defer the ops table, prev-window
+    // delta, and dependency edges until the hero reads resolve so the
+    // charts' quantiles aren't contended. These panels render below /
+    // around the RED row, so filling slightly later is invisible.
+    void Promise.allSettled([pSummary, pBuckets]).then(() => {
+      if (!isCurrent()) return;
+
+      listServiceSummaries(prev.earliest, prev.latest, serviceName)
+        .then((all) => {
+          if (!isCurrent()) return;
+          setPrevSummary(all.find((x) => x.service === serviceName) ?? null);
+          clearPartialFailure('Prior-window comparison');
+        })
+        .catch((err: unknown) => {
+          if (!isCurrent()) return;
+          setPrevSummary(null);
+          recordPartialFailure('Prior-window comparison', err);
+        });
+
+      listOperationSummaries(serviceName, range, 'now')
+        .then((ops) => {
+          if (!isCurrent()) return;
+          setOperations(ops);
+          clearPartialFailure('Operation summaries');
+        })
+        .catch((err: unknown) => { if (isCurrent()) recordPartialFailure('Operation summaries', err); })
+        .finally(() => { if (isCurrent()) setLoadingOps(false); });
+
+      getDependencies(range, 'now')
+        .then((e) => {
+          if (!isCurrent()) return;
+          setEdges(e);
+          clearPartialFailure('Service dependencies');
+        })
+        .catch((err: unknown) => { if (isCurrent()) recordPartialFailure('Service dependencies', err); })
+        .finally(() => { if (isCurrent()) setLoadingDeps(false); });
+    });
+
+    // ── PHASE 2: heavy live-KQL panels, deferred ──────────────────
+    // Wait for the fast metric summary to land before firing the KQL
+    // search jobs (status mix, error traces, instances, pod uptime).
+    // These are non-metric-shaped and each spawns a worker-pool job;
+    // firing them up front starved the metric GETs and pushed first
+    // paint out. They still render independently the moment their own
+    // data arrives — they're just no longer on the critical path.
+    await pSummary.catch(() => {});
+    if (!isCurrent()) return;
+
+    // Status-code mix breaks the flat error rate apart into 503
+    // (capacity) vs 504 (upstream timeout) vs 500 (upstream bug). See
+    // docs/sessions/2026-05-20-smooth-climb-misdiagnosis.md.
+    getServiceStatusCodeMix(binSeconds, serviceName, range, 'now')
       .then((rows) => {
-        setPodUptimes(rows);
-        clearPartialFailure('Pod uptime');
+        if (!isCurrent()) return;
+        setStatusMix(rows);
+        clearPartialFailure('HTTP status mix');
       })
-      .catch((err: unknown) => recordPartialFailure('Pod uptime', err));
+      .catch((err: unknown) => {
+        if (!isCurrent()) return;
+        setStatusMix([]);
+        recordPartialFailure('HTTP status mix', err);
+      })
+      .finally(() => { if (isCurrent()) setLoadingStatusMix(false); });
 
+    // Recent error traces, per-instance RED, and pod uptime are heavy live
+    // KQL search jobs that sit BELOW the RED hero. They're deferred to a
+    // scroll-into-view effect (see below) so they don't run on load — they
+    // were the bulk of the ~13s settle once the latency reads moved to
+    // gauges.
+  }, [clearPartialFailure, range, recordPartialFailure, serviceName]);
+
+  // LAZY: the below-the-fold KQL panels fire only once their section
+  // scrolls into view. Keyed on serviceName/range/retryNonce so a range
+  // change re-fetches them (when already visible).
+  const deferredRef = useRef<HTMLDivElement | null>(null);
+  const [deferredVisible, setDeferredVisible] = useState(false);
+  useEffect(() => {
+    const el = deferredRef.current;
+    if (!el || deferredVisible) return;
+    if (typeof IntersectionObserver === 'undefined') { setDeferredVisible(true); return; }
+    const obs = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) { setDeferredVisible(true); obs.disconnect(); }
+    }, { rootMargin: '0px' });
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [deferredVisible]);
+
+  useEffect(() => {
+    if (!deferredVisible || !serviceName) return;
+    let cancelled = false;
+    setLoadingErrors(true);
+    setLoadingInstances(true);
+    listPodUptime(serviceName, '-30m', 'now')
+      .then((rows) => { if (!cancelled) { setPodUptimes(rows); clearPartialFailure('Pod uptime'); } })
+      .catch((err: unknown) => { if (!cancelled) recordPartialFailure('Pod uptime', err); });
     listRecentErrorTraces(serviceName, range, 'now')
-      .then((et) => {
-        setErrorTraces(et);
-        clearPartialFailure('Recent error traces');
-      })
-      .catch((err: unknown) => recordPartialFailure('Recent error traces', err))
-      .finally(() => setLoadingErrors(false));
-
-    getDependencies(range, 'now')
-      .then((e) => {
-        setEdges(e);
-        clearPartialFailure('Service dependencies');
-      })
-      .catch((err: unknown) => recordPartialFailure('Service dependencies', err))
-      .finally(() => setLoadingDeps(false));
-
+      .then((et) => { if (!cancelled) { setErrorTraces(et); clearPartialFailure('Recent error traces'); } })
+      .catch((err: unknown) => { if (!cancelled) recordPartialFailure('Recent error traces', err); })
+      .finally(() => { if (!cancelled) setLoadingErrors(false); });
     listServiceInstances(serviceName, range, 'now')
-      .then((inst) => {
-        setInstances(inst);
-        clearPartialFailure('Service instances');
-      })
-      .catch((err: unknown) => recordPartialFailure('Service instances', err))
-      .finally(() => setLoadingInstances(false));
-
-  }, [clearPartialFailure, range, recordPartialFailure, serviceName, streamFilterEnabled]);
+      .then((inst) => { if (!cancelled) { setInstances(inst); clearPartialFailure('Service instances'); } })
+      .catch((err: unknown) => { if (!cancelled) recordPartialFailure('Service instances', err); })
+      .finally(() => { if (!cancelled) setLoadingInstances(false); });
+    return () => { cancelled = true; };
+  }, [deferredVisible, serviceName, range, retryNonce, clearPartialFailure, recordPartialFailure]);
 
   useEffect(() => {
     void fetchAll();
@@ -557,6 +589,7 @@ export default function ServiceDetailPage() {
   // down to metrics that are also in the catalog.
   useEffect(() => {
     if (!serviceName) return;
+    if (!metricCardsVisible) return; // lazy: only fetch once cards scroll in
     let cancelled = false;
     setServiceMetricSet(undefined);
     setCardSeriesByMetric(undefined);
@@ -594,7 +627,7 @@ export default function ServiceDetailPage() {
     return () => {
       cancelled = true;
     };
-  }, [clearPartialFailure, range, recordPartialFailure, retryNonce, serviceName]);
+  }, [clearPartialFailure, metricCardsVisible, range, recordPartialFailure, retryNonce, serviceName]);
 
   const color = serviceColor(serviceName);
   const rangeMinutes = relativeTimeMs(range) / 60_000;
@@ -867,23 +900,25 @@ export default function ServiceDetailPage() {
       format: (v) => `${v.toFixed(2)}%`,
     },
   ];
+  // While latency is still loading (counts already rendered), pass empty
+  // data so the chart shows its "Loading…" state rather than flat 0-lines.
   const durSeries: LineSeries[] = [
     {
       name: 'p50',
       color: '#60a5fa',
-      data: chartSeries.p50Points,
+      data: loadingLatency ? [] : chartSeries.p50Points,
       format: fmtUs,
     },
     {
       name: 'p95',
       color: '#f59e0b',
-      data: chartSeries.p95Points,
+      data: loadingLatency ? [] : chartSeries.p95Points,
       format: fmtUs,
     },
     {
       name: 'p99',
       color: '#ef4444',
-      data: chartSeries.p99Points,
+      data: loadingLatency ? [] : chartSeries.p99Points,
       format: fmtUs,
     },
   ];
@@ -1187,7 +1222,7 @@ export default function ServiceDetailPage() {
             subtitle="Latency p50 / p95 / p99"
             series={durSeries}
             yFormat={fmtUsAxis}
-            emptyMessage={loadingBuckets ? 'Loading…' : 'No data'}
+            emptyMessage={loadingLatency ? 'Loading…' : 'No data'}
           />
         </div>
         </ResilienceBoundary>
@@ -1204,7 +1239,7 @@ export default function ServiceDetailPage() {
             subtitle="HTTP status classes per minute (ok baseline + errors stacked above)"
             series={statusMixSeries}
             yFormat={(v) => (v >= 1 ? v.toFixed(0) : v.toFixed(1))}
-            emptyMessage={loadingBuckets ? 'Loading…' : 'No requests'}
+            emptyMessage={loadingStatusMix ? 'Loading…' : 'No requests'}
           />
         </div>
       </section>
@@ -1232,6 +1267,7 @@ export default function ServiceDetailPage() {
           scopeKql={`tostring(resource.attributes['service.name'])==${kqlStringLiteral(serviceName)}`}
           selectionKql={`tostring(status.code)=="2"`}
           earliest={range}
+          attributes={Q.SPOTLIGHT_ATTRIBUTES_SERVICE_DETAIL}
           selectionNoun="errors"
           caption="For each attribute, the bar shows what percentage of spans with that value are errors. Attributes are sorted by how much that rate varies across values — uniform attributes get dropped (no signal); values with an unusually high or low error rate are highlighted. Click Search next to a value to drill into its spans."
           onPickValue={(attr, value) => {
@@ -1246,6 +1282,12 @@ export default function ServiceDetailPage() {
           }}
         />
       </section>
+
+      {/* Scroll sentinel: sits below the RED hero + Spotlight, so it's
+          off-screen on load. When it nears the viewport (user scrolls to
+          Operations), the below-fold KQL panels — Recent errors, Instances,
+          Pod uptime — fire. Keeps their search jobs off page load. */}
+      <div ref={deferredRef} aria-hidden style={{ height: 1 }} />
 
       {/* ── Operations ───────────────────────────────────────── */}
       <section className={s.section}>
@@ -1398,6 +1440,7 @@ export default function ServiceDetailPage() {
                               }
                               selectionKql={`tostring(status.code)=="2"`}
                               earliest={range}
+                              attributes={Q.SPOTLIGHT_ATTRIBUTES_SERVICE_DETAIL}
                               selectionNoun="errors"
                               title={`Spotlight — error rate per attribute for ${op.operation}`}
                               caption="For each attribute, what percentage of this operation's calls with that value failed? Values with an unusually high error rate point at the source of the failures. Click Search to see the matching spans."
@@ -1616,34 +1659,41 @@ export default function ServiceDetailPage() {
           </span>
         </div>
         <ResilienceBoundary title="Infrastructure metric cards are unavailable">
-        <div className={s.metricCards}>
-          <MetricsCard
-            title="Dependency latencies"
-            subtitle="p95 of outgoing calls by protocol"
-            rows={protocolRows}
-            service={serviceName}
-            range={range}
-            availableMetrics={serviceMetricSet}
-            seriesByMetric={cardSeriesByMetric}
-          />
-          <MetricsCard
-            title="Runtime health"
-            subtitle="Process / VM metrics from the instrumentation SDK"
-            rows={runtimeRows}
-            service={serviceName}
-            range={range}
-            availableMetrics={serviceMetricSet}
-            seriesByMetric={cardSeriesByMetric}
-          />
-          <MetricsCard
-            title="Infrastructure"
-            subtitle="Container + pod metrics from the k8s cluster receiver"
-            rows={infraRows}
-            service={serviceName}
-            range={range}
-            availableMetrics={serviceMetricSet}
-            seriesByMetric={cardSeriesByMetric}
-          />
+        {/* The observed div stays mounted as the scroll sentinel; the
+            cards themselves mount only once visible, so their per-row
+            `delta` KQL probes don't fire on initial page load. */}
+        <div className={s.metricCards} ref={metricCardsRef}>
+          {metricCardsVisible && (
+            <>
+              <MetricsCard
+                title="Dependency latencies"
+                subtitle="p95 of outgoing calls by protocol"
+                rows={protocolRows}
+                service={serviceName}
+                range={range}
+                availableMetrics={serviceMetricSet}
+                seriesByMetric={cardSeriesByMetric}
+              />
+              <MetricsCard
+                title="Runtime health"
+                subtitle="Process / VM metrics from the instrumentation SDK"
+                rows={runtimeRows}
+                service={serviceName}
+                range={range}
+                availableMetrics={serviceMetricSet}
+                seriesByMetric={cardSeriesByMetric}
+              />
+              <MetricsCard
+                title="Infrastructure"
+                subtitle="Container + pod metrics from the k8s cluster receiver"
+                rows={infraRows}
+                service={serviceName}
+                range={range}
+                availableMetrics={serviceMetricSet}
+                seriesByMetric={cardSeriesByMetric}
+              />
+            </>
+          )}
         </div>
         </ResilienceBoundary>
       </section>

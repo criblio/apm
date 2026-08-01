@@ -1,0 +1,47 @@
+[
+  {
+    "page": "home",
+    "navMs": 7021,
+    "firstContentMs": 9008,
+    "markerFound": true,
+    "marker": "Detected Issues OR Overview heading",
+    "navError": null,
+    "recordedAt": "2026-07-24T05:24:07.104Z"
+  },
+  {
+    "page": "services",
+    "navMs": 6300,
+    "firstContentMs": 13499,
+    "markerFound": true,
+    "marker": "Services (N) header",
+    "navError": null,
+    "recordedAt": "2026-07-24T05:24:20.887Z"
+  },
+  {
+    "page": "serviceDetail-frontend",
+    "navMs": 9409,
+    "firstContentMs": 10337,
+    "markerFound": true,
+    "marker": "Top operations heading",
+    "navError": null,
+    "recordedAt": "2026-07-24T05:24:31.494Z"
+  },
+  {
+    "page": "errors",
+    "navMs": 5453,
+    "firstContentMs": 11001,
+    "markerFound": true,
+    "marker": "errors table row OR empty state",
+    "navError": null,
+    "recordedAt": "2026-07-24T05:24:42.736Z"
+  },
+  {
+    "page": "systemArch",
+    "navMs": 8411,
+    "firstContentMs": 8868,
+    "markerFound": true,
+    "marker": "first svg visible",
+    "navError": null,
+    "recordedAt": "2026-07-24T05:24:51.828Z"
+  }
+]

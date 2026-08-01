@@ -1,7 +1,7 @@
 {
   "name": "apm",
   "private": true,
-  "version": "0.12.1",
+  "version": "0.13.27",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "package": "npm run build && cribl-app-package",
     "verify": "npm run lint && npm test && npx tsc --noEmit",
-    "audit": "npm audit --audit-level=moderate && npm audit --omit=dev --audit-level=low",
+    "audit": "node scripts/audit.mjs",
     "security:static": "cribl-app-security",
     "release:evidence": "cribl-app-release-evidence --require-empty-proxies",
     "inspect:pack": "cribl-app-inspect --require-empty-proxies",

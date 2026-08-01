@@ -11,11 +11,13 @@ import { runQuery } from './cribl';
 import { getCurrentDataset } from '@cribl/app-utils/dataset';
 import {
   createRunSearchTool,
+  createRunMetricsQueryTool,
   executeCommonToolCall,
   parseArgs,
   type ToolCallInvocation,
   type ToolExecutionResult,
 } from '@cribl/app-utils/agent-tools';
+import { METRICS_DATASET } from '@cribl/app-utils/metrics';
 import { assertReadOnlyKql } from './kqlSafety';
 import { getTrace } from './search';
 import type { JaegerTrace } from './types';
@@ -25,6 +27,7 @@ export {
   parseArgs,
   type RunSearchUi,
   type SummaryUi,
+  type MetricsQueryUi,
   type ToolCallInvocation,
   type ToolExecutionResult,
   type ToolResultUi,
@@ -53,6 +56,16 @@ const runSearchTool = createRunSearchTool({
   runQuery,
   assertSafe: (query, allowedDatasets) => assertReadOnlyKql(query, allowedDatasets),
   datasetId: () => getCurrentDataset(),
+});
+
+/**
+ * run_metrics_query executor: PromQL against the fast metrics store
+ * (criblapm_* RED metrics + raw OTel metrics). Read-only by construction,
+ * so it auto-runs with no approval. The shared factory lives in the
+ * framework; APM just points it at the metrics dataset.
+ */
+const runMetricsQueryTool = createRunMetricsQueryTool({
+  dataset: () => METRICS_DATASET,
 });
 
 /**
@@ -151,6 +164,9 @@ export async function executeToolCall(
     case 'run_search':
       return runSearchTool(call, signal);
 
+    case 'run_metrics_query':
+      return runMetricsQueryTool(call, signal);
+
     case 'render_trace': {
       const args = parseArgs<RenderTraceArgs>(call.arguments);
       const { content, ui } = await renderTraceTool(args);
@@ -165,9 +181,13 @@ export async function executeToolCall(
 }
 
 /**
- * Every run_search call is subject to app-controlled human approval.
- * The model-supplied confirmBeforeRunning argument is intentionally ignored.
+ * The investigator runs queries without prompting. Both data tools are
+ * read-only — run_search is guarded by assertReadOnlyKql and PromQL has
+ * no mutating forms — so there's nothing to gate, and the mid-thought
+ * approval pause just slowed investigations down. `confirmBeforeRunning`
+ * (a model-supplied hint) is likewise ignored: no tool call needs
+ * approval, so this always returns false.
  */
-export function requiresApproval(call: ToolCallInvocation): boolean {
-  return call.name === 'run_search';
+export function requiresApproval(): boolean {
+  return false;
 }

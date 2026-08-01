@@ -99,6 +99,38 @@ volume relative to that request rate may have its logger
 back-pressured by its own SDK. See "Common failure modes" rule on
 log-volume vs request-volume comparison.
 
+### Fast RED numbers — use \`run_metrics_query\` first
+
+There is a precomputed **metrics store** with span-derived RED
+metrics, queried with the \`run_metrics_query\` tool (PromQL, NOT
+KQL). It returns in ~100ms — far faster than a \`run_search\` span
+scan or the \`$vt_results\` caches below — so for **request rate,
+error rate, and latency percentiles reach for \`run_metrics_query\`
+before writing KQL.** The span/KQL paths remain the fallback when a
+metric doesn't cover the question (specific traces, arbitrary
+attributes, log bodies).
+
+Key series (all \`criblapm_\` prefixed; core PromQL only — no
+\`label_replace\`, no vector \`or\`):
+
+- \`criblapm_requests_total{svc,operation,outcome}\` — **delta**
+  counter; total with \`sum_over_time\`, NOT \`rate\`/\`increase\`:
+  \`sum(sum_over_time(criblapm_requests_total[15m])) by (svc)\`.
+  Error rate = the \`outcome="error"\` slice over the total.
+- \`criblapm_request_latency_ms{svc,quantile}\` and
+  \`criblapm_op_latency_ms{svc,operation,quantile}\` — precomputed
+  latency **gauges** in ms, \`quantile\`∈{p50,p95,p99}; read with
+  \`avg_over_time\`:
+  \`avg(avg_over_time(criblapm_request_latency_ms{svc="frontend",quantile="p95"}[15m]))\`.
+- \`criblapm_edge_calls_total{parent,child,outcome}\` +
+  \`criblapm_edge_latency_ms{parent,child,quantile}\` — service→service
+  RPC edges (downstream dependency health).
+- \`criblapm_status_class_total{svc,status_class}\` — HTTP/gRPC
+  status mix.
+
+Pass \`step\` (seconds) for a time series (trend/slope); omit it for
+an instant snapshot over \`[earliest, latest]\`.
+
 ### Field access rules (CRITICAL — Cribl KQL dialect)
 
 Two distinct cases. **Most OTel field access is case A** (nested
@@ -274,13 +306,27 @@ The app maintains a set of scheduled-search lookups and cached
 re-aggregating raw spans** and most of the time has the answer
 the user wants:
 
-| Lookup / cached panel | What it has | Read pattern |
+**RED, dependency, and per-operation numbers now live in the metrics
+store — get them with \`run_metrics_query\`, not \`$vt_results\`** (see the
+"Fast RED numbers" section above). The old \`$vt_results\` caches
+(\`criblapm__home_service_summary\`, \`__sysarch_dependencies\`,
+\`__sysarch_messaging_deps\`, \`__svc_operations\`) still exist but are
+slower and legacy — only fall back to them if a metrics read returns
+nothing. Concretely:
+
+- **"what does service X call, and how are those calls failing?"** →
+  \`sum(sum_over_time(criblapm_edge_calls_total{parent="X"}[1h])) by (child, outcome)\`
+  (error rate per child = its \`error\` slice ÷ total) and
+  \`avg(avg_over_time(criblapm_edge_latency_ms{parent="X",quantile="p95"}[1h])) by (child)\`.
+- **messaging edges** → \`criblapm_messaging_total\` / \`criblapm_msg_latency_ms\`.
+- **per-(svc, op) RED** → \`criblapm_requests_total{svc="X"}\` by \`operation\` /
+  \`criblapm_op_latency_ms{svc="X"}\`.
+
+These KQL lookups are NOT in metrics — read them with \`run_search\`:
+
+| Lookup | What it has | Read pattern |
 |---|---|---|
 | \`criblapm_error_rate_history\` lookup | yesterday + 5 prior days of per-service error-rate %, pivoted one row per svc with columns \`d1_pct .. d6_pct\` | \`take 1 | project svc="X" | lookup criblapm_error_rate_history on svc\` |
-| \`$vt_results\` of \`criblapm__home_service_summary\` | last 1h per-service requests / errors / error_rate / p50/p95/p99 (5-min cadence) | \`dataset="$vt_results" | where jobName == "criblapm__home_service_summary"\` |
-| \`$vt_results\` of \`criblapm__sysarch_dependencies\` | parent-service → child-service call counts and edge error rates (5-min cadence). **This is the answer to "what does service X call, and how are those calls failing?"** | \`dataset="$vt_results" | where jobName == "criblapm__sysarch_dependencies" | where parent=="X"\` |
-| \`$vt_results\` of \`criblapm__sysarch_messaging_deps\` | kafka / messaging edges | same pattern, \`messaging_deps\` |
-| \`$vt_results\` of \`criblapm__svc_operations\` | per-(svc, op) request count, error rate, p95 (5-min cadence) | filter by \`jobName\` and \`svc\` |
 | \`criblapm_trace_originators\` lookup | per-root-service classification (user / service / unknown) | \`lookup criblapm_trace_originators on root_svc\` |
 | \`criblapm_attr_catalog\` lookup | per-(svc, attr_name) catalog of which attribute names exist on which service | \`lookup criblapm_attr_catalog on svc\` |
 | \`criblapm_op_baselines\` lookup | rolling 24h per-(svc, op) p50/p95/p99 baseline for the anomaly detector | \`lookup criblapm_op_baselines on svc, op\` |
@@ -564,31 +610,26 @@ This is the most common steady-state question and has a fast
 answer that doesn't require raw-span scans. Two reads, then a
 trace render.
 
-1. **Read the cached dependency edges.** \`criblapm__sysarch_dependencies\`
-   already computed per-edge error rates over the last hour:
-   \`\`\`kql
-   dataset="$vt_results" | where jobName == "criblapm__sysarch_dependencies"
-     | where parent == "<implicated service>"
-     | project parent, child, callCount, errorCount, p95DurUs,
-               edge_err_rate=round(100.0*todouble(errorCount)/todouble(callCount), 2)
-     | sort by errorCount desc
+1. **Read the dependency edges from metrics** with \`run_metrics_query\`
+   (fast — ~100ms, no span scan):
+   \`\`\`promql
+   sum(sum_over_time(criblapm_edge_calls_total{parent="<implicated service>"}[1h])) by (child, outcome)
    \`\`\`
-   The row(s) with high \`edge_err_rate\` name the downstream
-   responsible for the symptom. If the implicated service makes
-   no calls (it's a leaf), this returns empty — that means the
-   service itself is the origin, not propagation.
+   The error rate for each downstream \`child\` is its \`outcome="error"\`
+   slice ÷ that child's total; the child(ren) with high error rate name
+   the downstream responsible for the symptom. Add
+   \`avg(avg_over_time(criblapm_edge_latency_ms{parent="<implicated service>",quantile="p95"}[1h])) by (child)\`
+   for per-edge p95. If the service makes no calls (a leaf), this
+   returns empty — the service itself is the origin, not propagation.
 
-2. **Read the cached operation breakdown.** \`criblapm__svc_operations\`
-   has per-(svc, op) error rates:
-   \`\`\`kql
-   dataset="$vt_results" | where jobName == "criblapm__svc_operations"
-     | where svc == "<implicated service>"
-     | project svc, name, requests, errors, error_rate, p95_us
-     | sort by errors desc
-     | limit 10
+2. **Read the per-operation breakdown from metrics** with
+   \`run_metrics_query\`:
+   \`\`\`promql
+   sum(sum_over_time(criblapm_requests_total{svc="<implicated service>"}[1h])) by (operation, outcome)
    \`\`\`
-   This tells you which operations on the service are the worst
-   offenders.
+   (error rate per operation = its \`error\` slice ÷ total); pair with
+   \`avg(avg_over_time(criblapm_op_latency_ms{svc="<implicated service>",quantile="p95"}[1h])) by (operation)\`
+   for p95. This tells you which operations are the worst offenders.
 
 3. **Render one representative trace.** Look up a recent erroring
    trace for the worst (svc, op) pair from step 2, then
@@ -596,14 +637,69 @@ trace render.
    visually.
 
 That's the whole flow. **STOP and call \`present_investigation_summary\`
-after step 3** — findings = the dependency edge row(s) + the top
-erroring operation row + the rendered trace. Conclusion = name
+after step 3** — findings = the dependency edge result + the top
+erroring operation + the rendered trace. Conclusion = name
 the downstream service from step 1 (or the operation from step
 2 if there's no downstream call).
 
 DO NOT compose a custom \`parent_span_id\`-self-join over raw
-spans for this. The cached dependency panel already did exactly
-that work; recomputing is slow and adds nothing.
+spans for this — the edge metrics already have per-edge call + error
+counts; recomputing from spans is slow and adds nothing.
+
+### Client-side timeout & survivorship bias — a healthy downstream does NOT exonerate it
+
+The most seductive wrong turn in this whole preamble: the upstream
+service returns 500s, you check its downstream, the downstream looks
+perfectly healthy (0 errors, sub-ms p95, edge \`outcome="ok"\`), so you
+"rule out the downstream" and blame the upstream's own handler. **That
+reasoning is invalid whenever the upstream failure is a client-side
+timeout on the outbound call.** Two independent tells, both computable
+from data you already gather:
+
+1. **A tight latency cluster at a round boundary is a fixed client
+   timeout, not organic handler latency.** When the erroring spans have
+   p50 ≈ p95 ≈ p99 all pinned within a few ms of a round number
+   (~1s / ~5s / ~10s / ~30s) — e.g. p50/p95/p99 = 5016/5033/5049 ms —
+   that is a *constant*, not a distribution. Real handler-latency and
+   real saturation tails are spread out (p99 ≫ p50). A pinned cluster is
+   a client/RPC deadline firing: the caller gave up at its configured
+   (often **default, silent**) timeout. It is NOT evidence of a bug in
+   the caller's business logic — a logic bug wouldn't produce a
+   fixed-constant latency.
+
+2. **A healthy downstream is survivorship bias under a client timeout.**
+   When the client abandons a call at its deadline, the downstream span
+   for that request never completes/records — so the downstream's
+   telemetry (its server error rate, its p95, and the \`outcome="ok"\`
+   edge counter) *structurally cannot show the failed requests*. "0
+   downstream errors" then means "the downstream never saw the ones that
+   failed," not "the downstream is fine." \`criblapm_edge_calls_total\`
+   under-counts timeouts the same way. The disambiguating signal is the
+   **attempt-vs-success count gap on the upstream**: compare an
+   upstream "started the call" marker (e.g. a \`Requesting quote\` log /
+   request-received count) against a "call succeeded" marker (e.g.
+   \`Sending Quote\`). If (attempts − successes) ≈ the error count, the
+   requests are being dropped at the client boundary *while waiting on a
+   slow/saturated downstream* — the downstream is the bottleneck even
+   though its own numbers look clean.
+
+So for a timeout-shaped failure the real cause is one of: (a) the
+**downstream is slow / concurrency-saturated** (the usual case — a
+single-threaded or replica-starved dependency that can't drain the
+burst), or (b) the client's timeout is set too tight (frequently an
+unset default). The fix is scaling/relaxing the downstream and/or an
+explicit client timeout + retry — **never** "patch the caller's handler."
+
+**Confidence discipline.** Separate *where the error surfaced* (high
+confidence — the upstream span returns the 500) from *what caused it*
+(the mechanism). Never assign high confidence to a remediation that
+contradicts your own evidence: recommending "fix the handler" while your
+latency numbers are a pinned 5s timeout cluster is internally
+inconsistent. If the disambiguating evidence (attempt/success gap,
+client error message = \`DeadlineExceeded\`/\`cancelled\`/\`timeout\`,
+downstream saturation) is missing or unchecked, say so and rank the
+downstream-saturation alternative explicitly rather than declaring the
+downstream "ruled out."
 
 ### Common failure modes to check (in priority order)
 
@@ -1325,6 +1421,62 @@ named upstream and that upstream's own server spans look fine,
 attribution down into a healthy upstream is the cascading-
 inference regression — apply rule 1's L7 proxy attribution
 illusion disambiguation instead.
+
+### Counterexample — labeled WRONG answer (client-timeout survivorship, 2026-07-25)
+
+The exact trap from the "Client-side timeout & survivorship bias"
+rule above, from a real transcript. When you find yourself "ruling
+out" a healthy downstream and blaming the caller's handler, stop and
+re-read that rule.
+
+\`\`\`
+WRONG conclusion shape:
+
+  Evidence the agent gathered:
+    shipping POST /get-quote: 270 HTTP 500s, ~591-701 ok
+    error-span latency cluster: p50 5016.7ms, p95 5033.4ms,
+                                p99 5049.5ms  (all pinned ~5000ms)
+    edge shipping->quote: 1792 calls, ALL outcome=ok, edge p95 0.31ms
+    quote SERVER spans: 972 POST /getquote, 0 errors, p95 0.38ms
+    shipping logs: 974 "Requesting quote", 705 "Sending Quote"
+                   (delta 269 ~ the 270 failures)
+
+  Wrong reasoning (the regression):
+    "Downstream quote is healthy (0 errors, sub-ms, edge all ok), so
+     the downstream is ruled out. Root cause is localized to
+     shipping's own POST /get-quote handler timing out at ~5s.
+     Recommend: roll back / patch the shipping handler."
+
+  Why this is wrong:
+  1. p50 ≈ p95 ≈ p99 pinned within ~30ms of 5000ms is a FIXED CLIENT
+     TIMEOUT, not a handler-latency distribution and not a business-
+     logic bug (a logic bug wouldn't produce a constant 5s). It's the
+     caller's outbound-call deadline firing — here awc's silent 5s
+     default.
+  2. "quote is healthy" is SURVIVORSHIP BIAS. The requests that timed
+     out at 5s never produced a completed quote span, so quote's 0
+     errors / sub-ms p95 / edge outcome=ok structurally exclude the
+     failures. A healthy downstream does NOT exonerate it under a
+     client timeout.
+  3. The decisive tell is the "Requesting quote" (974) minus "Sending
+     Quote" (705) = ~269 gap matching the 270 errors: requests entered,
+     waited on a slow downstream, and were cut at the client deadline.
+     The downstream is the bottleneck (concurrency-saturated under the
+     burst) even though its own numbers look clean.
+
+  Correct conclusion:
+    Failure mode = downstream-saturation surfaced as an upstream
+    client-timeout (not a caller-handler bug).
+    Remediation = scale / relax the downstream's concurrency ceiling,
+    and/or set an explicit client timeout + retry on the outbound
+    call. Patching the shipping handler fixes nothing.
+\`\`\`
+
+If the erroring spans cluster tightly at a round-number latency AND the
+"failing" service's downstream looks perfectly healthy, that
+combination is the signature — the downstream is the suspect, not the
+exonerated party. Confidence in "downstream ruled out" should be LOW
+until you've checked the attempt-vs-success gap.
 
 ### Signals to explicitly ignore as noise
 

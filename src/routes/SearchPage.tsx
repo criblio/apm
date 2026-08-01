@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import SearchForm from '../components/SearchForm';
 import FilterBuilder from '../components/FilterBuilder';
@@ -18,6 +18,7 @@ import {
 } from '../spotlight/filterModel';
 import {
   SPOTLIGHT_ATTRIBUTES,
+  SPOTLIGHT_ATTRIBUTES_SERVICE_DETAIL,
   type FindTracesParams,
 } from '../api/queries';
 import {
@@ -134,6 +135,23 @@ export default function SearchPage() {
   const [facetFailures, setFacetFailures] = useState<Record<string, string>>({});
   const [facetRetry, setFacetRetry] = useState(0);
 
+  // The facet/Spotlight rail fans out ~9 live KQL span-scans. Gate it on
+  // scroll-into-view so it doesn't fire (and contend with the primary
+  // trace search) until the rail is actually visible — matching the
+  // SpotlightSection / metric-card lazy pattern used elsewhere.
+  const railRef = useRef<HTMLElement | null>(null);
+  const [railVisible, setRailVisible] = useState(false);
+  useEffect(() => {
+    const el = railRef.current;
+    if (!el || railVisible) return;
+    if (typeof IntersectionObserver === 'undefined') { setRailVisible(true); return; }
+    const obs = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) { setRailVisible(true); obs.disconnect(); }
+    }, { rootMargin: '200px' });
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [railVisible]);
+
   const runSearch = useCallback(async (state: SearchFormState) => {
     setLoading(true);
     setError(null);
@@ -195,6 +213,10 @@ export default function SearchPage() {
       setFacetFailures({});
       return;
     }
+    // Defer the rail fan-out until (a) it's scrolled into view and (b) the
+    // primary trace search isn't mid-flight — so the trace results paint
+    // first and the ~9 rail jobs don't contend for worker slots on load.
+    if (!railVisible || loading) return;
     let cancelled = false;
     setFacetLoading(true);
     setFacetFailures({});
@@ -231,7 +253,7 @@ export default function SearchPage() {
     const work =
       facetMode === 'facets'
         ? getFacetDistribution(
-            SPOTLIGHT_ATTRIBUTES,
+            SPOTLIGHT_ATTRIBUTES_SERVICE_DETAIL,
             scopedPredicate,
             lookback,
             'now',
@@ -252,7 +274,7 @@ export default function SearchPage() {
             recordFacetFailure,
           )
         : getSpotlightDiff(
-            SPOTLIGHT_ATTRIBUTES,
+            SPOTLIGHT_ATTRIBUTES_SERVICE_DETAIL,
             scopedPredicate,
             lookback,
             'now',
@@ -287,6 +309,8 @@ export default function SearchPage() {
     formState.service,
     formState.operation,
     hasSignal,
+    railVisible,
+    loading,
     facetRetry,
   ]);
 
@@ -410,7 +434,7 @@ export default function SearchPage() {
         )}
       </main>
 
-      <aside className={s.facetRail}>
+      <aside className={s.facetRail} ref={railRef}>
         <div className={s.facetTabs} role="tablist">
           <button
             type="button"

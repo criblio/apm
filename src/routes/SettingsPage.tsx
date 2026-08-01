@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import StatusBanner from '../components/StatusBanner';
 import ProvisioningPanel from '@cribl/app-utils/provisioning-panel';
 import DatasetProvisioningPanel from '../components/DatasetProvisioningPanel';
+import MetricsBackfillPanel from '../components/MetricsBackfillPanel';
 import SettingsSetupStatus from './SettingsSetupStatus';
 import SettingsNav, { type NavGroup } from './SettingsNav';
 import { loadAppSettings, saveAppSettings } from '../api/appSettings';
@@ -272,6 +273,11 @@ export default function SettingsPage() {
 
           <div id="dataset-acceleration" className={s.card}>
             <DatasetProvisioningPanel />
+          </div>
+
+          <div id="metrics-backfill" className={s.card}>
+            <h2 className={s.sectionTitle}>Metrics backfill</h2>
+            <MetricsBackfillPanel />
           </div>
 
           {/* ── Workspace ────────────────────────────────────── */}

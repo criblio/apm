@@ -1,3 +1,4 @@
+import { newQueryGeneration, captureQueryGeneration } from '../api/queryGeneration';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Button, Card, Tag, type TagColor } from '@capra/core';
@@ -8,6 +9,8 @@ import ResilienceBoundary from '../components/ResilienceBoundary';
 import PartialFailureBanner from '../components/PartialFailureBanner';
 import {
   listServiceSummaries,
+  listServiceCounts,
+  listServiceLatencies,
   listOperationAnomalies,
   getDependencies,
 } from '../api/search';
@@ -94,6 +97,8 @@ export default function OverviewPage() {
   const recentAlertsQuery = () => Q.alertHistory(5);
 
   const fetchAll = useCallback(async () => {
+    newQueryGeneration(); // cancel the prior page/fetch's in-flight reads
+    const isCurrent = captureQueryGeneration(); // guard stale async setState
     setRefreshing(true);
     setError(null);
     setPartialFailures({});
@@ -102,81 +107,83 @@ export default function OverviewPage() {
 
     const prev = previousWindow(range);
     listServiceSummaries(prev.earliest, prev.latest)
-      .then((r) => setPrevSummaries(r))
-      .catch((e: unknown) => setPartialFailures((current) => ({
+      .then((r) => { if (isCurrent()) setPrevSummaries(r); })
+      .catch((e: unknown) => { if (isCurrent()) setPartialFailures((current) => ({
         ...current,
         'Previous-window comparison': e instanceof Error ? e.message : String(e),
-      })));
+      })); });
 
     getDependencies(range, 'now')
-      .then((r) => setEdges(r))
-      .catch((e: unknown) => setPartialFailures((current) => ({
+      .then((r) => { if (isCurrent()) setEdges(r); })
+      .catch((e: unknown) => { if (isCurrent()) setPartialFailures((current) => ({
         ...current,
         Dependencies: e instanceof Error ? e.message : String(e),
-      })));
+      })); });
 
     listOperationAnomalies(range, 'now')
-      .then((r) => setAnomalies(r))
-      .catch((e: unknown) => setPartialFailures((current) => ({
+      .then((r) => { if (isCurrent()) setAnomalies(r); })
+      .catch((e: unknown) => { if (isCurrent()) setPartialFailures((current) => ({
         ...current,
         'Latency anomalies': e instanceof Error ? e.message : String(e),
-      })));
+      })); });
 
-    // Cache-fast path
+    // Detected issues come from the $vt_results alert cache — load them
+    // NON-BLOCKING so they never gate the fast metrics-backed panels.
     if (range === '-1h' && streamFilterEnabled) {
-      try {
-        const cached = await listCachedHomePanels();
-        if (cached.serviceSummaries) {
-          setSummaries(cached.serviceSummaries);
-          setLoading(false);
-          if (cached.alertRows && cached.alertRows.length > 0) {
+      listCachedHomePanels()
+        .then((cached) => {
+          if (isCurrent() && cached.alertRows && cached.alertRows.length > 0) {
             setCachedIssues(buildDetectedIssuesFromCache(cached.alertRows, 60));
           }
-          hasDataRef.current = true;
-          setRefreshing(false);
-
-          // Fetch recent alert events (lightweight)
-          runQuery(
-            recentAlertsQuery(),
-            '-24h', 'now', 5,
-          ).then((rows) => setRecentAlerts(rows.map((r) => ({
-            time: Number(r._time) * 1000,
-            eventType: String(r.event_type ?? ''),
-            service: String(r.svc ?? ''),
-            signalType: String(r.signal_type ?? ''),
-          })))).catch((e: unknown) => setPartialFailures((current) => ({
-            ...current,
-            'Recent alert history': e instanceof Error ? e.message : String(e),
-          })));
-          return;
-        }
-      } catch { /* fall through */ }
+        })
+        .catch(() => { /* issues are best-effort; don't surface */ });
     }
 
-    const pSummaries = listServiceSummaries(range, 'now')
-      .then((r) => setSummaries(r))
+    // PRIMARY fast panel: per-service RED via metrics (off the worker
+    // pool). Counts-first — render from the ~114ms counter read, then fill
+    // p50/p95/p99 from the ~700ms histogram reads without blocking. First
+    // content waits ONLY on the counts; everything else fills in around it.
+    await listServiceCounts(range, 'now')
+      .then((r) => {
+        if (!isCurrent()) return;
+        setSummaries(r);
+        void listServiceLatencies(range, 'now')
+          .then((lat) => {
+            if (!lat || !isCurrent()) return;
+            setSummaries((prev) =>
+              prev.map((sv) => {
+                const l = lat.get(sv.service);
+                return l ? { ...sv, ...l } : sv;
+              }),
+            );
+          })
+          .catch(() => { /* best-effort latency */ });
+      })
       .catch((e: unknown) => {
+        if (!isCurrent()) return;
         setError(e instanceof Error ? e.message : String(e));
         setSummaries([]);
       })
-      .finally(() => setLoading(false));
+      .finally(() => { if (isCurrent()) setLoading(false); });
+    if (!isCurrent()) return;
 
-    await pSummaries;
+    // Recent alert history — the only live-KQL job on this page. Fire it
+    // AFTER the primary metric counts resolve so its search-job POST
+    // doesn't contend with the fast metric reads during first paint.
+    runQuery(recentAlertsQuery(), '-24h', 'now', 5)
+      .then((rows) => { if (isCurrent()) setRecentAlerts(rows.map((r) => ({
+        time: Number(r._time) * 1000,
+        eventType: String(r.event_type ?? ''),
+        service: String(r.svc ?? ''),
+        signalType: String(r.signal_type ?? ''),
+      }))); })
+      .catch((e: unknown) => { if (isCurrent()) setPartialFailures((current) => ({
+        ...current,
+        'Recent alert history': e instanceof Error ? e.message : String(e),
+      })); });
+
     hasDataRef.current = true;
     setRefreshing(false);
-
-    runQuery(
-      recentAlertsQuery(),
-      '-24h', 'now', 5,
-    ).then((rows) => setRecentAlerts(rows.map((r) => ({
-      time: Number(r._time) * 1000,
-      eventType: String(r.event_type ?? ''),
-      service: String(r.svc ?? ''),
-      signalType: String(r.signal_type ?? ''),
-    })))).catch((e: unknown) => setPartialFailures((current) => ({
-      ...current,
-      'Recent alert history': e instanceof Error ? e.message : String(e),
-    })));
   }, [range, streamFilterEnabled]);
 
   useEffect(() => { void fetchAll(); }, [fetchAll]);

@@ -19,6 +19,7 @@
 import { useCallback, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { InvestigatorChat } from '@cribl/app-utils/investigator';
+import MetricsToolCard from '@cribl/app-utils/investigator/metrics-tool-card';
 import { getCurrentDataset } from '@cribl/app-utils/dataset';
 // Side effect: pins the analytics surface tag ('criblApmInvestigation')
 // before the shell runs its first loop.
@@ -34,6 +35,7 @@ import { APM_TOOL_DEFINITIONS } from '../api/agentToolDefs';
 import {
   executeToolCall,
   requiresApproval,
+  type MetricsQueryUi,
   type RenderTraceUi,
   type ToolResultUi,
 } from '../api/agentTools';
@@ -88,11 +90,13 @@ async function enrichSeed(seed: InvestigationSeed): Promise<InvestigationSeed> {
   return next;
 }
 
-/** Render APM's trace waterfall card for render_trace results;
- *  everything else falls through to the shell's built-in cards. */
+/** Render APM's custom result cards: the trace waterfall for
+ *  render_trace and the shared metrics chart card for run_metrics_query.
+ *  Everything else falls through to the shell's built-in cards. */
 function renderApmToolCard(ui: ToolResultUi) {
-  if (ui.kind !== 'trace') return null;
-  return <TraceCard ui={ui as RenderTraceUi} />;
+  if (ui.kind === 'trace') return <TraceCard ui={ui as RenderTraceUi} />;
+  if (ui.kind === 'metrics') return <MetricsToolCard ui={ui as MetricsQueryUi} />;
+  return null;
 }
 
 interface LocationState {

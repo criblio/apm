@@ -30,7 +30,28 @@
  */
 import type { ProvisionedSearch, SeedLookup } from '@cribl/app-utils/provisioner';
 import * as Q from './queries';
-import { getSearchCadenceCron } from '@cribl/app-utils/cadence';
+import { getSearchCadenceCron, getSearchCadence } from '@cribl/app-utils/cadence';
+import { getMetricsEmit } from './metricsEmit';
+import type { BackfillEmitter } from './metricsBackfill';
+import {
+  METRIC_REQUESTS_TOTAL,
+  METRIC_EDGE_CALLS_TOTAL,
+  METRIC_MESSAGING_TOTAL,
+  METRIC_STATUS_CLASS_TOTAL,
+  METRIC_REQUEST_LATENCY_MS,
+  METRIC_OP_LATENCY_MS,
+  METRIC_EDGE_LATENCY_MS,
+  METRIC_MSG_LATENCY_MS,
+  LATENCY_QUANTILES,
+} from './metricNames';
+
+/**
+ * Backfill sample rate for the per-span request-duration histogram — the
+ * dominant emit volume. 0.25 (first 4 hex chars of span_id) cuts backfill
+ * export volume ~4× while preserving percentile shape (see
+ * sampleFirstHexClause). The LIVE scheduled search stays unsampled.
+ */
+export const BACKFILL_HISTOGRAM_SAMPLE_RATE = 0.25;
 
 export type { ProvisionedSearch };
 
@@ -261,7 +282,15 @@ export function getProvisioningPlan(): ProvisionedSearch[] {
     keepLastN: 2,
   } as const;
 
-  return [
+  // Metric emitter window: minute-aligned (`@m`) and matched to the
+  // cadence so consecutive scheduled runs cover DISJOINT bins. The
+  // metrics store is NOT idempotent — re-emitting a bin double-counts
+  // (validated 2026-07-23) — so the window must never overlap and
+  // `latest=@m` (not `now`) so the partial current minute isn't counted
+  // now and re-counted next run. See docs/metrics-migration-plan.md.
+  const metricEmitEarliest = `-${getSearchCadence()}@m`;
+
+  const plan: ProvisionedSearch[] = [
     // ── Home panel caches ───────────────────────────────────
     {
       id: 'criblapm__home_service_summary',
@@ -511,6 +540,153 @@ export function getProvisioningPlan(): ProvisionedSearch[] {
       sampleRate: 1,
       schedule: { ...hourly, cronSchedule: '30 0 * * *' },
     },
+  ];
+
+  // ── Span-derived metric emitters (M3) ───────────────────────
+  //
+  // Gated behind metricsEmit (default off). When on, these `export to
+  // metrics` scheduled searches feed the fast PromQL store, which the
+  // dark dual-read seam (metricsRead) will eventually serve RED panels
+  // from — taking those reads off the search worker pool. Additive:
+  // they run alongside the $vt_results caches, so turning emit on is
+  // safe and reversible. See docs/metrics-migration-plan.md.
+  if (getMetricsEmit()) {
+    plan.push(
+      {
+        id: 'criblapm__metric_requests',
+        name: 'Cribl APM - request and error metric emitter',
+        description:
+          'Cribl APM: emits criblapm_requests_total (per-minute DELTA counter, labels svc + outcome∈{ok,error}) to the fast metrics store via `export to metrics`. Read totals with sum_over_time — NOT rate() (delta storage). Minute-aligned non-overlapping window (store is not idempotent).',
+        query: Q.metricRequestsExport(),
+        earliest: metricEmitEarliest,
+        latest: '@m',
+        sampleRate: 1,
+        schedule: { ...panelCadence },
+      },
+      // NOTE: criblapm_request_duration_ms (per-span latency histogram) is
+      // no longer emitted — every latency read migrated to the precomputed
+      // percentile GAUGES below (fast + correct for bimodal latency). The
+      // histogram was the heaviest emitter (only per-span export) and now
+      // unread, so it's dropped. Same for the edge/messaging duration
+      // histograms further down.
+      {
+        id: 'criblapm__metric_edge_calls',
+        name: 'Cribl APM - RPC edge call metric emitter',
+        description:
+          'Cribl APM: emits criblapm_edge_calls_total (counter, labels parent + child + outcome) via the parent_span_id self-join. Drives the System Architecture graph. Heaviest emitter (self-join) but incremental-window only.',
+        query: Q.metricEdgeCallsExport(),
+        earliest: metricEmitEarliest,
+        latest: '@m',
+        sampleRate: 1,
+        schedule: { ...panelCadence },
+      },
+      {
+        id: 'criblapm__metric_edge_lat_p95',
+        name: 'Cribl APM - RPC edge latency p95 gauge emitter',
+        description:
+          'Cribl APM: emits criblapm_edge_latency_ms (gauge, labels parent + child + quantile="p95") = percentile(dur_ms, 95) per edge per minute. Replaces the edge-duration histogram read.',
+        query: Q.metricEdgeLatencyP95Export(),
+        earliest: metricEmitEarliest,
+        latest: '@m',
+        sampleRate: 1,
+        schedule: { ...panelCadence },
+      },
+      {
+        id: 'criblapm__metric_messaging',
+        name: 'Cribl APM - messaging edge metric emitter',
+        description:
+          'Cribl APM: emits criblapm_messaging_total (counter, labels svc + dest + op + system + outcome) for kafka/messaging edges. Read side pairs producer/consumer per topic.',
+        query: Q.metricMessagingExport(),
+        earliest: metricEmitEarliest,
+        latest: '@m',
+        sampleRate: 1,
+        schedule: { ...panelCadence },
+      },
+      {
+        id: 'criblapm__metric_msg_lat_p95',
+        name: 'Cribl APM - messaging latency p95 gauge emitter',
+        description:
+          'Cribl APM: emits criblapm_msg_latency_ms (gauge, labels svc + dest + op + system + quantile="p95") = percentile(dur_ms, 95) per messaging edge per minute. Replaces the messaging-duration histogram read.',
+        query: Q.metricMessagingLatencyP95Export(),
+        earliest: metricEmitEarliest,
+        latest: '@m',
+        sampleRate: 1,
+        schedule: { ...panelCadence },
+      },
+      {
+        id: 'criblapm__metric_status_class',
+        name: 'Cribl APM - HTTP and gRPC status-class metric emitter',
+        description:
+          'Cribl APM: emits criblapm_status_class_total (counter, labels svc + status_class∈{ok,4xx,500,502,503,504,other_5xx,grpc_err}) for the Service Detail Status mix chart. Read with sum_over_time (delta storage).',
+        query: Q.metricStatusClassExport(),
+        earliest: metricEmitEarliest,
+        latest: '@m',
+        sampleRate: 1,
+        schedule: { ...panelCadence },
+      },
+    );
+
+    // Precomputed latency-percentile GAUGES (p50/p95/p99), per service and
+    // per operation. These replace the histogram_quantile reads, which were
+    // slow AND wrong for bimodal latency. One search per (family, quantile).
+    for (const { q, label } of LATENCY_QUANTILES) {
+      plan.push({
+        id: `criblapm__metric_req_lat_${label}`,
+        name: `Cribl APM - request latency ${label} gauge emitter`,
+        description:
+          `Cribl APM: emits ${METRIC_REQUEST_LATENCY_MS} (gauge, labels svc + quantile="${label}") = percentile(dur_ms, ${q}) of entry spans per svc per minute. Read as a gauge (fast + accurate) instead of histogram_quantile.`,
+        query: Q.metricLatencyPercentileExport(q),
+        earliest: metricEmitEarliest,
+        latest: '@m',
+        sampleRate: 1,
+        schedule: { ...panelCadence },
+      });
+      plan.push({
+        id: `criblapm__metric_op_lat_${label}`,
+        name: `Cribl APM - operation latency ${label} gauge emitter`,
+        description:
+          `Cribl APM: emits ${METRIC_OP_LATENCY_MS} (gauge, labels svc + operation + quantile="${label}") = percentile(dur_ms, ${q}) per (svc, operation) per minute. Powers the Top Operations table.`,
+        query: Q.metricLatencyPercentileExport(q, { byOperation: true }),
+        earliest: metricEmitEarliest,
+        latest: '@m',
+        sampleRate: 1,
+        schedule: { ...panelCadence },
+      });
+    }
+  }
+
+  return plan;
+}
+
+/**
+ * The metric emitter (id, query) pairs, in provisioning order. Shared by
+ * the provisioning plan (above) and the backfill runner
+ * (src/api/metricsBackfill.ts) so both emit the exact same KQL. Kept in
+ * sync with the plan entries by a unit test.
+ */
+/**
+ * Emitter registry for BACKFILL — carries each metric's name (for the
+ * coverage probe), aggregation kind (window strategy), and the query to run
+ * (histograms use the SAMPLED variant; counters/joins run full). The live
+ * scheduled searches are defined separately above and stay unsampled.
+ */
+export function getMetricEmitters(): BackfillEmitter[] {
+  // Duration histograms are no longer emitted/read — RED latency comes from
+  // the precomputed percentile gauges below.
+  return [
+    { id: 'criblapm__metric_requests', metricName: METRIC_REQUESTS_TOTAL, kind: 'counter', backfillQuery: Q.metricRequestsExport() },
+    { id: 'criblapm__metric_edge_calls', metricName: METRIC_EDGE_CALLS_TOTAL, kind: 'counter', backfillQuery: Q.metricEdgeCallsExport() },
+    { id: 'criblapm__metric_messaging', metricName: METRIC_MESSAGING_TOTAL, kind: 'counter', backfillQuery: Q.metricMessagingExport() },
+    { id: 'criblapm__metric_status_class', metricName: METRIC_STATUS_CLASS_TOTAL, kind: 'counter', backfillQuery: Q.metricStatusClassExport() },
+    // Latency-percentile gauges: aggregated (percentile-per-minute) emit, so
+    // they backfill like counters (big windows). The coverage probe uses
+    // `count()` — a gauge, not a histogram, so the counter path is correct.
+    ...LATENCY_QUANTILES.flatMap(({ q, label }) => [
+      { id: `criblapm__metric_req_lat_${label}`, metricName: `${METRIC_REQUEST_LATENCY_MS}{quantile="${label}"}`, kind: 'counter' as const, backfillQuery: Q.metricLatencyPercentileExport(q) },
+      { id: `criblapm__metric_op_lat_${label}`, metricName: `${METRIC_OP_LATENCY_MS}{quantile="${label}"}`, kind: 'counter' as const, backfillQuery: Q.metricLatencyPercentileExport(q, { byOperation: true }) },
+    ]),
+    { id: 'criblapm__metric_edge_lat_p95', metricName: `${METRIC_EDGE_LATENCY_MS}{quantile="p95"}`, kind: 'counter', backfillQuery: Q.metricEdgeLatencyP95Export() },
+    { id: 'criblapm__metric_msg_lat_p95', metricName: `${METRIC_MSG_LATENCY_MS}{quantile="p95"}`, kind: 'counter', backfillQuery: Q.metricMessagingLatencyP95Export() },
   ];
 }
 

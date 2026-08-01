@@ -95,6 +95,9 @@
 }
 
 .statValue {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--cds-space-sm);
   font-size: var(--cds-font-size-lg);
   font-weight: var(--cds-font-weight-semibold);
   color: var(--cds-color-fg);

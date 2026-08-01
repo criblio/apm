@@ -58,8 +58,13 @@ export default function LogsPage() {
   // submit so users can type freely without triggering a query per keystroke.
   const [committedBody, setCommittedBody] = useState('');
 
-  // Service dropdown populates from distinct log-emitting services.
+  // The service-filter dropdown is secondary — it's only needed when the
+  // user opens it. Defer its catalog query until AFTER the primary log
+  // results have loaded once, so it doesn't contend with the log search
+  // on first paint.
+  const [primaryLoadedOnce, setPrimaryLoadedOnce] = useState(false);
   useEffect(() => {
+    if (!primaryLoadedOnce) return;
     let cancelled = false;
     setServiceCatalogFailure(null);
     listLogServices(range)
@@ -75,7 +80,7 @@ export default function LogsPage() {
     return () => {
       cancelled = true;
     };
-  }, [range, serviceCatalogRetry]);
+  }, [primaryLoadedOnce, range, serviceCatalogRetry]);
 
   const runSearch = useCallback(async () => {
     setLoading(true);
@@ -97,6 +102,7 @@ export default function LogsPage() {
       setLogs([]);
     } finally {
       setLoading(false);
+      setPrimaryLoadedOnce(true);
     }
   }, [service, severity, committedBody, limit, range]);
 
