@@ -9,6 +9,10 @@
  * Usage:
  *   npx tsx scripts/provision.ts          # reconcile (create/update/delete)
  *   npx tsx scripts/provision.ts --dry    # show plan without applying
+ *
+ * APM_ALLOW_OFFLINE_DATAGEN_CANARY=true temporarily waives only the
+ * telemetry-dependent post-reconcile checks. The event contract remains
+ * mandatory, and the waiver expires in code.
  */
 import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
@@ -39,6 +43,7 @@ import { makeNodeBackfillDeps } from './metricsBackfillDeps.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..');
+const OFFLINE_DATAGEN_WAIVER_EXPIRES = Date.parse('2026-08-31T23:59:59Z');
 
 function loadDotEnv(): Record<string, string> {
   let text: string;
@@ -199,8 +204,25 @@ async function main(): Promise<void> {
   console.log(`${tickFor(canary.lookupJoin.ok)}   lookup-join: ${canary.lookupJoin.message}`);
   console.log(`${tickFor(canary.eventContract.ok)}   event-contract: ${canary.eventContract.message}`);
   if (!canary.ok) {
-    console.error('▶ Canary FAILED — reconcile applied but workspace is unhealthy.');
-    process.exit(1);
+    const offlineDatagenWaiver = process.env.APM_ALLOW_OFFLINE_DATAGEN_CANARY === 'true';
+    const dataChecksOnly = !canary.sentinel.ok || !canary.lookupJoin.ok;
+    const waiverValid = offlineDatagenWaiver
+      && Date.now() <= OFFLINE_DATAGEN_WAIVER_EXPIRES
+      && dataChecksOnly
+      && canary.eventContract.ok;
+
+    if (waiverValid) {
+      console.warn(
+        '⚠ Telemetry-dependent canary failures temporarily waived: datagen is offline. ' +
+        'Waiver expires 2026-08-31T23:59:59Z.',
+      );
+    } else {
+      if (offlineDatagenWaiver && Date.now() > OFFLINE_DATAGEN_WAIVER_EXPIRES) {
+        console.error('▶ Offline-datagen canary waiver expired 2026-08-31T23:59:59Z.');
+      }
+      console.error('▶ Canary FAILED — reconcile applied but workspace is unhealthy.');
+      process.exit(1);
+    }
   }
 
   await maybeBackfillMetrics();
