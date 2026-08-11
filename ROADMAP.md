@@ -460,10 +460,13 @@ add user alerts, SLOs, and trace depth.
   design + 13-PR sequence:
   `docs/research/server-investigations/design.md`.
   - **Entry criteria (spikes, in order): S1** WS-from-iframe CSP,
-    **S2** celld viability (SQLite/WS/outbound fetch/eviction),
+    **S2** celld viability — **passed 2026-08-10** (all core
+    surfaces verified; agent loop must be alarm-driven per the
+    300s handler budget; see the design doc's Spike results),
     **S4** notification-target webhook payload; **S3** Cloudflare
-    Computer reachability from celld gates only the code-tools
-    phase.
+    Computer under celld gates only the code-tools phase —
+    **reframed 2026-08-10**: it's an in-DO npm package, and only
+    its container backend needs Cloudflare proper.
   - Framework dependencies, each independently justified:
     proxies-manifest tooling (RG.5's reviewed-contract test),
     `ProvisionedSearch.schedule.notifications` (needed by P3.1),

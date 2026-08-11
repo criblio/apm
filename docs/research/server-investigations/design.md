@@ -137,6 +137,11 @@ UI: AlertsPage badge ─▶ /investigate?investigation=<id> ─▶ applyLoopEven
 - **`/alerts/fire` always 202s immediately and runs async** —
   webhook and proxy timeouts are short; never run preflight in the
   webhook handler.
+- **The agent loop is alarm-driven: one turn per DO alarm
+  invocation** (turn state in SQLite, each `alarm()` runs one turn
+  and schedules the next). Required by celld's 300s handler budget
+  and verified to survive node death mid-investigation — see Spike
+  results below.
 - **Keep `maxTurns: 12` initially** — parity with the client first;
   the server has no 30s TTFB constraint, so tune later.
 
@@ -402,6 +407,92 @@ flag-gated blocks in `AlertsPage`/`InvestigatePage`.
 - **Release**: pinned manifest + cell-exclusion checks in the
   existing evidence pipeline.
 
+## Spike results (2026-08-10)
+
+### S2 — celld viability: PASS, with two design-shaping findings
+
+Run locally: celld **v0.1.0** prebuilt Linux binary + MinIO
+(S3-compatible, `--endpoint`) + `celld deploy` (bundles with esbuild;
+`CELLD_ESBUILD` points at any install). The whole loop — bucket,
+deploy, node up, DO responding — takes minutes. Verified live
+against a spike worker mirroring the investigator's shape:
+
+- **DO SQLite storage**: `state.storage.sql.exec` with bound params,
+  `AUTOINCREMENT` seq, `.one()`/`.toArray()` — works.
+- **Hibernatable WebSocket**: `WebSocketPair` +
+  `state.acceptWebSocket`, hello + since-seq backlog replay on
+  connect, live fanout via `state.getWebSockets()` to an open
+  socket, bidirectional messages — all work exactly as the wire
+  protocol above assumes.
+- **Outbound HTTPS fetch from inside the DO** — works (stand-in for
+  Cribl API + LLM calls).
+- **State recovery from S3**: a fresh node with a cold local cache
+  serves the full transcript.
+
+**Finding 1 — the agent loop must be alarm-driven.** celld enforces
+a **300s JavaScript handler budget** (`CELLD_HANDLER_BUDGET_S`,
+default 300): a long post-response loop was killed mid-run at ~5min
+with `post-response event work failed: handler exceeded 300s
+budget`. A whole investigation can exceed that, so the loop cannot
+be one long handler. The pattern that works — verified live — is
+**one agent turn per DO alarm invocation**: turn state in SQLite,
+each `alarm()` runs one turn (LLM call + tool execution, well under
+300s) and schedules the next. Alarms are durable: with the loop
+mid-run, the node was SIGKILLed; a fresh node with a cold cache
+picked the alarm chain up, resumed the remaining turns, and
+completed. This also makes investigations survive node
+replacement for free. The DO schema/PR-6 design should adopt
+alarm-per-turn as the loop driver.
+
+**Finding 2 — replication durability is asymmetric.** SIGTERM
+drains cleanly (writes from 1s before shutdown recovered on a
+fresh node). SIGKILL during a *long-running handler* lost the last
+~15s of writes (the S3 replica trailed the local SQLite), while the
+alarm-driven loop's per-turn commits all survived the same
+SIGKILL. Operationally: deploy/restart celld with graceful
+shutdown, treat the Cribl-dataset `investigated` commit as the
+durable record (already the design), and note alarm-per-turn buys
+per-turn durability as a side effect.
+
+Also confirmed for our design: `setInterval` throws (use
+`scheduler.wait`/alarms); no `scheduled` (cron) handler — fine,
+we're webhook-triggered; Web Crypto includes HMAC sign/verify (WS
+tickets fine); worker secrets/vars injected via `CELLD_VARS_FILE` /
+`CELLD_VAR_*`; experimental `CELLD_WORKER_LOADER` (Worker Loader
+binding) and `CELLD_AI_BINDING`/`CELLD_AI_URL` exist.
+
+### S3 — Cloudflare Computer: reframed by research, partially resolved
+
+`@cloudflare/computer` is **not a remote service** — it's an npm
+package instantiated *inside your own Durable Object*:
+`new Workspace({ storage: ctx.storage, backends: [...] })`, with the
+virtual filesystem stored in the DO's own SQLite. Backends are
+pluggable: the **container backend requires the Cloudflare
+Containers binding** (not available on self-hosted celld), but the
+**worker-shell ("just-bash") and worker-javascript backends do not
+require Containers**. So the S3 question narrows from "can celld
+reach Cloudflare Computer" to "does the isolate backend run under
+celld's compat surface" — its Dynamic Workers dependency maps to
+celld's experimental `CELLD_WORKER_LOADER` binding. Remaining spike
+work: instantiate `Workspace` with the worker-shell backend inside a
+celld DO and run `exec`/read/write/git against it. If it works,
+bash-lite + repo tools run fully self-hosted, with the container
+backend as the Cloudflare-portability upgrade; if not, the
+`WorkspaceBackend` exec-sidecar fallback stands. (Related: Cloudflare
+published the Flue agent-harness SDK — relevant to the harness
+choice alongside pi-agent-core.)
+
+### S1 / S4 — blocked on credentials
+
+Both need the repo's `.env` (`CRIBL_BASE_URL` /
+`CRIBL_CLIENT_ID` / `CRIBL_CLIENT_SECRET`), which is missing on the
+dev box (only the running MCP container has the values). S1
+additionally needs a reachable `wss://` echo endpoint to probe the
+iframe CSP. Unblock: restore `.env`, then S1 is a short Playwright
+run (`tests/helpers/apmSession.ts` auth + a WebSocket attempt
+inside the app frame) and S4 is a handful of authenticated
+notification-target API calls.
+
 ## Top risks
 
 1. **Cloudflare Computer may not be bindable from self-hosted
@@ -424,5 +515,7 @@ flag-gated blocks in `AlertsPage`/`InvestigatePage`.
    `schema_version` on rows, `protocolVersion` in the hello frame,
    graceful UI refusal on mismatch.
 7. **celld maturity** (early-stage, evolving surface, PRs disabled
-   upstream) — spike S2 covers persistence/eviction/WS/outbound
-   fetch before any dependent PR.
+   upstream) — substantially retired by the 2026-08-10 S2 spike:
+   persistence, WS, outbound fetch, alarms, and restart recovery
+   all verified on v0.1.0 (see Spike results). Residual risk is
+   surface churn across releases; pin the celld version.
