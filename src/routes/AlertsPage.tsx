@@ -5,6 +5,7 @@ import { ChevronDown } from '@capra/icons';
 import StatusBanner from '../components/StatusBanner';
 import AlertTimeline from '../components/AlertTimeline';
 import InvestigateButton from '../components/InvestigateButton';
+import { buildAlertSeed } from '../api/agentContext';
 import { runQuery } from '../api/cribl';
 import { newQueryGeneration, captureQueryGeneration } from '../api/queryGeneration';
 import * as Q from '../api/queries';
@@ -296,13 +297,11 @@ export default function AlertsPage() {
                   </td>
                   <td>
                     <InvestigateButton
-                      seed={{
-                        question: `The ${inc.service} service had a ${inc.signalType} alert. Investigate what happened.`,
+                      seed={buildAlertSeed({
                         service: inc.service,
-                        knownSignals: [`Signal: ${inc.signalType}`, `Error rate: ${(inc.errorRate * 100).toFixed(1)}%`],
-                        earliest: '-1h',
-                        latest: 'now',
-                      }}
+                        signalType: inc.signalType,
+                        errorRate: inc.errorRate,
+                      })}
                       title={`Investigate ${inc.service}`}
                     />
                   </td>

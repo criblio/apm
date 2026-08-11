@@ -3,9 +3,9 @@
  * into the verbs the UI calls.
  */
 import { runQuery } from './cribl';
+import { browserSearchClient, type SearchClient } from './searchClient';
 import { listCachedMetricCatalog } from './panelCache';
 import {
-  listServiceSummariesViaMetrics,
   listServiceCountsViaMetrics,
   listServiceLatenciesUsViaMetrics,
   readServiceBucketsViaMetrics,
@@ -117,9 +117,15 @@ export async function getTrace(
   traceId: string,
   earliest = '-1h',
   latest = 'now',
+  client: SearchClient = browserSearchClient,
 ): Promise<JaegerTrace | null> {
-  const flatFields = await flatFieldsAvailable();
-  const rows = await runQuery(Q.traceSpans([traceId], { flatFields }), earliest, latest, 10000);
+  const flatFields = await client.flatFields();
+  const rows = await client.runQuery(
+    Q.traceSpans([traceId], { flatFields }),
+    earliest,
+    latest,
+    10000,
+  );
   const traces = toJaegerTraces(rows);
   return traces[0] ?? null;
 }
@@ -358,6 +364,7 @@ export async function listServiceSummaries(
   earliest = '-1h',
   latest = 'now',
   service?: string,
+  client: SearchClient = browserSearchClient,
 ): Promise<ServiceSummary[]> {
   // Metrics-first (M4): a synchronous PromQL read off the search worker
   // pool, for ANY window — including the prior comparison window
@@ -370,16 +377,16 @@ export async function listServiceSummaries(
   // (`{svc="X"}`) — on Service Detail this turns the RED-card + prev-window
   // latency reads from all-service histogram_quantiles into single-service
   // ones, a large saving on the metrics engine.
-  const viaMetrics = await listServiceSummariesViaMetrics(earliest, latest, undefined, service);
+  const viaMetrics = await client.serviceSummariesViaMetrics(earliest, latest, service);
   if (viaMetrics) {
     return service ? viaMetrics.filter((s) => s.service === service) : viaMetrics;
   }
   // Metrics ON but empty/aborted: do NOT fall back to a live span scan.
   // A nav-cancelled read returns null here, and cascading to a KQL search
   // job would spawn dozens of uncancellable jobs per navigation.
-  if (getMetricsRead()) return [];
-  const flatFields = await flatFieldsAvailable();
-  const rows = await runQuery(
+  if (client.metricsReadEnabled()) return [];
+  const flatFields = await client.flatFields();
+  const rows = await client.runQuery(
     Q.serviceSummary(service, { flatFields, cachedPropagation: true }),
     earliest,
     latest,
@@ -775,15 +782,23 @@ export interface RecentDeploy {
  * investigations.
  */
 const RECENT_DEPLOYS_CACHE_MS = 60_000;
-const recentDeploysCache = new Map<
-  string,
-  { at: number; rows: RecentDeploy[] }
+// Keyed per client so an injected non-browser client never serves or
+// pollutes the browser session's cached rows (and vice versa).
+const recentDeploysCacheByClient = new WeakMap<
+  SearchClient,
+  Map<string, { at: number; rows: RecentDeploy[] }>
 >();
 
 export async function listRecentDeploys(
   earliest = '-2h',
   latest = 'now',
+  client: SearchClient = browserSearchClient,
 ): Promise<RecentDeploy[]> {
+  let recentDeploysCache = recentDeploysCacheByClient.get(client);
+  if (!recentDeploysCache) {
+    recentDeploysCache = new Map();
+    recentDeploysCacheByClient.set(client, recentDeploysCache);
+  }
   const cacheKey = `${earliest}|${latest}`;
   const cached = recentDeploysCache.get(cacheKey);
   const now = Date.now();
@@ -798,7 +813,7 @@ export async function listRecentDeploys(
           : Infinity,
     }));
   }
-  const rows = await runQuery(Q.recentDeployEvents(25), earliest, latest, 50);
+  const rows = await client.runQuery(Q.recentDeployEvents(25), earliest, latest, 50);
   const mapped: RecentDeploy[] = rows.map((r) => {
     const firstSeenMs = Number(r.first_seen_ms ?? 0);
     const ageMinutes =
