@@ -16,6 +16,7 @@ import { setStreamFilterEnabled } from '../api/streamFilter';
 import { setLowVolumeMode } from '../api/lowVolumeMode';
 import { setMetricsRead } from '../api/metricsRead';
 import { setMetricsEmit } from '../api/metricsEmit';
+import { setServerInvestigations } from '../api/serverInvestigations';
 import { setSearchCadence } from '@cribl/app-utils/cadence';
 
 // Synchronous module-scope default. The framework's dataset store
@@ -58,6 +59,9 @@ export default function DatasetProvider({ children }: Props) {
           }
           if (typeof settings.metricsEmit === 'boolean') {
             setMetricsEmit(settings.metricsEmit);
+          }
+          if (typeof settings.serverInvestigations === 'boolean') {
+            setServerInvestigations(settings.serverInvestigations);
           }
         }
       })
