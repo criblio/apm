@@ -482,6 +482,44 @@ backend as the Cloudflare-portability upgrade; if not, the
 published the Flue agent-harness SDK — relevant to the harness
 choice alongside pi-agent-core.)
 
+### S3 live test (2026-08-10, overnight): code tools CAN run fully self-hosted
+
+Deployed a spike DO bundling `@cloudflare/computer` 0.1.1 to local
+celld v0.1.0 and probed the three layers:
+
+- **Workspace vfs core: WORKS.** `new Workspace({storage:
+  state.storage, backends})` inside a celld DO; `fs.mkdir` /
+  `writeFile` / `readFile` / `readdir` over the SQLite-backed
+  virtual filesystem all pass.
+- **worker-shell via dynamic worker: BLOCKED today** on celld's
+  experimental Worker Loader — it rejects module-descriptor objects
+  (`{js: "…"}`) where it wants plain strings (shimmable), and does
+  not yet support capability stubs in a loaded worker's `env`
+  (compat doc: "Not yet available: … capability stubs in `env`"),
+  which the shell worker's callback channel to the workspace
+  requires. Not shimmable; needs celld to grow the surface.
+- **just-bash directly in the DO: WORKS.** `just-bash` (the same
+  pure-JS bash `@cloudflare/computer` uses) instantiated in the DO
+  executes commands (`echo "computer says $((21*2))"` → 42). The
+  bridge between just-bash's `IFileSystem` and the DO-side
+  `WorkspaceFilesystem` needs a small explicit adapter (the
+  packaged `WorkspaceFsAdapter` targets the shell-worker RPC
+  surface — e.g. it calls `exists()`, which the DO-side fs lacks);
+  one residual read-path mismatch remained at spike end. Plumbing,
+  not viability.
+- **git**: `createGitClient()` wires up; a real clone was not
+  exercised (DO-side outbound fetch exists, so an isomorphic-git
+  flow over the vfs is plausible — verify in PR 12).
+
+**Conclusion for PR 12**: the `WorkspaceBackend` interface gets an
+**in-DO shell backend as the celld-primary implementation**
+(just-bash over the workspace vfs — no dynamic worker, no
+Containers), with `@cloudflare/computer`'s container/worker-shell
+backends as the Cloudflare-portability upgrades when hosted there.
+Also: `celld deploy` rejects a `worker_loaders` key in
+wrangler.jsonc — the loader is bound node-side via
+`CELLD_WORKER_LOADER=LOADER` instead.
+
 ### S1 / S4 — blocked on credentials
 
 Both need the repo's `.env` (`CRIBL_BASE_URL` /

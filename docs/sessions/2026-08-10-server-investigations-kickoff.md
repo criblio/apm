@@ -73,6 +73,43 @@ client in plain node) and `buildAlertSeed.test.ts`.
   (proxies-manifest tooling) have no external dependencies and can
   proceed without the blocked spikes.
 
+## Overnight continuation (same date, autonomous)
+
+Clint set an overnight goal: get as far as possible without
+intervention, stalling on the hosting decision (likely his AWS).
+Progress:
+
+- **PR 3 — flag plumbing** shipped:
+  [#121](https://github.com/criblio/apm/pull/121). `serverInvestigations`
+  off-by-default (pinned by a test), Settings card, hydration,
+  provisioner loading. Dark — no consumer.
+- **PR 4 — framework proxies-manifest tooling** shipped:
+  [cribl-search-app-framework#22](https://github.com/criblio/cribl-search-app-framework/pull/22).
+  `--proxies-manifest` deep-compares the packaged proxies.yml
+  against a committed expected manifest (empty manifest ≡ today's
+  `--require-empty-proxies`); 11/11 tooling tests. PR-5 note: the
+  archive path is `default/proxies.yml`, and the server's
+  preinstall-check `proxies` shape may need a normalization shim
+  when the real manifest lands.
+- **PR 6 — cell scaffold** shipped:
+  [#122](https://github.com/criblio/apm/pull/122). `cell/` workspace:
+  CoordinatorDO (event_id dedupe, queue, concurrency 1, hourly cap),
+  **alarm-driven InvestigationDO** (one turn per alarm), stub agent
+  with shape-faithful `ui` payloads, closed-by-default auth (webhook
+  bearer / UI bearer / HMAC WS tickets). **Validated on local celld
+  v0.1.0 + MinIO: `cell/scripts/smoke.mjs` 16/16** — fire, dedupe
+  across webhook envelope shapes, alarm turns, conclusion, poll
+  transport, ticketed WS replay from mid-stream.
+- **S3 spike concluded** (see design doc): Workspace vfs and
+  **just-bash-in-the-DO work under celld**; the dynamic-worker
+  shell path is blocked on celld loader maturity (capability stubs
+  in env). PR 12 gets an in-DO shell backend as celld-primary.
+- **Held decision**: celld hosting (likely Clint's AWS — one node +
+  an S3 bucket; the cell README documents exactly what a host needs,
+  including graceful-shutdown requirements).
+- **Still blocked on `.env`**: S1 (WS-from-iframe CSP) and S4
+  (notification-target probe).
+
 ## Artifacts
 
 - Design doc updated in-place with the "Spike results (2026-08-10)"
