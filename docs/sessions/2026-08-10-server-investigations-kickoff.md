@@ -104,6 +104,13 @@ Progress:
   **just-bash-in-the-DO work under celld**; the dynamic-worker
   shell path is blocked on celld loader maturity (capability stubs
   in env). PR 12 gets an in-DO shell backend as celld-primary.
+- **PR 7 de-risked**: `@earendil-works/pi-agent-core` +
+  `@earendil-works/pi-ai` (v0.84.1) bundle cleanly for a
+  neutral/worker target — 631KB, zero `node:` imports in the final
+  graph; node-only machinery is segregated under the package's
+  `./node` export (and celld provides `node:` modules anyway).
+  Caveat for PR 7: pi-ai may lazy-import providers — confirm the
+  OpenAI-compatible path is statically included in the cell bundle.
 - **Held decision**: celld hosting (likely Clint's AWS — one node +
   an S3 bucket; the cell README documents exactly what a host needs,
   including graceful-shutdown requirements).
