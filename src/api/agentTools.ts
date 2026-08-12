@@ -1,13 +1,18 @@
 /**
- * APM's client-side tool implementations for the Copilot
- * Investigator agent loop. The generic plumbing (run_search
- * execution, native-UI tool acknowledgements, summary
- * normalization, arg parsing) lives in @cribl/app-utils/agent-tools
- * — this module wires it to APM's query layer and adds the one
- * genuinely APM-specific tool: render_trace, which fetches a full
- * trace and hands it to the UI as a SpanTree waterfall card.
+ * APM's tool implementations for the Copilot Investigator agent
+ * loop. The generic plumbing (run_search execution, native-UI tool
+ * acknowledgements, summary normalization, arg parsing) lives in
+ * @cribl/app-utils/agent-tools — this module wires it to APM's
+ * query layer and adds the one genuinely APM-specific tool:
+ * render_trace, which fetches a full trace and hands it to the UI
+ * as a SpanTree waterfall card.
+ *
+ * The executors are built by `createApmToolExecutors`, which takes
+ * the host environment (SearchClient, dataset resolution) as
+ * injected dependencies so a non-browser host can run the same
+ * tools. The module-level `executeToolCall`/`requiresApproval`
+ * exports are the browser-wired instance the client loop imports.
  */
-import { runQuery } from './cribl';
 import { getCurrentDataset } from '@cribl/app-utils/dataset';
 import {
   createRunSearchTool,
@@ -17,9 +22,9 @@ import {
   type ToolCallInvocation,
   type ToolExecutionResult,
 } from '@cribl/app-utils/agent-tools';
-import { METRICS_DATASET } from '@cribl/app-utils/metrics';
 import { assertReadOnlyKql } from './kqlSafety';
 import { getTrace } from './search';
+import { browserSearchClient, type SearchClient } from './searchClient';
 import type { JaegerTrace } from './types';
 import { summarizeTrace } from './transform';
 
@@ -48,25 +53,43 @@ interface RenderTraceArgs {
 }
 
 /**
- * run_search executor with APM's dependencies injected: the shared
- * search-job runner, the read-only KQL safety gate, and the
- * currently-selected dataset as the only allowed scope.
+ * Everything the APM tool executors need from their host
+ * environment. Defaults reproduce the browser wiring exactly; a
+ * non-browser host (server-side investigation runtime, Node
+ * harness) supplies its own SearchClient and dataset resolution.
  */
-const runSearchTool = createRunSearchTool({
-  runQuery,
-  assertSafe: (query, allowedDatasets) => assertReadOnlyKql(query, allowedDatasets),
-  datasetId: () => getCurrentDataset(),
-});
+export interface ApmToolExecutorDeps {
+  /** Query execution + environment probes. */
+  client?: SearchClient;
+  /** The dataset id the investigation is scoped to. */
+  dataset?: () => string;
+  /** The metrics-store dataset for run_metrics_query. */
+  metricsDataset?: () => string;
+}
+
+export interface ApmToolExecutors {
+  executeToolCall(
+    call: ToolCallInvocation,
+    signal?: AbortSignal,
+  ): Promise<ToolExecutionResult>;
+}
 
 /**
- * run_metrics_query executor: PromQL against the fast metrics store
- * (criblapm_* RED metrics + raw OTel metrics). Read-only by construction,
- * so it auto-runs with no approval. The shared factory lives in the
- * framework; APM just points it at the metrics dataset.
+ * The investigator runs queries without prompting. Both data tools
+ * are read-only — run_search is guarded by assertReadOnlyKql and
+ * PromQL has no mutating forms — so there's nothing to gate, and
+ * the mid-thought approval pause just slowed investigations down.
+ * `confirmBeforeRunning` (a model-supplied hint) is likewise
+ * ignored: no tool call needs approval, so this always returns
+ * false.
+ *
+ * Host-independent by construction: it reads nothing from the
+ * executor deps, so it stays a module function rather than a
+ * closure that every executor set has to carry.
  */
-const runMetricsQueryTool = createRunMetricsQueryTool({
-  dataset: () => METRICS_DATASET,
-});
+export function requiresApproval(): boolean {
+  return false;
+}
 
 /**
  * Fetch a full trace by trace_id and attach it as UI metadata. The
@@ -76,6 +99,7 @@ const runMetricsQueryTool = createRunMetricsQueryTool({
  */
 async function renderTraceTool(
   args: RenderTraceArgs,
+  client: SearchClient,
 ): Promise<{ content: string; ui: RenderTraceUi }> {
   const traceId = (args.traceId || '').trim();
   const description = args.description ?? '';
@@ -96,7 +120,7 @@ async function renderTraceTool(
     // Widen to -24h here — traces can extend beyond the caller's
     // investigation window, and the trace lookup is cheap enough
     // to make the wider scan worth it for a single trace.
-    const trace = await getTrace(traceId, '-24h', 'now');
+    const trace = await getTrace(traceId, '-24h', 'now', client);
     if (!trace) {
       const ui: RenderTraceUi = {
         kind: 'trace',
@@ -151,43 +175,62 @@ async function renderTraceTool(
 }
 
 /**
- * Main dispatcher. run_search and render_trace get real executors;
- * everything else — update_context, present_investigation_summary,
- * and the native UI's tool surface — falls through to the shared
- * acknowledgement handler so the loop keeps moving.
+ * Build the APM tool executors with the host environment injected.
+ *
+ * run_search gets the shared search-job runner via the client, the
+ * read-only KQL safety gate, and the resolved dataset as the only
+ * allowed scope. run_metrics_query points at the metrics store.
+ * render_trace fetches through the same client. Everything else —
+ * update_context, present_investigation_summary, and the native
+ * UI's tool surface — falls through to the shared acknowledgement
+ * handler so the loop keeps moving.
  */
-export async function executeToolCall(
-  call: ToolCallInvocation,
-  signal?: AbortSignal,
-): Promise<ToolExecutionResult> {
-  switch (call.name) {
-    case 'run_search':
-      return runSearchTool(call, signal);
+export function createApmToolExecutors(deps: ApmToolExecutorDeps = {}): ApmToolExecutors {
+  const client = deps.client ?? browserSearchClient;
+  const dataset = deps.dataset ?? (() => getCurrentDataset());
 
-    case 'run_metrics_query':
-      return runMetricsQueryTool(call, signal);
+  const runSearchTool = createRunSearchTool({
+    runQuery: (kql, earliest, latest, limit) => client.runQuery(kql, earliest, latest, limit),
+    assertSafe: (query, allowedDatasets) => assertReadOnlyKql(query, allowedDatasets),
+    datasetId: dataset,
+  });
 
-    case 'render_trace': {
-      const args = parseArgs<RenderTraceArgs>(call.arguments);
-      const { content, ui } = await renderTraceTool(args);
-      return { id: call.id, name: call.name, content, ui };
+  // PromQL against the fast metrics store (criblapm_* RED metrics +
+  // raw OTel metrics). Read-only by construction, so it auto-runs
+  // with no approval. The shared factory lives in the framework and
+  // already falls back to METRICS_DATASET, so pass the override
+  // straight through rather than re-stating that default here.
+  const runMetricsQueryTool = createRunMetricsQueryTool({
+    dataset: deps.metricsDataset,
+  });
+
+  async function executeToolCall(
+    call: ToolCallInvocation,
+    signal?: AbortSignal,
+  ): Promise<ToolExecutionResult> {
+    switch (call.name) {
+      case 'run_search':
+        return runSearchTool(call, signal);
+
+      case 'run_metrics_query':
+        return runMetricsQueryTool(call, signal);
+
+      case 'render_trace': {
+        const args = parseArgs<RenderTraceArgs>(call.arguments);
+        const { content, ui } = await renderTraceTool(args, client);
+        return { id: call.id, name: call.name, content, ui };
+      }
+
+      default:
+        return executeCommonToolCall(call, {
+          embedLabel: 'the embedded Cribl APM investigation',
+        });
     }
-
-    default:
-      return executeCommonToolCall(call, {
-        embedLabel: 'the embedded Cribl APM investigation',
-      });
   }
+
+  return { executeToolCall };
 }
 
-/**
- * The investigator runs queries without prompting. Both data tools are
- * read-only — run_search is guarded by assertReadOnlyKql and PromQL has
- * no mutating forms — so there's nothing to gate, and the mid-thought
- * approval pause just slowed investigations down. `confirmBeforeRunning`
- * (a model-supplied hint) is likewise ignored: no tool call needs
- * approval, so this always returns false.
- */
-export function requiresApproval(): boolean {
-  return false;
-}
+/** The browser-wired executors, matching the app's historical
+ *  module-level surface. The agent loop imports these directly. */
+export const { executeToolCall } = createApmToolExecutors();
