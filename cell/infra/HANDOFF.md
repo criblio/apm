@@ -39,12 +39,9 @@ feature design is `docs/research/server-investigations/design.md`.
 ```bash
 cd cell/infra
 
-# 1. Secrets (once). Random 32-byte hex each; never in TF state.
-for k in WEBHOOK_BEARER UI_BEARER TICKET_SECRET; do
-  aws ssm put-parameter --profile apm-cell \
-    --name "/apm-cell/$k" --type SecureString \
-    --value "$(openssl rand -hex 32)"
-done
+# 1. Secrets (once). Run the loop in README.md, "One-time: secrets".
+#    Do not copy the secret list here — README.md is the one place
+#    that tracks it, and it already records the parameters PR 7 adds.
 
 # 2. Apply.
 terraform init
@@ -58,7 +55,7 @@ terraform apply -var bucket_name=<bucket> -var domain=<domain>
 # 4. Deploy the cell code to the bucket. celld bundles with esbuild:
 npm install --prefix /tmp/esb esbuild
 curl -fsSL -o /tmp/celld.gz \
-  "https://github.com/denoland/celld/releases/download/v0.1.0/celld-$(uname -m | sed 's/x86_64/x86_64/;s/aarch64/aarch64/')-unknown-linux-gnu.gz"
+  "https://github.com/denoland/celld/releases/download/v0.1.0/celld-$(uname -m)-unknown-linux-gnu.gz"
 gunzip -f /tmp/celld.gz && chmod +x /tmp/celld
 CELLD_ESBUILD=/tmp/esb/node_modules/.bin/esbuild \
 AWS_PROFILE=apm-cell \
