@@ -95,8 +95,6 @@ describe('browser-free import surface', () => {
       dataset: () => 'otel',
       metricsDataset: () => 'metrics',
     });
-    expect(executors.requiresApproval()).toBe(false);
-
     // render_trace exercises getTrace through the client.
     const result = await executors.executeToolCall({
       id: 'call-1',

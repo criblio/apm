@@ -31,7 +31,6 @@ export interface SearchClient {
     earliest: string,
     latest: string,
     limit?: number,
-    signal?: AbortSignal,
   ): Promise<Record<string, unknown>[]>;
 
   /** Whether the dataset's flattened acceleration fields

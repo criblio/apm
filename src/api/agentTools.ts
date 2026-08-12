@@ -22,7 +22,6 @@ import {
   type ToolCallInvocation,
   type ToolExecutionResult,
 } from '@cribl/app-utils/agent-tools';
-import { METRICS_DATASET } from '@cribl/app-utils/metrics';
 import { assertReadOnlyKql } from './kqlSafety';
 import { getTrace } from './search';
 import { browserSearchClient, type SearchClient } from './searchClient';
@@ -73,7 +72,23 @@ export interface ApmToolExecutors {
     call: ToolCallInvocation,
     signal?: AbortSignal,
   ): Promise<ToolExecutionResult>;
-  requiresApproval(): boolean;
+}
+
+/**
+ * The investigator runs queries without prompting. Both data tools
+ * are read-only — run_search is guarded by assertReadOnlyKql and
+ * PromQL has no mutating forms — so there's nothing to gate, and
+ * the mid-thought approval pause just slowed investigations down.
+ * `confirmBeforeRunning` (a model-supplied hint) is likewise
+ * ignored: no tool call needs approval, so this always returns
+ * false.
+ *
+ * Host-independent by construction: it reads nothing from the
+ * executor deps, so it stays a module function rather than a
+ * closure that every executor set has to carry.
+ */
+export function requiresApproval(): boolean {
+  return false;
 }
 
 /**
@@ -173,7 +188,6 @@ async function renderTraceTool(
 export function createApmToolExecutors(deps: ApmToolExecutorDeps = {}): ApmToolExecutors {
   const client = deps.client ?? browserSearchClient;
   const dataset = deps.dataset ?? (() => getCurrentDataset());
-  const metricsDataset = deps.metricsDataset ?? (() => METRICS_DATASET);
 
   const runSearchTool = createRunSearchTool({
     runQuery: (kql, earliest, latest, limit) => client.runQuery(kql, earliest, latest, limit),
@@ -183,9 +197,11 @@ export function createApmToolExecutors(deps: ApmToolExecutorDeps = {}): ApmToolE
 
   // PromQL against the fast metrics store (criblapm_* RED metrics +
   // raw OTel metrics). Read-only by construction, so it auto-runs
-  // with no approval. The shared factory lives in the framework.
+  // with no approval. The shared factory lives in the framework and
+  // already falls back to METRICS_DATASET, so pass the override
+  // straight through rather than re-stating that default here.
   const runMetricsQueryTool = createRunMetricsQueryTool({
-    dataset: metricsDataset,
+    dataset: deps.metricsDataset,
   });
 
   async function executeToolCall(
@@ -212,33 +228,9 @@ export function createApmToolExecutors(deps: ApmToolExecutorDeps = {}): ApmToolE
     }
   }
 
-  /**
-   * The investigator runs queries without prompting. Both data tools
-   * are read-only — run_search is guarded by assertReadOnlyKql and
-   * PromQL has no mutating forms — so there's nothing to gate, and
-   * the mid-thought approval pause just slowed investigations down.
-   * `confirmBeforeRunning` (a model-supplied hint) is likewise
-   * ignored: no tool call needs approval, so this always returns
-   * false.
-   */
-  function requiresApproval(): boolean {
-    return false;
-  }
-
-  return { executeToolCall, requiresApproval };
+  return { executeToolCall };
 }
 
 /** The browser-wired executors, matching the app's historical
  *  module-level surface. The agent loop imports these directly. */
-const browserExecutors = createApmToolExecutors();
-
-export async function executeToolCall(
-  call: ToolCallInvocation,
-  signal?: AbortSignal,
-): Promise<ToolExecutionResult> {
-  return browserExecutors.executeToolCall(call, signal);
-}
-
-export function requiresApproval(): boolean {
-  return browserExecutors.requiresApproval();
-}
+export const { executeToolCall } = createApmToolExecutors();
