@@ -1,0 +1,77 @@
+#!/bin/bash
+# cloud-init for the celld node. Idempotent-ish: safe to re-run on a
+# replacement instance; all durable state lives in the fleet bucket.
+set -euo pipefail
+exec > >(tee /var/log/apm-cell-init.log) 2>&1
+
+CELLD_VERSION="${celld_version}"
+BUCKET="${bucket}"
+REGION="${region}"
+DOMAIN="${domain}"
+SSM_PREFIX="${ssm_prefix}"
+
+# ── celld binary (pinned release) ────────────────────────────────
+curl -fsSL -o /tmp/celld.gz \
+  "https://github.com/denoland/celld/releases/download/$CELLD_VERSION/celld-aarch64-unknown-linux-gnu.gz"
+gunzip -f /tmp/celld.gz
+install -m 0755 /tmp/celld /usr/local/bin/celld
+/usr/local/bin/celld --version
+
+# ── secrets: SSM SecureStrings → env file (root-only) ────────────
+# Parameters are created out-of-band (see infra/README.md), never in
+# Terraform state. Missing parameters fail loudly here.
+umask 077
+mkdir -p /etc/celld
+: > /etc/celld/env
+for key in WEBHOOK_BEARER UI_BEARER TICKET_SECRET; do
+  value=$(aws ssm get-parameter --region "$REGION" \
+    --name "$SSM_PREFIX/$key" --with-decryption \
+    --query Parameter.Value --output text)
+  echo "CELLD_VAR_$key=$value" >> /etc/celld/env
+done
+cat >> /etc/celld/env <<EOF
+CELLD_BUCKET=s3://$BUCKET
+AWS_REGION=$REGION
+CELLD_ADDR=127.0.0.1:8787
+CELLD_WATCH=/var/lib/celld
+EOF
+mkdir -p /var/lib/celld
+
+# ── systemd unit: graceful stop is load-bearing ──────────────────
+# SIGTERM drains cell replication to the bucket; a hard kill can
+# lose the last seconds of writes (S2 spike). TimeoutStopSec gives
+# the drain room before systemd escalates.
+cat > /etc/systemd/system/celld.service <<'EOF'
+[Unit]
+Description=celld — investigator cell node
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+EnvironmentFile=/etc/celld/env
+ExecStart=/usr/local/bin/celld
+Restart=always
+RestartSec=2
+KillSignal=SIGTERM
+TimeoutStopSec=90
+User=root
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable --now celld
+
+# ── Caddy: TLS termination + reverse proxy ───────────────────────
+if [ -n "$DOMAIN" ]; then
+  dnf install -y caddy
+  cat > /etc/caddy/Caddyfile <<EOF
+$DOMAIN {
+	reverse_proxy 127.0.0.1:8787
+}
+EOF
+  systemctl enable --now caddy
+else
+  echo "No domain set — skipping Caddy. celld listens on 127.0.0.1:8787 only." >&2
+fi
