@@ -61,6 +61,15 @@ export interface FiringAlert {
   _time?: number;
 }
 
+/**
+ * The key that groups investigations for the same ongoing problem.
+ * Both Durable Objects derive it, so it lives next to the type it
+ * reads rather than being spelled out at each call site.
+ */
+export function incidentKey(alert: FiringAlert): string {
+  return `${alert.svc}:${alert.signal_type}`;
+}
+
 export interface InvestigationSummaryRow {
   id: string;
   alertId: string;

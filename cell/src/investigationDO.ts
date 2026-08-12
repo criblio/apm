@@ -18,6 +18,7 @@
 import type { Env } from './env';
 import {
   PROTOCOL_VERSION,
+  incidentKey,
   type FiringAlert,
   type InvestigationStatus,
   type ServerFrame,
@@ -37,6 +38,19 @@ interface StartBody {
 export class InvestigationDO {
   private readonly state: DurableObjectState;
   private readonly env: Env;
+
+  /**
+   * Next transcript seq to hand out. Seeded lazily from the table on
+   * first append after a hydration, then kept in memory: a Durable
+   * Object is single-threaded and is the only writer to this table,
+   * so nothing else can take a seq between the read and the insert.
+   *
+   * This exists so append() costs one statement. It used to INSERT
+   * and then scan MAX(seq) to learn what the insert had allocated,
+   * which is two statements per transcript event — and once the real
+   * agent loop streams assistant text, an event is roughly a token.
+   */
+  private nextSeq: number | null = null;
 
   constructor(state: DurableObjectState, env: Env) {
     this.state = state;
@@ -100,15 +114,13 @@ export class InvestigationDO {
   }
 
   private append(ev: WireLoopEvent): number {
+    if (this.nextSeq === null) this.nextSeq = this.latestSeq() + 1;
+    const seq = this.nextSeq++;
     this.state.storage.sql.exec(
-      `INSERT INTO transcript_events (ev_json, created_at) VALUES (?, ?)`,
+      `INSERT INTO transcript_events (seq, ev_json, created_at) VALUES (?, ?, ?)`,
+      seq,
       JSON.stringify(ev),
       Date.now(),
-    );
-    const seq = Number(
-      this.state.storage.sql
-        .exec(`SELECT MAX(seq) AS seq FROM transcript_events`)
-        .one().seq,
     );
     this.fanout({ type: 'event', seq, ev });
     return seq;
@@ -164,7 +176,7 @@ export class InvestigationDO {
         body.id,
         body.alert.alert_id,
         body.alert.event_id,
-        `${body.alert.svc}:${body.alert.signal_type}`,
+        incidentKey(body.alert),
         JSON.stringify(body.seed ?? null),
         Date.now(),
         SCHEMA_VERSION,

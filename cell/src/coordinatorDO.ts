@@ -11,7 +11,7 @@
  *   - the investigations index the UI lists.
  */
 import type { Env } from './env';
-import type { FiringAlert, InvestigationSummaryRow } from './protocol';
+import { incidentKey, type FiringAlert, type InvestigationSummaryRow } from './protocol';
 
 const MAX_CONCURRENT = 1;
 const MAX_PER_HOUR = 10;
@@ -57,22 +57,23 @@ export class CoordinatorDO {
       for (const alert of alerts) {
         if (!alert?.event_id || !alert?.alert_id || !alert?.svc) continue;
         if (hourBudget <= 0) break;
-        const dup = this.state.storage.sql
-          .exec(`SELECT 1 FROM investigations WHERE event_id = ?`, alert.event_id)
-          .toArray().length;
-        if (dup > 0) continue;
         const id = `inv-${crypto.randomUUID()}`;
-        this.state.storage.sql.exec(
+        // event_id is UNIQUE, so let the insert do the dedupe. The
+        // separate SELECT this replaces cost a second statement per
+        // alert and left a gap between the check and the write.
+        const written = this.state.storage.sql.exec(
           `INSERT INTO investigations
              (id, event_id, alert_id, incident_key, status, alert_json, created_at)
-           VALUES (?, ?, ?, ?, 'queued', ?, ?)`,
+           VALUES (?, ?, ?, ?, 'queued', ?, ?)
+           ON CONFLICT(event_id) DO NOTHING`,
           id,
           alert.event_id,
           alert.alert_id,
-          `${alert.svc}:${alert.signal_type}`,
+          incidentKey(alert),
           JSON.stringify(alert),
           Date.now(),
-        );
+        ).rowsWritten;
+        if (written === 0) continue; // already admitted
         accepted++;
         hourBudget--;
       }

@@ -12,10 +12,16 @@
 
 const TICKET_TTL_MS = 60_000;
 
+/** HMAC-SHA256 is always 32 bytes, so the hex signature is always 64. */
+const SIG_BYTES = 32;
+const SIG_HEX_LENGTH = SIG_BYTES * 2;
+
+const ENCODER = new TextEncoder();
+
 async function hmacKey(secret: string): Promise<CryptoKey> {
   return crypto.subtle.importKey(
     'raw',
-    new TextEncoder().encode(secret),
+    ENCODER.encode(secret),
     { name: 'HMAC', hash: 'SHA-256' },
     false,
     ['sign', 'verify'],
@@ -38,7 +44,7 @@ export async function mintTicket(
   const sig = await crypto.subtle.sign(
     'HMAC',
     key,
-    new TextEncoder().encode(`${investigationId}:${expires}`),
+    ENCODER.encode(`${investigationId}:${expires}`),
   );
   return `${expires}.${toHex(sig)}`;
 }
@@ -53,25 +59,22 @@ export async function verifyTicket(
   if (dot <= 0) return false;
   const expires = Number(ticket.slice(0, dot));
   if (!Number.isFinite(expires) || expires < nowMs) return false;
-  const key = await hmacKey(secret);
-  const expected = await crypto.subtle.sign(
-    'HMAC',
-    key,
-    new TextEncoder().encode(`${investigationId}:${expires}`),
-  );
-  // crypto.subtle.verify gives constant-time comparison.
   const given = ticket.slice(dot + 1);
-  if (given.length !== expected.byteLength * 2) return false;
-  const bytes = new Uint8Array(expected.byteLength);
+  if (given.length !== SIG_HEX_LENGTH) return false;
+  const bytes = new Uint8Array(SIG_BYTES);
   for (let i = 0; i < bytes.length; i++) {
     const parsed = Number.parseInt(given.slice(i * 2, i * 2 + 2), 16);
     if (Number.isNaN(parsed)) return false;
     bytes[i] = parsed;
   }
+  // crypto.subtle.verify does the comparison in constant time, so it
+  // is the only HMAC this needs — signing a second copy to compare
+  // by hand would leak timing and cost an extra crypto call.
+  const key = await hmacKey(secret);
   return crypto.subtle.verify(
     'HMAC',
     key,
     bytes,
-    new TextEncoder().encode(`${investigationId}:${expires}`),
+    ENCODER.encode(`${investigationId}:${expires}`),
   );
 }
