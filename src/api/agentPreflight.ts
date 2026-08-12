@@ -37,6 +37,7 @@
  * to InvestigationSeed required.
  */
 import { listServiceSummaries, listRecentDeploys, type RecentDeploy } from './search';
+import { browserSearchClient, type SearchClient } from './searchClient';
 import { previousWindow } from '../utils/timeRange';
 import { MIN_BASELINE_REQUESTS } from '../utils/health';
 import type { ServiceSummary } from './types';
@@ -94,6 +95,7 @@ const ERROR_SPIKE_PP = 1.0;
 export async function runPreflight(
   earliest: string,
   latest: string,
+  client: SearchClient = browserSearchClient,
 ): Promise<PreflightResult> {
   const empty: PreflightResult = {
     silent: [],
@@ -112,9 +114,9 @@ export async function runPreflight(
     // tolerated separately — a missing deploy_events table on a
     // fresh install shouldn't abort the whole preflight.
     const [cur, pri, deploys] = await Promise.all([
-      listServiceSummaries(earliest, latest),
-      listServiceSummaries(prev.earliest, prev.latest),
-      listRecentDeploys(`-${DEPLOY_LOOKBACK_MIN}m`, 'now').catch((e) => {
+      listServiceSummaries(earliest, latest, undefined, client),
+      listServiceSummaries(prev.earliest, prev.latest, undefined, client),
+      listRecentDeploys(`-${DEPLOY_LOOKBACK_MIN}m`, 'now', client).catch((e) => {
         console.error('[agentPreflight] deploys probe failed:', e);
         return [] as RecentDeploy[];
       }),

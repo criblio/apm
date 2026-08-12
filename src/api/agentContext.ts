@@ -39,6 +39,38 @@ export interface InvestigationSeed {
   latest?: string;
 }
 
+/** The alert facts a seed can be built from — the subset of an
+ *  alert incident every producer (AlertsPage today, a server-side
+ *  trigger later) has in hand. */
+export interface AlertSeedInput {
+  service: string;
+  signalType: string;
+  /** Error rate as a fraction (0.12 = 12%). */
+  errorRate: number;
+  earliest?: string;
+  latest?: string;
+}
+
+/**
+ * Build the investigation seed for an alert incident. Single source
+ * of truth for the alert→investigation handoff: the Alerts page uses
+ * it for the Investigate button, and any non-browser trigger (e.g. a
+ * server-side investigator waking on a firing alert) must build its
+ * seed through the same function so both paths stay in lockstep.
+ */
+export function buildAlertSeed(input: AlertSeedInput): InvestigationSeed {
+  return {
+    question: `The ${input.service} service had a ${input.signalType} alert. Investigate what happened.`,
+    service: input.service,
+    knownSignals: [
+      `Signal: ${input.signalType}`,
+      `Error rate: ${(input.errorRate * 100).toFixed(1)}%`,
+    ],
+    earliest: input.earliest ?? '-1h',
+    latest: input.latest ?? 'now',
+  };
+}
+
 /**
  * The static context preamble — dataset description, field mappings,
  * KQL dialect notes. Independent of the specific investigation, so
