@@ -1,0 +1,24 @@
+{
+  // Investigator cell — Worker + Durable Objects. Runs on celld
+  // (self-hosted; see docs/research/server-investigations/design.md),
+  // portable to Cloudflare. Deploy with:
+  //   celld deploy cell --bucket s3://<bucket> [--endpoint <s3-url>]
+  "name": "apm-investigator-cell",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-01-01",
+  "durable_objects": {
+    "bindings": [
+      { "name": "COORDINATOR", "class_name": "CoordinatorDO" },
+      { "name": "INVESTIGATION", "class_name": "InvestigationDO" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["CoordinatorDO", "InvestigationDO"] }
+  ]
+  // Secrets/vars (via celld: CELLD_VAR_* env or CELLD_VARS_FILE):
+  //   WEBHOOK_BEARER  — auth for POST /alerts/fire (notification target)
+  //   UI_BEARER       — auth for the UI's proxied calls (kv.cellToken)
+  //   TICKET_SECRET   — HMAC key for short-lived WS tickets
+  //   DISABLED        — "true" drops all new triggers (local kill switch;
+  //                     the KV-flag kill switch lands with criblClient)
+}

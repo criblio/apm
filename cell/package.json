@@ -1,0 +1,15 @@
+{
+  "name": "apm-investigator-cell",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "description": "Server-side investigator cell: Worker + Durable Objects (runs on celld, portable to Cloudflare). See docs/research/server-investigations/design.md.",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "smoke": "node scripts/smoke.mjs"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250705.0",
+    "typescript": "^5.5.0"
+  }
+}
