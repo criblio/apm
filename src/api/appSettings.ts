@@ -38,6 +38,13 @@ export interface AppSettings {
    *  store first and fall back to $vt_results / live. Off by default;
    *  read per-render, so no re-provision needed to toggle. */
   metricsRead?: boolean;
+  /** Server-side investigations: when true, firing alerts trigger an
+   *  autonomous investigation on the server-side investigator cell, and
+   *  the Alerts page shows investigation badges/drill-ins. Off by
+   *  default (dark). Provision-time for the trigger search (re-provision
+   *  after toggling) but the cell also re-reads this flag as a kill
+   *  switch. Design: docs/research/server-investigations/design.md. */
+  serverInvestigations?: boolean;
   [k: string]: unknown;
 }
 

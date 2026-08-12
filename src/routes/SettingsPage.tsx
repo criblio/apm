@@ -19,6 +19,8 @@ import { DEFAULT_FILTER_RULES } from '../api/errorFilter';
 import { listTraceOriginators, type TraceOriginatorRow } from '../api/search';
 import { useStreamFilterEnabled } from '../hooks/useStreamFilter';
 import { useLowVolumeMode } from '../hooks/useLowVolumeMode';
+import { useServerInvestigations } from '../hooks/useServerInvestigations';
+import { setServerInvestigations } from '../api/serverInvestigations';
 import { useSearchCadence } from '../hooks/useSearchCadence';
 import s from './SettingsPage.module.css';
 
@@ -51,6 +53,8 @@ export default function SettingsPage() {
   const [error, setError] = useState<string | null>(null);
   const [streamFilterSaving, setStreamFilterSaving] = useState(false);
   const [lowVolumeSaving, setLowVolumeSaving] = useState(false);
+  const currentServerInvestigations = useServerInvestigations();
+  const [serverInvestigationsSaving, setServerInvestigationsSaving] = useState(false);
   const [cadenceSaving, setCadenceSaving] = useState(false);
   const [disabledRules, setDisabledRules] = useState<Record<string, boolean>>({});
   const [rulesSaving, setRulesSaving] = useState(false);
@@ -66,6 +70,9 @@ export default function SettingsPage() {
       }
       if (s?.lowVolumeMode === true) {
         setLowVolumeMode(true);
+      }
+      if (typeof s?.serverInvestigations === 'boolean') {
+        setServerInvestigations(s.serverInvestigations);
       }
     }).catch(() => {});
     listTraceOriginators()
@@ -148,6 +155,27 @@ export default function SettingsPage() {
     }
   }
 
+  async function handleServerInvestigationsToggle(next: boolean) {
+    if (serverInvestigationsSaving) return;
+    setServerInvestigationsSaving(true);
+    setError(null);
+    try {
+      setServerInvestigations(next);
+      await saveAppSettings({ serverInvestigations: next });
+      setFlash(
+        next
+          ? 'Server-side investigations on. Re-provision below to create the alert trigger.'
+          : 'Server-side investigations off. New investigations stop within ~a minute; re-provision below to remove the alert trigger.',
+      );
+      setTimeout(() => setFlash(null), 6000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setServerInvestigations(!next);
+    } finally {
+      setServerInvestigationsSaving(false);
+    }
+  }
+
   async function handleStreamFilterToggle(next: boolean) {
     if (streamFilterSaving) return;
     setStreamFilterSaving(true);
@@ -199,6 +227,7 @@ export default function SettingsPage() {
         { id: 'dataset', label: 'Dataset' },
         { id: 'cadence', label: 'Detection cadence' },
         { id: 'low-volume', label: 'Low-volume mode' },
+        { id: 'server-investigations', label: 'Server-side investigations' },
       ],
     },
     {
@@ -431,6 +460,38 @@ export default function SettingsPage() {
               take effect — the alert search bakes in its KQL at
               scheduled-search creation time, so the new arm only
               becomes active after the next deploy or "Reconcile".
+            </div>
+          </div>
+        </label>
+      </div>
+
+      <div id="server-investigations" className={s.card}>
+        <h2 className={s.sectionTitle}>Server-side investigations</h2>
+        <p className={s.sectionHelp}>
+          When enabled, firing alerts trigger an autonomous Investigator
+          run on the server-side investigator cell — no browser needed.
+          The Alerts page then shows investigation badges and lets you
+          drill into the finished transcript. Requires a deployed
+          investigator cell (see
+          docs/research/server-investigations/design.md); without one,
+          leave this off.
+        </p>
+
+        <label className={s.toggleRow}>
+          <input
+            type="checkbox"
+            checked={currentServerInvestigations}
+            disabled={serverInvestigationsSaving}
+            onChange={(e) => void handleServerInvestigationsToggle(e.target.checked)}
+          />
+          <div>
+            <div className={s.toggleTitle}>Investigate firing alerts automatically on the server</div>
+            <div className={s.toggleSub}>
+              Off by default. Turning on requires a re-provision below to
+              create the alert trigger search. Turning off stops new
+              investigations within ~a minute (the cell re-checks this
+              flag on every trigger); re-provision to remove the trigger
+              search entirely.
             </div>
           </div>
         </label>

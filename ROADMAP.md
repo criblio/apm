@@ -445,6 +445,36 @@ add user alerts, SLOs, and trace depth.
   health-check noise (we already classify it), and what the
   Cribl Stream pipeline change to trim it would be. No competitor
   can close that loop.
+- **P4.3 Server-side agent investigations** (XL — spec complete,
+  2026-08-10) — when an alert fires, a Durable-Object-hosted agent
+  (Worker bundle on celld, pi-agent-core loop against an
+  OpenAI-compatible endpoint, Cloudflare Computer for bash/repo
+  tools) investigates it autonomously with the same seed as the UI's
+  Investigate button, persists the transcript server-side, streams
+  progress to the UI as the existing `LoopEvent` union (identical
+  rendering via `applyLoopEvent`), and commits
+  `record_kind:'investigation'` events to the dataset so the Alerts
+  page shows "Investigated" badges and drill-back — without the UI
+  ever depending on the cell being up. Off by default behind a
+  `serverInvestigations` flag with a cell-side kill switch. Full
+  design + 13-PR sequence:
+  `docs/research/server-investigations/design.md`.
+  - **Entry criteria (spikes, in order): S1** WS-from-iframe CSP,
+    **S2** celld viability — **passed 2026-08-10** (all core
+    surfaces verified; agent loop must be alarm-driven per the
+    300s handler budget; see the design doc's Spike results),
+    **S4** notification-target webhook payload; **S3** Cloudflare
+    Computer under celld gates only the code-tools phase —
+    **reframed 2026-08-10**: it's an in-DO npm package, and only
+    its container backend needs Cloudflare proper.
+  - Framework dependencies, each independently justified:
+    proxies-manifest tooling (RG.5's reviewed-contract test),
+    `ProvisionedSearch.schedule.notifications` (needed by P3.1),
+    InvestigatorChat view/driver split (needed by P4.1's
+    server-runtime migration). PRs 2–5 (injection seams, flag
+    plumbing, manifest tooling) are valuable even if the celld bet
+    dies — the only write-offs on a failed spike are `cell/` and
+    the UI transport shim.
 
 ## P5 — Breadth
 
