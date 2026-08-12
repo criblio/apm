@@ -11,6 +11,12 @@ import { newQueryGeneration, captureQueryGeneration } from '../api/queryGenerati
 import * as Q from '../api/queries';
 import { serviceColor } from '../utils/spans';
 import type { CachedAlertRow } from '../api/panelCache';
+import { useServerInvestigations } from '../hooks/useServerInvestigations';
+import {
+  indexInvestigations,
+  badgeForIncident,
+  type InvestigationEventRow,
+} from '../utils/investigationBadges';
 import s from './AlertsPage.module.css';
 
 function toNum(v: unknown): number {
@@ -141,6 +147,8 @@ export default function AlertsPage() {
   const [timelineSelection, setTimelineSelection] = useState<[number, number] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [investigations, setInvestigations] = useState<InvestigationEventRow[]>([]);
+  const serverInvestigations = useServerInvestigations();
 
   const hasData = useRef(false);
   const fetchAlerts = useCallback(async (silent = false) => {
@@ -173,11 +181,32 @@ export default function AlertsPage() {
           })));
         })
         .catch(() => { /* history is best-effort; primary already shown */ });
+
+      // TERTIARY (flag-gated): server-side investigation lifecycle
+      // events for the "Investigating…"/"Investigated" badges. Purely
+      // additive — its failure never affects the alert tables.
+      if (serverInvestigations) {
+        runQuery(Q.investigationEvents(500), historyRange, 'now', 500)
+          .then((rows) => {
+            if (!isCurrent()) return;
+            setInvestigations(rows.map((r) => ({
+              timeMs: Number(r._time) * 1000,
+              eventType: String(r.event_type ?? ''),
+              alertId: String(r.alert_id ?? ''),
+              investigationId: String(r.investigation_id ?? ''),
+              svc: String(r.svc ?? ''),
+              conclusion: String(r.conclusion ?? ''),
+            })));
+          })
+          .catch(() => { /* badges are best-effort */ });
+      } else {
+        setInvestigations([]);
+      }
     } catch (e) {
       if (!isCurrent()) return;
       if (!silent) { setError(e instanceof Error ? e.message : String(e)); setLoading(false); }
     }
-  }, [historyRange]);
+  }, [historyRange, serverInvestigations]);
 
   useEffect(() => { void fetchAlerts(); }, [fetchAlerts]);
 
@@ -191,6 +220,11 @@ export default function AlertsPage() {
   const nonOk = alerts.filter((a) => a.alertStatus !== 'ok' || a.isBad);
 
   const incidents = useMemo(() => buildIncidents(history), [history]);
+
+  const investigationsByAlert = useMemo(
+    () => indexInvestigations(investigations),
+    [investigations],
+  );
 
   const filteredIncidents = useMemo(() => {
     if (!timelineSelection) return incidents;
@@ -296,14 +330,51 @@ export default function AlertsPage() {
                     )}
                   </td>
                   <td>
-                    <InvestigateButton
-                      seed={buildAlertSeed({
-                        service: inc.service,
-                        signalType: inc.signalType,
-                        errorRate: inc.errorRate,
-                      })}
-                      title={`Investigate ${inc.service}`}
-                    />
+                    {(() => {
+                      const badge = serverInvestigations
+                        ? badgeForIncident(inc, investigationsByAlert)
+                        : null;
+                      if (badge?.state === 'investigated') {
+                        return (
+                          <Link
+                            to={`/investigate?investigation=${encodeURIComponent(badge.investigationId)}`}
+                            title={badge.conclusion || 'View the server-side investigation'}
+                          >
+                            <Tag color="success">Investigated</Tag>
+                          </Link>
+                        );
+                      }
+                      if (badge?.state === 'investigating') {
+                        return (
+                          <Link
+                            to={`/investigate?investigation=${encodeURIComponent(badge.investigationId)}`}
+                            title="A server-side investigation is running"
+                          >
+                            <Tag color="info">Investigating…</Tag>
+                          </Link>
+                        );
+                      }
+                      if (badge?.state === 'failed') {
+                        return (
+                          <Link
+                            to={`/investigate?investigation=${encodeURIComponent(badge.investigationId)}`}
+                            title="The server-side investigation did not complete"
+                          >
+                            <Tag color="warning">Investigation failed</Tag>
+                          </Link>
+                        );
+                      }
+                      return (
+                        <InvestigateButton
+                          seed={buildAlertSeed({
+                            service: inc.service,
+                            signalType: inc.signalType,
+                            errorRate: inc.errorRate,
+                          })}
+                          title={`Investigate ${inc.service}`}
+                        />
+                      );
+                    })()}
                   </td>
                 </tr>
               ))}

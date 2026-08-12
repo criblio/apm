@@ -18,9 +18,13 @@
  */
 import { useCallback, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { InvestigatorChat } from '@cribl/app-utils/investigator';
+import {
+  InvestigatorChat,
+  type InvestigatorTranscriptEntry,
+} from '@cribl/app-utils/investigator';
 import MetricsToolCard from '@cribl/app-utils/investigator/metrics-tool-card';
 import { getCurrentDataset } from '@cribl/app-utils/dataset';
+import { useInvestigationReplay } from '../hooks/useInvestigationReplay';
 // Side effect: pins the analytics surface tag ('criblApmInvestigation')
 // before the shell runs its first loop.
 import '../api/agent';
@@ -108,11 +112,20 @@ export default function InvestigatePage() {
   const navigate = useNavigate();
   const seed = (location.state as LocationState | null)?.seed;
 
+  // `?investigation=<id>` opens a read-only replay of a server-side
+  // investigation (from an Alerts-page badge). It takes precedence
+  // over any router seed.
+  const replayId = new URLSearchParams(location.search).get('investigation');
+
   // Clear the seed from location state once the shell consumes it
   // so a reload doesn't re-fire the same investigation.
   const handleSeedConsumed = useCallback(() => {
     navigate(location.pathname, { replace: true, state: {} });
   }, [navigate, location.pathname]);
+
+  if (replayId) {
+    return <InvestigationReplayView id={replayId} onExit={() => navigate('/alerts')} />;
+  }
 
   return (
     <InvestigatorChat<InvestigationSeed>
@@ -131,6 +144,97 @@ export default function InvestigatePage() {
       renderToolCard={renderApmToolCard}
       onSeedConsumed={handleSeedConsumed}
     />
+  );
+}
+
+const REPLAY_STATUS_LABEL: Record<string, string> = {
+  queued: 'Queued',
+  running: 'Investigating…',
+  concluded: 'Investigated',
+  failed: 'Investigation failed',
+  cancelled: 'Investigation cancelled',
+};
+
+/**
+ * Read-only replay of a server-side investigation. Drives the shared
+ * `applyLoopEvent` reducer over the cell's event stream via
+ * `useInvestigationReplay`, so the transcript is byte-identical to a
+ * live client run.
+ *
+ * NOTE: the per-entry rendering below is the compact interim view.
+ * Once framework PR #23 (`InvestigatorTranscript`) merges and the
+ * framework SHA is bumped, replace the entry map with:
+ *   <InvestigatorTranscript entries={entries} running={running}
+ *     renderToolCard={renderApmToolCard} />
+ * to get the rich Search/Summary/Trace cards. The data layer
+ * (hook + transport) does not change.
+ */
+function InvestigationReplayView({ id, onExit }: { id: string; onExit: () => void }) {
+  const { entries, status, running, error } = useInvestigationReplay(id);
+
+  return (
+    <div className={s.replayPage}>
+      <div className={s.replayHeader}>
+        <div>
+          <div className={s.replayTitle}>Server-side investigation</div>
+          <div className={s.replaySubtitle}>
+            {status ? (REPLAY_STATUS_LABEL[status] ?? status) : 'Connecting…'} · read-only replay
+          </div>
+        </div>
+        <button type="button" className={s.replayExit} onClick={onExit}>
+          Back to Alerts
+        </button>
+      </div>
+
+      {error && (
+        <div className={s.toolResultError}>
+          Couldn’t reach the investigator: {error}
+        </div>
+      )}
+
+      {entries.length === 0 && !error && (
+        <div className={s.replayEmpty}>
+          {running ? 'Waiting for the investigation to produce output…' : 'No transcript yet.'}
+        </div>
+      )}
+
+      <div className={s.replayTranscript}>
+        {entries.map((entry) => (
+          <ReplayEntry key={entry.id} entry={entry} />
+        ))}
+        {running && <div className={s.replayThinking}>▋ thinking…</div>}
+      </div>
+    </div>
+  );
+}
+
+function ReplayEntry({ entry }: { entry: InvestigatorTranscriptEntry }) {
+  if (entry.kind === 'user') {
+    // The seed prompt is large boilerplate; show a short marker
+    // rather than the full dataset-schema preamble.
+    return <div className={s.replayUser}>Investigation started.</div>;
+  }
+  if (entry.kind === 'assistant') {
+    return <div className={s.replayAssistant}>{entry.content}</div>;
+  }
+  if (entry.kind === 'error') {
+    return <div className={s.toolResultError}>{entry.message}</div>;
+  }
+  // toolCall
+  const name = entry.call.function.name;
+  const ui = entry.result?.ui as { kind?: string; conclusion?: string } | undefined;
+  if (name === 'present_investigation_summary' && ui?.conclusion) {
+    return (
+      <div className={s.replaySummary}>
+        <div className={s.replaySummaryLabel}>📋 Conclusion</div>
+        <div>{ui.conclusion}</div>
+      </div>
+    );
+  }
+  return (
+    <div className={s.replayToolCall}>
+      🔧 {name} <span className={s.replayToolStatus}>({entry.status})</span>
+    </div>
   );
 }
 
