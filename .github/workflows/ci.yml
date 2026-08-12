@@ -19,17 +19,50 @@ jobs:
         with:
           framework-sha: 4ee0c5d0379db276416b5e619cb8314aa620237d
       - name: Retain the exact tested candidate
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-candidate-${{ github.sha }}
           path: build/apm-*
           if-no-files-found: error
           retention-days: 14
+      # The live steps below need credentials for the shared validation
+      # workspace. GitHub withholds repository secrets from some runs by
+      # design — Dependabot PRs get none, and neither do fork PRs. Those
+      # runs used to reach `test -n "$CRIBL_BASE_URL"` and fail there,
+      # so no Dependabot PR could ever go green and four of them sat
+      # open for a month.
+      #
+      # Gate on whether the credentials arrived, not on who triggered
+      # the run. That covers Dependabot, forks, and any later case
+      # where a run legitimately has no secrets.
+      #
+      # Deliberately checks only the base URL. A run that has it but is
+      # missing another value is a misconfiguration, not a no-secrets
+      # context, and must still fail loudly on the `test -n` lines
+      # inside each step rather than skip in silence.
+      - name: Detect live-validation credentials
+        id: live
+        env:
+          CRIBL_BASE_URL: ${{ secrets.CRIBL_RELEASE_VALIDATION_BASE_URL }}
+        run: |
+          set -euo pipefail
+          if [ -n "$CRIBL_BASE_URL" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # A skipped live validation must not read as a passed one.
+      - name: Note skipped live validation
+        if: steps.live.outputs.available != 'true'
+        run: |
+          echo "::warning title=Live validation skipped::No credentials for the shared validation workspace, so the deploy and live smoke tests did not run. Lint, unit tests, type-check, audit and packaging still ran."
+
       - name: Install browser for live Cribl smoke tests
-        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        if: steps.live.outputs.available == 'true'
         run: npx playwright install --with-deps chromium
       - name: Upgrade the shared validation workspace with the exact candidate
-        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        if: steps.live.outputs.available == 'true'
         env:
           CRIBL_BASE_URL: ${{ secrets.CRIBL_RELEASE_VALIDATION_BASE_URL }}
           CRIBL_CLIENT_ID: ${{ secrets.CRIBL_RELEASE_VALIDATION_CLIENT_ID }}
@@ -43,7 +76,7 @@ jobs:
           test -n "$CRIBL_CLIENT_SECRET"
           npm run deploy -- --artifact build/apm-*.tgz
       - name: Smoke test the candidate through the real Cribl host
-        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        if: steps.live.outputs.available == 'true'
         env:
           CRIBL_BASE_URL: ${{ secrets.CRIBL_RELEASE_VALIDATION_BASE_URL }}
           CRIBL_CLIENT_ID: ${{ secrets.CRIBL_RELEASE_VALIDATION_CLIENT_ID }}
@@ -67,7 +100,7 @@ jobs:
         # traces, videos and the HTML report's ARIA snapshots — otherwise the
         # only evidence of a live-host failure dies with the runner.
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: playwright-results-${{ github.sha }}
           path: |
