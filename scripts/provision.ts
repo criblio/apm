@@ -37,6 +37,7 @@ import { setSearchCadence } from '@cribl/app-utils/cadence';
 import { setCurrentDataset } from '@cribl/app-utils/dataset';
 import { setLowVolumeMode } from '../src/api/lowVolumeMode.js';
 import { setMetricsEmit, getMetricsEmit } from '../src/api/metricsEmit.js';
+import { setServerInvestigations } from '../src/api/serverInvestigations.js';
 import { getMetricEmitters } from '../src/api/provisionedSearches.js';
 import { runMetricsBackfill } from '../src/api/metricsBackfill.js';
 import { makeNodeBackfillDeps } from './metricsBackfillDeps.js';
@@ -92,6 +93,9 @@ async function loadAppSettingsFromKV(http: HttpClient): Promise<void> {
       }
       if (typeof settings.metricsEmit === 'boolean') {
         setMetricsEmit(settings.metricsEmit);
+      }
+      if (typeof settings.serverInvestigations === 'boolean') {
+        setServerInvestigations(settings.serverInvestigations);
       }
     }
   } catch {
