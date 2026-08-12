@@ -14,6 +14,6 @@ output "instance_id" {
 }
 
 output "cell_url" {
-  description = "Public base URL of the cell (once DNS points at the EIP)."
-  value       = var.domain != "" ? "https://${var.domain}" : "(no domain set — HTTP dev mode)"
+  description = "Public base URL of the cell (once DNS points at the EIP). Null when no domain is set."
+  value       = var.domain != "" ? "https://${var.domain}" : null
 }
