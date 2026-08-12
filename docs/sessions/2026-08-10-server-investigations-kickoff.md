@@ -117,6 +117,26 @@ Progress:
 - **Still blocked on `.env`**: S1 (WS-from-iframe CSP) and S4
   (notification-target probe).
 
+## 2026-08-11 morning: S1 + S4 resolved (.env restored)
+
+- **S1: WS from the iframe is CSP-blocked** (`connect-src 'self'` +
+  fullstory only, served by the platform — not fixable via
+  proxies.yml). **Poll through the fetch proxy is now the primary
+  UI transport**; the cell's WS surface stays for non-iframe
+  clients. Design doc Q6 rewritten.
+- **S4: notification targets are fully API-manageable** with the
+  machine token — CREATE/READ/PATCH/DELETE all 200 on a disposable
+  target (cleaned up). Webhook schema supports JS-expression payload
+  templating (`savedQueryId`, `message`, `events`), so the target
+  itself can shape the POST to `/alerts/fire`. Caveat: the API
+  echoes the bearer `token` back in plaintext to admins — scope
+  `WEBHOOK_BEARER` to the idempotent, kill-switched fire endpoint
+  only. PR 9's provisioner owns the target end-to-end; no manual
+  step.
+- **Hosting decided: Clint's AWS**, Terraform under `cell/infra/`
+  (stacked on PR 6). AWS SSO on this machine still needs an
+  interactive `aws configure sso` from Clint.
+
 ## Artifacts
 
 - Design doc updated in-place with the "Spike results (2026-08-10)"

@@ -210,16 +210,22 @@ type ServerFrame =
   | { type:'ping' }
 ```
 
-- **WS path**: UI fetches `GET /ws-ticket?investigation=<id>`
-  through the platform fetch proxy (auth injected via proxies.yml
-  `headers.inject: "'Bearer ' + kv.cellToken"`); the cell returns an
-  HMAC ticket (60s TTL, scoped to the investigation id); UI opens
-  `new WebSocket('wss://<cell>/investigations/<id>/ws?since=N&ticket=…')`.
-- **Poll fallback**: `GET /investigations/:id/events?since=N` every
-  ~2.5s while the page is visible (well under the 100 req/min proxy
-  cap). Same frames; the transport is invisible above
-  `subscribeInvestigation(id, sinceSeq, onFrame)`
+- **Poll is the primary (and only) UI transport** — decided by
+  spike S1 (see Spike results): the iframe's platform-served CSP
+  (`connect-src 'self' …`) blocks raw WebSockets, and no proxies.yml
+  entry can loosen a document CSP. The UI polls
+  `GET /investigations/:id/events?since=N` every ~2.5s while the
+  page is visible, through the platform fetch proxy (auth injected
+  via proxies.yml `headers.inject: "'Bearer ' + kv.cellToken"`) —
+  proxied fetches are rewritten same-origin, so they're CSP-clean.
+  Implemented behind `subscribeInvestigation(id, sinceSeq, onFrame)`
   (`src/api/investigationTransport.ts`).
+- **WS path (kept for non-iframe clients)**: `GET /ws-ticket` mints
+  an HMAC ticket (60s TTL, scoped to the investigation id); a
+  non-iframe client opens
+  `wss://<cell>/investigations/<id>/ws?since=N&ticket=…`. Shares the
+  seq-replay code path with polling; used by local dev/smoke tests,
+  not by the app UI.
 - **pi → LoopEvent mapping** lives in
   `cell/src/agent/loopEventMap.ts` with table tests:
 
@@ -520,16 +526,77 @@ Also: `celld deploy` rejects a `worker_loaders` key in
 wrangler.jsonc — the loader is bound node-side via
 `CELLD_WORKER_LOADER=LOADER` instead.
 
-### S1 / S4 — blocked on credentials
+### S1 — WebSocket from the iframe: BLOCKED by CSP → poll is primary (2026-08-11)
 
-Both need the repo's `.env` (`CRIBL_BASE_URL` /
-`CRIBL_CLIENT_ID` / `CRIBL_CLIENT_SECRET`), which is missing on the
-dev box (only the running MCP container has the values). S1
-additionally needs a reachable `wss://` echo endpoint to probe the
-iframe CSP. Unblock: restore `.env`, then S1 is a short Playwright
-run (`tests/helpers/apmSession.ts` auth + a WebSocket attempt
-inside the app frame) and S4 is a handful of authenticated
-notification-target API calls.
+Probed live from inside the deployed app iframe (Playwright, staging):
+`new WebSocket('wss://ws.postman-echo.com/raw')` fails instantly
+with a `securitypolicyviolation`:
+`connect-src blocked wss://ws.postman-echo.com/raw`. The iframe
+document's CSP is:
+
+```
+default-src 'self'; … connect-src 'self' https://edge.fullstory.com https://rs.fullstory.com; …
+```
+
+No wildcard, no `wss:` — and this is the **document CSP served by
+the platform**, so no proxies.yml declaration can loosen it. The
+workspace shell page has a broader CSP (`connect-src 'self'
+*.cribl.io *.cribl-staging.cloud …`), but app code runs in the
+iframe, so the iframe policy governs.
+
+**Decision: short-poll through the platform fetch proxy is the
+primary (and only) UI transport.** Proxied `fetch()` calls are
+rewritten to same-origin `/api/v1/a/{appId}/proxy/<domain>/…`,
+which satisfies `connect-src 'self'` — CSP-clean by construction.
+The cell's WS surface stays (it costs little, shares the seq-replay
+code path, and serves non-iframe clients — local dev, future native
+integrations), but the UI's `investigationTransport` implements
+poll-only: `GET /investigations/:id/events?since=N` every ~2.5s
+while the page is visible (well under the 100 req/min proxy cap;
+the ws-ticket endpoint is unused by the UI). Long-lived SSE is not
+a candidate: the proxy's per-request timeout tops out at 120s.
+
+### S4 — notification targets: fully API-manageable (2026-08-11)
+
+With the machine (client-credentials) token against staging:
+
+- `GET /api/v1/notification-targets` → 200. Three existing targets,
+  including a live **webhook** target — full schema captured.
+- **CREATE / READ / PATCH / DELETE all return 200** on a disposable
+  `criblapm_spike_webhook` target (created with placeholder URL +
+  bearer, deleted in the same run; workspace left as found). So
+  `scripts/provision.ts` can own the `criblapm_cell_webhook`
+  target end-to-end — no manual admin step, no polling fallback
+  needed.
+- Webhook schema highlights (from the live target): `type:
+  'webhook'`, `method`, `url`, `authType: 'token'` + `token`
+  (bearer), `format: 'custom'` with JS-expression templating —
+  `customSourceExpression` (variables include `savedQueryId`,
+  `message`, `events`), `customPayloadExpression`,
+  `customContentType` — plus delivery plumbing
+  (`onBackpressure`, retry settings, `timeoutSec`, live `status`
+  with per-delivery errors). The expression templating means we can
+  shape the POST body to the cell's `/alerts/fire` contract
+  directly at the target, without a parsing shim on the cell.
+- ⚠️ The API **echoes the `token` field back in plaintext** on
+  read. `WEBHOOK_BEARER` is therefore readable by any workspace
+  admin — scope it accordingly (it authorizes only `/alerts/fire`,
+  which is idempotent and kill-switched; never reuse it for
+  anything else).
+- Still open (needs the hosted cell): the exact envelope a firing
+  saved-search notification delivers with `includeResults` — pin it
+  during PR 9 validation; the cell's `extractAlerts()` already
+  accepts the plausible shapes.
+
+### Idle eviction vs handler budget (clarification)
+
+Two distinct 300s defaults exist in celld and only one bites us:
+`CELLD_IDLE_EVICT_S=300` evicts **idle** cells — an agent
+mid-investigation is never idle while a turn runs, and between
+alarm turns eviction is harmless because the durable alarm rehydrates
+the DO. `CELLD_HANDLER_BUDGET_S=300` caps one handler invocation's
+**execution** (including post-response async work) — this is what
+killed the long-loop spike and why the loop is alarm-per-turn.
 
 ## Top risks
 
