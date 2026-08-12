@@ -16,28 +16,11 @@
  * Design: docs/research/server-investigations/design.md.
  */
 
-let enabled = false;
-const listeners = new Set<() => void>();
+import { createFlagStore } from './flagStore';
 
-export function getServerInvestigations(): boolean {
-  return enabled;
-}
+/** OFF by default — the kill-switch story depends on it. */
+const store = createFlagStore(false);
 
-export function setServerInvestigations(v: boolean): void {
-  if (v === enabled) return;
-  enabled = v;
-  for (const l of listeners) {
-    try {
-      l();
-    } catch {
-      /* listener errors shouldn't block others */
-    }
-  }
-}
-
-export function subscribeServerInvestigations(fn: () => void): () => void {
-  listeners.add(fn);
-  return () => {
-    listeners.delete(fn);
-  };
-}
+export const getServerInvestigations = store.get;
+export const setServerInvestigations = store.set;
+export const subscribeServerInvestigations = store.subscribe;
