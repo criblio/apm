@@ -68,18 +68,16 @@ export class CriblClient {
       if (!resp.ok) {
         throw new Error(`Cribl ${method} ${path} → ${resp.status}: ${text.slice(0, 300)}`);
       }
-      // Results endpoints answer NDJSON; everything else JSON.
-      if (text.trimStart().startsWith('{') || text.trimStart().startsWith('[')) {
-        try {
-          return JSON.parse(text);
-        } catch {
-          /* fall through to NDJSON parse */
-        }
+      // Single-document JSON parses here; NDJSON (the results
+      // endpoint) does not, and MUST be returned as raw text —
+      // runSearchJob's parseNdjson owns the schema-line-0 skip, and
+      // pre-parsing into an array would leak that schema row in as
+      // data.
+      try {
+        return JSON.parse(text);
+      } catch {
+        return text;
       }
-      return text
-        .split('\n')
-        .filter((l) => l.trim())
-        .map((l) => JSON.parse(l));
     };
     return {
       get: (path) => call('GET', path),

@@ -6,10 +6,15 @@
   "description": "Server-side investigator cell: Worker + Durable Objects (runs on celld, portable to Cloudflare). See docs/research/server-investigations/design.md.",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "smoke": "node scripts/smoke.mjs"
+    "smoke": "node scripts/smoke.mjs",
+    "smoke:real": "node scripts/smoke-real.mjs",
+    "mock-backends": "node scripts/mock-backends.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250705.0",
     "typescript": "^5.5.0"
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "^0.84.1"
   }
 }
