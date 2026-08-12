@@ -14,7 +14,7 @@ jobs:
       group: apm-live-validation-${{ github.repository }}
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
       - uses: criblio/cribl-search-app-framework/.github/actions/release-build@4ee0c5d0379db276416b5e619cb8314aa620237d
         with:
           framework-sha: 4ee0c5d0379db276416b5e619cb8314aa620237d
