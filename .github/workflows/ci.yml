@@ -19,7 +19,7 @@ jobs:
         with:
           framework-sha: 4ee0c5d0379db276416b5e619cb8314aa620237d
       - name: Retain the exact tested candidate
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-candidate-${{ github.sha }}
           path: build/apm-*
@@ -100,7 +100,7 @@ jobs:
         # traces, videos and the HTML report's ARIA snapshots — otherwise the
         # only evidence of a live-host failure dies with the runner.
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: playwright-results-${{ github.sha }}
           path: |
