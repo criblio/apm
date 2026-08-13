@@ -19,6 +19,7 @@
  * injection land with the UI wiring PR once the cell host is known.
  */
 import type { LoopEvent } from '@cribl/app-utils/agent-loop';
+import type { ToolResultUi } from '@cribl/app-utils/agent-tools';
 
 /** Wire form of a single LoopEvent (error carries a message, not an
  *  Error instance). Mirrors cell/src/protocol.ts WireLoopEvent. */
@@ -87,7 +88,15 @@ export function wireEventToLoopEvent(ev: WireLoopEvent): LoopEvent | null {
         needsApproval: ev.needsApproval,
       };
     case 'toolResult':
-      return { kind: 'toolResult', turnId: ev.turnId, result: ev.result };
+      // The wire form carries ui as `unknown` (it's just passed
+      // through); the framework LoopEvent types it as ToolResultUi.
+      // The cell produced it from the real executors, so the shape is
+      // already correct — narrow it here.
+      return {
+        kind: 'toolResult',
+        turnId: ev.turnId,
+        result: { ...ev.result, ui: ev.result.ui as ToolResultUi | undefined },
+      };
     case 'notification':
       return { kind: 'notification', turnId: ev.turnId, content: ev.content };
     case 'error':
