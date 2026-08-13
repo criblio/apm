@@ -44,9 +44,18 @@ export type WireLoopEvent =
 export type InvestigationStatus =
   | 'queued'
   | 'running'
+  // Interactive investigations only: the loop answered the current
+  // user turn and is waiting for the next message. Non-terminal — a
+  // new message flips it back to 'running'.
+  | 'idle'
   | 'concluded'
   | 'failed'
   | 'cancelled';
+
+/** How an investigation was started. `autonomous` = an alert trigger
+ *  drove it to a conclusion; `interactive` = a user started it from
+ *  the UI and can keep chatting (see the 'idle' status). */
+export type InvestigationMode = 'autonomous' | 'interactive';
 
 /** The alert facts the trigger passes in — matches the columns the
  *  criblapm__alert_notify search projects (which are a superset of
@@ -75,9 +84,27 @@ export interface InvestigationSummaryRow {
   alertId: string;
   incidentKey: string;
   status: InvestigationStatus;
+  /** Human-readable label for the recall panel. For interactive
+   *  investigations it's derived from the user's opening prompt; for
+   *  autonomous ones it falls back to the incident key. */
+  title: string;
+  mode: InvestigationMode;
   createdAt: number;
   startedAt: number | null;
   concludedAt: number | null;
+}
+
+/** Body for a UI-initiated (interactive) investigation. */
+export interface CreateInvestigationBody {
+  prompt: string;
+  context?: { service?: string; earliest?: string; latest?: string } | null;
+  title?: string;
+}
+
+/** Derive a short recall-panel title from a free-form prompt. */
+export function titleFromPrompt(prompt: string): string {
+  const oneLine = prompt.replace(/\s+/g, ' ').trim();
+  return oneLine.length > 80 ? `${oneLine.slice(0, 79)}…` : oneLine || 'Investigation';
 }
 
 export type ServerFrame =

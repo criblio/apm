@@ -7,7 +7,17 @@
  *                                target's exact envelope is pinned in
  *                                spike S4). Always answers fast; work
  *                                runs async in the DOs.
+ *   POST /investigations         bearer UI_BEARER; body =
+ *                                {prompt, context?, title?}. Starts a
+ *                                UI-initiated interactive investigation;
+ *                                returns {id}.
  *   GET  /investigations         bearer UI_BEARER; index for the UI.
+ *                                ?q= / ?limit= / ?before= for the recall
+ *                                panel (search + keyset pagination).
+ *   POST /investigations/:id/messages  bearer UI_BEARER; body =
+ *                                {content}. Appends a follow-up user turn
+ *                                to an interactive investigation and
+ *                                resumes its loop.
  *   GET  /investigations/:id/events?since=N   bearer UI_BEARER; poll
  *                                transport.
  *   GET  /investigations/:id/status           bearer UI_BEARER.
@@ -59,6 +69,7 @@ function extractAlerts(body: unknown): FiringAlert[] {
 }
 
 const INV_PATH = /^\/investigations\/([A-Za-z0-9-]+)\/(events|status|ws)$/;
+const INV_MESSAGES_PATH = /^\/investigations\/([A-Za-z0-9-]+)\/messages$/;
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -97,9 +108,37 @@ export default {
       return Response.json(out, { status: 202 });
     }
 
+    // UI-initiated (interactive) investigation. The app POSTs the
+    // user's opening prompt; the coordinator queues it like any other.
+    if (url.pathname === '/investigations' && request.method === 'POST') {
+      if (!bearerOk(request, env.UI_BEARER)) return unauthorized();
+      if (env.DISABLED === 'true') {
+        return Response.json({ error: 'cell disabled' }, { status: 503 });
+      }
+      let body: unknown;
+      try {
+        body = await request.json();
+      } catch {
+        return Response.json({ error: 'invalid JSON' }, { status: 400 });
+      }
+      const res = await coordinator().fetch('https://coordinator.internal/internal/create', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      return Response.json(await res.json(), { status: res.status });
+    }
+
     if (url.pathname === '/investigations' && request.method === 'GET') {
       if (!bearerOk(request, env.UI_BEARER)) return unauthorized();
-      const res = await coordinator().fetch('https://coordinator.internal/internal/list');
+      // Pass the recall-panel query params (q / limit / before) through
+      // to the coordinator's index.
+      const listUrl = new URL('https://coordinator.internal/internal/list');
+      for (const k of ['q', 'limit', 'before']) {
+        const v = url.searchParams.get(k);
+        if (v != null) listUrl.searchParams.set(k, v);
+      }
+      const res = await coordinator().fetch(listUrl.toString());
       return Response.json(await res.json());
     }
 
@@ -111,6 +150,17 @@ export default {
       }
       const ticket = await mintTicket(env.TICKET_SECRET, id, Date.now());
       return Response.json({ ticket, investigation: id });
+    }
+
+    // Follow-up user turn on an interactive investigation.
+    const msg = INV_MESSAGES_PATH.exec(url.pathname);
+    if (msg && request.method === 'POST') {
+      if (!bearerOk(request, env.UI_BEARER)) return unauthorized();
+      if (env.DISABLED === 'true') {
+        return Response.json({ error: 'cell disabled' }, { status: 503 });
+      }
+      const stub = env.INVESTIGATION.get(env.INVESTIGATION.idFromName(msg[1]));
+      return stub.fetch(request);
     }
 
     const m = INV_PATH.exec(url.pathname);

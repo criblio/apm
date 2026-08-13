@@ -185,5 +185,79 @@ let sawSummary = false;
   check('kill switch surface present on healthz', typeof json?.disabled === 'boolean');
 }
 
+// 10. Interactive investigations: create → run to idle → follow-up
+//     message → resume → idle again, plus the recall-panel search.
+const marker = `smokemark${Date.now()}`;
+let interactiveId = null;
+{
+  const create = await api('/investigations', {
+    method: 'POST',
+    bearer: UI_BEARER,
+    body: { prompt: `${marker}: why is payment slow right now?` },
+  });
+  interactiveId = create.json?.id ?? null;
+  check(
+    'interactive create returns an id',
+    (create.status === 202 || create.status === 200) && !!interactiveId,
+    JSON.stringify(create.json),
+  );
+  const noAuth = await api('/investigations', { method: 'POST', bearer: 'wrong', body: { prompt: 'x' } });
+  check('interactive create without bearer is 401', noAuth.status === 401);
+}
+
+// Wait for the first turn to park at 'idle' (interactive never
+// auto-concludes; the stub answers one turn then parks).
+async function waitForStatus(id, target, tries = 30) {
+  let status = null;
+  let latestSeq = 0;
+  let sawText = false;
+  for (let i = 0; i < tries && status !== target; i++) {
+    await sleep(1000);
+    const r = await api(`/investigations/${id}/events?since=0`);
+    status = r.json?.status ?? null;
+    latestSeq = r.json?.latestSeq ?? 0;
+    for (const f of r.json?.frames ?? []) {
+      if (f.ev?.kind === 'assistantText') sawText = true;
+    }
+  }
+  return { status, latestSeq, sawText };
+}
+{
+  const r = await waitForStatus(interactiveId, 'idle');
+  check('interactive run parks at idle (not concluded)', r.status === 'idle', `status=${r.status}`);
+  check('interactive transcript has assistant text', r.sawText);
+}
+
+// Status reports mode=interactive so the UI shows the input box.
+{
+  const { json } = await api(`/investigations/${interactiveId}/status`);
+  check('status reports mode=interactive', json?.mode === 'interactive', JSON.stringify(json));
+}
+
+// Follow-up message resumes the loop, which parks at idle again.
+{
+  const seqBefore = (await api(`/investigations/${interactiveId}/status`)).json?.latestSeq ?? 0;
+  const send = await api(`/investigations/${interactiveId}/messages`, {
+    method: 'POST',
+    bearer: UI_BEARER,
+    body: { content: 'and what about the checkout service?' },
+  });
+  check('follow-up message accepted', send.status === 200, JSON.stringify(send.json));
+  const r = await waitForStatus(interactiveId, 'idle');
+  check('interactive resumes then parks at idle again', r.status === 'idle', `status=${r.status}`);
+  check('follow-up produced new transcript events', r.latestSeq > seqBefore, `before=${seqBefore} after=${r.latestSeq}`);
+}
+
+// Recall panel: search by the unique marker in the title, and paginate.
+{
+  const search = await api(`/investigations?q=${marker}`);
+  const hit = search.json?.investigations?.find((i) => i.id === interactiveId);
+  check('recall search finds the interactive investigation by title', !!hit, JSON.stringify(search.json?.investigations?.map((i) => i.title)));
+  check('recall row carries title + mode', hit?.title?.includes(marker) && hit?.mode === 'interactive');
+
+  const limited = await api('/investigations?limit=1');
+  check('recall respects limit', (limited.json?.investigations?.length ?? 0) <= 1);
+}
+
 console.log(failures === 0 ? '\nSMOKE PASS' : `\nSMOKE FAIL (${failures})`);
 process.exit(failures === 0 ? 0 : 1);
