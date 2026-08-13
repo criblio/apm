@@ -151,7 +151,6 @@ resource "aws_instance" "cell" {
     llm_model      = var.llm_model
     cribl_base_url = var.cribl_base_url
     cribl_dataset  = var.cribl_dataset
-    force_enable   = var.force_enable
   })
   user_data_replace_on_change = true
 

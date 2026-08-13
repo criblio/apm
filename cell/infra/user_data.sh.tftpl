@@ -13,7 +13,6 @@ LLM_BASE_URL="${llm_base_url}"
 LLM_MODEL="${llm_model}"
 CRIBL_BASE_URL="${cribl_base_url}"
 CRIBL_DATASET="${cribl_dataset}"
-FORCE_ENABLE="${force_enable}"
 
 # ── celld binary (pinned release) ────────────────────────────────
 curl -fsSL -o /tmp/celld.gz \
@@ -48,7 +47,6 @@ CELLD_VAR_LLM_BASE_URL=$LLM_BASE_URL
 CELLD_VAR_LLM_MODEL=$LLM_MODEL
 CELLD_VAR_CRIBL_BASE_URL=$CRIBL_BASE_URL
 CELLD_VAR_CRIBL_DATASET=$CRIBL_DATASET
-CELLD_VAR_FORCE_ENABLE=$FORCE_ENABLE
 EOF
 fi
 cat >> /etc/celld/env <<EOF

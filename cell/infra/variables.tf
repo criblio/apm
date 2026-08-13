@@ -68,9 +68,3 @@ variable "cribl_dataset" {
   type        = string
   default     = "otel"
 }
-
-variable "force_enable" {
-  description = "on ⇒ the cell bypasses the KV serverInvestigations flag (which a machine token cannot read today) and treats the feature as enabled. Keep on for the POC; remove once the flag lives where the cell can read it."
-  type        = string
-  default     = "on"
-}

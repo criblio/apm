@@ -13,7 +13,9 @@ thing on the hosted node.
 
 - **PR #131** (cell code) — the real pi-agent-core loop, metrics
   transport, the alarm re-entrancy guard (the fix that made it work),
-  storage caps, orphan-slot reclaim, and a `FORCE_ENABLE` override.
+  storage caps, and orphan-slot reclaim. The cell no longer reads
+  the `serverInvestigations` flag (it's enforced app-side), so no
+  override is needed.
 - **This branch** (`cell/infra`) — `user_data` now also seeds the
   agent-loop env from three new SSM secrets + five Terraform config
   vars. Applying it is what carries LLM/Cribl config onto the node.
@@ -58,8 +60,7 @@ terraform apply \
   -var llm_base_url=https://openrouter.ai/api/v1 \
   -var llm_model=deepseek/deepseek-v4-flash-0731 \
   -var cribl_base_url=https://main-objective-shirley-sho21r7.cribl-staging.cloud \
-  -var cribl_dataset=otel \
-  -var force_enable=on
+  -var cribl_dataset=otel
 ```
 
 Setting `llm_base_url` flips the node from stub → real loop.
