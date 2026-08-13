@@ -28,6 +28,16 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "fleet" {
   }
 }
 
+# This bucket also holds the Terraform state (see the backend block in
+# versions.tf), so versioning is not optional: it is the recovery path
+# for a truncated or clobbered state push.
+resource "aws_s3_bucket_versioning" "fleet" {
+  bucket = aws_s3_bucket.fleet.id
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
 # ── Instance role: bucket + SSM only, no SSH keys ────────────────
 
 data "aws_iam_policy_document" "assume" {

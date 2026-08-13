@@ -5,6 +5,37 @@ construction — celld replicates every cell's SQLite to the bucket,
 so `terraform apply` replacing the node loses nothing (given a
 graceful stop; the systemd unit handles that).
 
+## Picking this up on a new machine
+
+Nothing here depends on a particular laptop — state is in S3, secrets
+are in SSM. From a fresh clone:
+
+```bash
+aws sso login --profile test            # only interactive step
+cd cell/infra
+terraform init                          # pulls remote state from the bucket
+terraform output                        # cell_url, public_ip, instance_id, bucket
+terraform plan -var bucket_name=cribl-apm-cell-test   # expect: No changes
+```
+
+Then confirm the cell is serving and run the smoke suite:
+
+```bash
+curl -s $(terraform output -raw cell_url)/healthz     # {"ok":true,"disabled":false}
+
+cd ../..
+WEBHOOK_BEARER=$(aws ssm get-parameter --profile test --region us-west-2 \
+  --name /apm-cell/WEBHOOK_BEARER --with-decryption --query Parameter.Value --output text) \
+UI_BEARER=$(aws ssm get-parameter --profile test --region us-west-2 \
+  --name /apm-cell/UI_BEARER --with-decryption --query Parameter.Value --output text) \
+CELL_URL=https://54-71-34-177.sslip.io node cell/scripts/smoke.mjs
+```
+
+Tooling needed: `terraform` ≥ 1.6, `aws` CLI v2, `node` ≥ 22. The only
+repo-external thing is the root `.env` (gitignored) for the *app* side —
+`CRIBL_BASE_URL`, `CRIBL_CLIENT_ID`, `CRIBL_CLIENT_SECRET`; see
+`.env.example`. The cell itself needs none of it.
+
 ## AWS account / profile
 
 Currently applied in the Cribl **test** account (`243602015558`) with
@@ -115,5 +146,13 @@ answers 502 — that is a missing deploy, not broken infra.
   A fleet must never mix v0.1.0 and v0.2.0 nodes — v0.2.0 writes
   compacted block-format replication objects a v0.1.0 reader cannot
   restore. Upgrade by replacing all nodes, never rolling.
-- Terraform state is local for now (single operator). Move to an S3
-  backend when that stops being true.
+- **Terraform state lives in the fleet bucket**
+  (`s3://cribl-apm-cell-test/terraform/cell-infra.tfstate`), with
+  S3-native locking (`use_lockfile`) and bucket versioning as the
+  recovery path. Nothing about this cell depends on one laptop: a fresh
+  clone + `aws sso login --profile test` + `terraform init` gives you
+  full control. Do not re-add local state.
+- The account's auto-tagger stamps `AutoTag_Creator` /
+  `AutoTagCreatorId` on create; the provider's `ignore_tags` keeps
+  plans from fighting it. Without that, every plan shows a spurious
+  tag-removal diff.
