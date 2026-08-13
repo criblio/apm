@@ -32,6 +32,7 @@ import type { ProvisionedSearch, SeedLookup } from '@cribl/app-utils/provisioner
 import * as Q from './queries';
 import { getSearchCadenceCron, getSearchCadence } from '@cribl/app-utils/cadence';
 import { getMetricsEmit } from './metricsEmit';
+import { getServerInvestigations } from './serverInvestigations';
 import type { BackfillEmitter } from './metricsBackfill';
 import {
   METRIC_REQUESTS_TOTAL,
@@ -59,6 +60,11 @@ export type { ProvisionedSearch };
  * the provisioner to find and reconcile rows without stomping
  * user-created searches. */
 export const CRIBLAPM_PREFIX = 'criblapm__';
+
+/** The webhook notification target the alert-notify search fires at.
+ *  Created/updated by scripts/provision.ts from the CELL_URL /
+ *  CELL_WEBHOOK_BEARER env when serverInvestigations is on. */
+export const CELL_WEBHOOK_TARGET_ID = 'criblapm_cell_webhook';
 
 /** Name of the workspace lookup the op-baseline search writes to.
  * The live anomaly detector joins against this via
@@ -275,6 +281,9 @@ export function getProvisioningPlan(): ProvisionedSearch[] {
     tz: 'UTC',
     keepLastN: 2,
   } as const;
+  // Alert-notify runs 2 minutes after the panels (1 after the
+  // evaluator) so the firing events it selects are already committed.
+  const notifyCronSchedule = cronSchedule.replace(/^\*\/(\d+)/, (_m: string, n: string) => `2-59/${n}`).replace(/^\* /, '2 ');
   const hourly = {
     enabled: true,
     cronSchedule: '0 * * * *',
@@ -653,6 +662,49 @@ export function getProvisioningPlan(): ProvisionedSearch[] {
         schedule: { ...panelCadence },
       });
     }
+  }
+
+  // ── Server-side investigation trigger ───────────────────────────
+  //
+  // Gated behind serverInvestigations (default off). Selects firing
+  // alerts in the last 15m and fires the investigator-cell webhook
+  // (CELL_WEBHOOK_TARGET_ID, provisioned by scripts/provision.ts) with
+  // the rows inlined. The cell builds a seed from each row and dedupes
+  // on event_id. Off ⇒ this search doesn't exist, so nothing ever
+  // fires at the cell — that's the feature's provision-time on/off.
+  if (getServerInvestigations()) {
+    plan.push({
+      id: 'criblapm__alert_notify',
+      name: 'Cribl APM - alert notify server investigations',
+      description:
+        'Cribl APM: firing alerts in the last 15m; fires the investigator-cell webhook to auto-investigate. Gated behind serverInvestigations. Runs 2 min after the evaluator so firing events are committed.',
+      query: Q.alertNotify(),
+      earliest: '-15m',
+      latest: 'now',
+      sampleRate: 1,
+      schedule: {
+        enabled: true,
+        cronSchedule: notifyCronSchedule,
+        tz: 'UTC',
+        keepLastN: 2,
+        notifications: {
+          items: [
+            {
+              condition: 'search',
+              targets: [CELL_WEBHOOK_TARGET_ID],
+              conf: {
+                triggerType: 'resultsCount',
+                triggerComparator: '>',
+                triggerCount: 0,
+                message: 'Cribl APM: firing alert(s) — triggering server-side investigation.',
+              },
+              targetConfigs: [{ conf: { includeResults: true, attachmentType: 'inline' } }],
+              group: 'default_search',
+            },
+          ],
+        },
+      },
+    });
   }
 
   return plan;

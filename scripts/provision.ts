@@ -28,6 +28,7 @@ import { runCanary } from '../src/api/postReconcileCanary.js';
 import {
   getProvisioningPlan,
   SEED_LOOKUPS,
+  CELL_WEBHOOK_TARGET_ID,
 } from '../src/api/provisionedSearches.js';
 import {
   apply as applyDatasetProvisioning,
@@ -37,7 +38,7 @@ import { setSearchCadence } from '@cribl/app-utils/cadence';
 import { setCurrentDataset } from '@cribl/app-utils/dataset';
 import { setLowVolumeMode } from '../src/api/lowVolumeMode.js';
 import { setMetricsEmit, getMetricsEmit } from '../src/api/metricsEmit.js';
-import { setServerInvestigations } from '../src/api/serverInvestigations.js';
+import { getServerInvestigations, setServerInvestigations } from '../src/api/serverInvestigations.js';
 import { getMetricEmitters } from '../src/api/provisionedSearches.js';
 import { runMetricsBackfill } from '../src/api/metricsBackfill.js';
 import { makeNodeBackfillDeps } from './metricsBackfillDeps.js';
@@ -103,6 +104,63 @@ async function loadAppSettingsFromKV(http: HttpClient): Promise<void> {
   }
 }
 
+/**
+ * Create/update the webhook notification target the alert-notify
+ * search fires at. Points at the investigator cell's /alerts/fire
+ * with the cell's WEBHOOK_BEARER; POSTs the search results inlined so
+ * the cell's `extractAlerts` can read them. No-op when server
+ * investigations are off (the notify search won't exist to reference
+ * it). CELL_URL / CELL_WEBHOOK_BEARER come from the environment/.env;
+ * if the flag is on but they're missing, fail loudly — a dangling
+ * target ref would break the notify search's creation.
+ */
+async function ensureCellWebhookTarget(http: HttpClient, dryRun: boolean): Promise<void> {
+  if (!getServerInvestigations()) return;
+  const cellUrl = process.env.CELL_URL;
+  const bearer = process.env.CELL_WEBHOOK_BEARER;
+  if (!cellUrl || !bearer) {
+    console.error(
+      '✗ serverInvestigations is on but CELL_URL / CELL_WEBHOOK_BEARER are not set — ' +
+        'the alert-notify search would reference a missing notification target. Set them in .env.',
+    );
+    process.exit(1);
+  }
+  const body = {
+    id: CELL_WEBHOOK_TARGET_ID,
+    type: 'webhook',
+    method: 'POST',
+    url: `${cellUrl.replace(/\/$/, '')}/alerts/fire`,
+    format: 'custom',
+    customContentType: 'application/json',
+    // The cell's extractAlerts accepts { results: [...] }; `events`
+    // is the per-batch result set in the target's expression context.
+    customSourceExpression: '`${JSON.stringify({ savedQueryId, message, results: events })}`',
+    customPayloadExpression: '`${events}`',
+    authType: 'token',
+    token: bearer,
+    onBackpressure: 'drop',
+  };
+  if (dryRun) {
+    console.log(`▶ Notification target (dry-run): would ensure ${CELL_WEBHOOK_TARGET_ID} → ${body.url}`);
+    return;
+  }
+  const path = `/notification-targets/${CELL_WEBHOOK_TARGET_ID}`;
+  let exists = false;
+  try {
+    await http.get(path);
+    exists = true;
+  } catch {
+    exists = false;
+  }
+  if (exists) {
+    await http.patch(path, body);
+    console.log(`▶ Notification target: ~ update ${CELL_WEBHOOK_TARGET_ID} → ${body.url}`);
+  } else {
+    await http.post('/notification-targets', body);
+    console.log(`▶ Notification target: + create ${CELL_WEBHOOK_TARGET_ID} → ${body.url}`);
+  }
+}
+
 async function main(): Promise<void> {
   const env = loadDotEnv();
   for (const [k, v] of Object.entries(env)) {
@@ -123,6 +181,21 @@ async function main(): Promise<void> {
   const http = await createNodeHttpClient({ baseUrl, clientId, clientSecret });
 
   await loadAppSettingsFromKV(http);
+
+  // The `serverInvestigations` flag lives in APP-SCOPED KV, which this
+  // CLI (a machine token on the unscoped path) can't read — so the
+  // browser "Reconcile" sees it but `npm run provision` wouldn't.
+  // Let the deploy set it explicitly: SERVER_INVESTIGATIONS=true
+  // provisions the trigger search + webhook target. (`false` forces
+  // it off regardless of KV.)
+  if (process.env.SERVER_INVESTIGATIONS === 'true') setServerInvestigations(true);
+  else if (process.env.SERVER_INVESTIGATIONS === 'false') setServerInvestigations(false);
+
+  // The alert-notify search references the investigator-cell webhook
+  // target by id, and Cribl validates target refs at search-creation
+  // time — so the target must exist before reconcile. Only when
+  // server investigations are on.
+  await ensureCellWebhookTarget(http, dryRun);
 
   // P0.1 tripwire: refuse to push a corrupt plan to the server. The
   // June 2026 outage chain (dataset="" in 17 searches, unjoinable

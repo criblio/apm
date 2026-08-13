@@ -236,6 +236,19 @@ exports[`queries.ts — golden snapshots + invariants > alertHistory > snapshot 
     | limit 500"
 `;
 
+exports[`queries.ts — golden snapshots + invariants > alertNotify > snapshot stable 1`] = `
+"dataset="otel"
+    | where coalesce(tostring(data_datatype), tostring(datatype)) == "criblapm_alert"
+    | where record_kind == "evaluation"
+    | where event_type == "firing"
+    | where isnull(is_canary) or tostring(is_canary) != "true"
+    | summarize _time=max(_time)
+      by event_id, alert_id, svc, signal_type, curr_error_rate, fire_count
+    | project event_id, alert_id, svc, signal_type, curr_error_rate, fire_count, _time
+    | sort by _time desc
+    | limit 50"
+`;
+
 exports[`queries.ts — golden snapshots + invariants > allOperationsSummary > snapshot stable 1`] = `
 "dataset="otel" | where isnotnull(end_time_unix_nano)
     | extend svc=tostring(resource.attributes['service.name']),
