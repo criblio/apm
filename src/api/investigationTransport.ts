@@ -117,19 +117,35 @@ export function isTerminalStatus(status: InvestigationStatus): boolean {
 }
 
 /**
- * Resolve the investigator cell's base URL. Read from the injected
- * host global (set alongside the proxies.yml wiring) with an env
- * fallback for local dev. Empty string ⇒ the feature's transport is
- * not configured; callers should treat that as "no server
- * investigations reachable".
+ * The cell's public host. MUST match the domain declared in
+ * `config/proxies.yml` — the platform proxy only forwards fetches to
+ * declared domains, and injects the `cellToken` bearer there. If the
+ * cell is redeployed under a new host, update this default (or the
+ * `cellUrl` app setting) and proxies.yml together.
+ */
+const DEFAULT_CELL_BASE_URL = 'https://54-71-34-177.sslip.io';
+
+let cellBaseUrlOverride: string | null = null;
+
+/** Set the cell base URL from the `cellUrl` app setting (hydrated at
+ *  boot). Null/empty clears the override, restoring the default. */
+export function setCellBaseUrl(url: string | null | undefined): void {
+  cellBaseUrlOverride = url && url.trim() ? url.trim().replace(/\/$/, '') : null;
+}
+
+/**
+ * Resolve the investigator cell's base URL: the `cellUrl` app setting
+ * if set, else a host global / build env, else the pinned default
+ * that matches proxies.yml.
  */
 export function getCellBaseUrl(): string {
+  if (cellBaseUrlOverride) return cellBaseUrlOverride;
   const w = window as unknown as { CRIBL_APM_CELL_URL?: string };
   return (
     w.CRIBL_APM_CELL_URL ??
     (import.meta.env?.VITE_APM_CELL_URL as string | undefined) ??
-    ''
-  );
+    DEFAULT_CELL_BASE_URL
+  ).replace(/\/$/, '');
 }
 
 async function getJson<T>(url: string, signal?: AbortSignal): Promise<T> {
