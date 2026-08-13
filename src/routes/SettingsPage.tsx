@@ -21,6 +21,8 @@ import { useStreamFilterEnabled } from '../hooks/useStreamFilter';
 import { useLowVolumeMode } from '../hooks/useLowVolumeMode';
 import { useServerInvestigations } from '../hooks/useServerInvestigations';
 import { setServerInvestigations } from '../api/serverInvestigations';
+import { setCellBaseUrl } from '../api/investigationTransport';
+import { kvGet, kvPut } from '../api/kvstore';
 import { useSearchCadence } from '../hooks/useSearchCadence';
 import s from './SettingsPage.module.css';
 
@@ -55,6 +57,10 @@ export default function SettingsPage() {
   const [lowVolumeSaving, setLowVolumeSaving] = useState(false);
   const currentServerInvestigations = useServerInvestigations();
   const [serverInvestigationsSaving, setServerInvestigationsSaving] = useState(false);
+  const [cellUrl, setCellUrl] = useState('');
+  const [cellUrlSaving, setCellUrlSaving] = useState(false);
+  const [cellToken, setCellToken] = useState('');
+  const [cellTokenSaving, setCellTokenSaving] = useState(false);
   const [cadenceSaving, setCadenceSaving] = useState(false);
   const [disabledRules, setDisabledRules] = useState<Record<string, boolean>>({});
   const [rulesSaving, setRulesSaving] = useState(false);
@@ -74,7 +80,15 @@ export default function SettingsPage() {
       if (typeof s?.serverInvestigations === 'boolean') {
         setServerInvestigations(s.serverInvestigations);
       }
+      if (typeof s?.cellUrl === 'string') {
+        setCellUrl(s.cellUrl);
+      }
     }).catch(() => {});
+    // The cell token is a top-level KV key (proxies.yml reads it as
+    // `kv.cellToken`), stored raw so the proxy injects it verbatim.
+    kvGet<string>('cellToken')
+      .then((t) => { if (typeof t === 'string') setCellToken(t); })
+      .catch(() => {});
     listTraceOriginators()
       .then(setOriginators)
       .catch(() => setOriginators([]))
@@ -176,7 +190,53 @@ export default function SettingsPage() {
     }
   }
 
+  async function handleCellUrlSave() {
+    if (cellUrlSaving) return;
+    setCellUrlSaving(true);
+    setError(null);
+    try {
+      const trimmed = cellUrl.trim().replace(/\/$/, '');
+      setCellUrl(trimmed);
+      setCellBaseUrl(trimmed || null);
+      await saveAppSettings({ cellUrl: trimmed });
+      setFlash(
+        trimmed
+          ? `Cell URL saved. Must match the domain in config/proxies.yml, or the platform proxy blocks it.`
+          : 'Cell URL cleared — using the packaged default.',
+      );
+      setTimeout(() => setFlash(null), 6000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setCellUrlSaving(false);
+    }
+  }
+
+  async function handleGenerateCellToken() {
+    if (cellTokenSaving) return;
+    setCellTokenSaving(true);
+    setError(null);
+    try {
+      // 32 random bytes as hex — same shape as `openssl rand -hex 32`,
+      // which is what the cell deploy expects for UI_BEARER.
+      const bytes = new Uint8Array(32);
+      crypto.getRandomValues(bytes);
+      const token = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+      // Stored raw (kvPut passes strings through unquoted) so the
+      // proxy's `kv.cellToken` injects exactly this value.
+      await kvPut('cellToken', token);
+      setCellToken(token);
+      setFlash('Cell token generated. Copy it into the cell deploy as UI_BEARER (see below), then restart the cell.');
+      setTimeout(() => setFlash(null), 12000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setCellTokenSaving(false);
+    }
+  }
+
   async function handleStreamFilterToggle(next: boolean) {
+    if (streamFilterSaving) return;
     if (streamFilterSaving) return;
     setStreamFilterSaving(true);
     setError(null);
@@ -488,13 +548,84 @@ export default function SettingsPage() {
             <div className={s.toggleTitle}>Investigate firing alerts automatically on the server</div>
             <div className={s.toggleSub}>
               Off by default. Turning on requires a re-provision below to
-              create the alert trigger search. Turning off stops new
-              investigations within ~a minute (the cell re-checks this
-              flag on every trigger); re-provision to remove the trigger
-              search entirely.
+              create the alert trigger search. Turning off removes the
+              trigger on the next re-provision, so no new investigations
+              fire; re-provision after toggling either way.
             </div>
           </div>
         </label>
+
+        <div className={s.field} style={{ marginTop: 16 }}>
+          <label className={s.label} htmlFor="cell-url-input">
+            Cell URL
+          </label>
+          <input
+            id="cell-url-input"
+            className={s.input}
+            type="text"
+            value={cellUrl}
+            onChange={(e) => setCellUrl(e.target.value)}
+            placeholder="https://54-71-34-177.sslip.io"
+            spellCheck={false}
+            autoCapitalize="none"
+            autoComplete="off"
+          />
+          <div className={s.fieldHelp}>
+            Base URL of the deployed investigator cell. Leave blank to use
+            the packaged default. Must match the domain declared in
+            config/proxies.yml — the platform proxy only forwards fetches
+            to declared domains.
+          </div>
+          <div className={s.actions} style={{ marginTop: 8 }}>
+            <button
+              type="button"
+              className={s.primaryBtn}
+              onClick={() => void handleCellUrlSave()}
+              disabled={cellUrlSaving}
+            >
+              {cellUrlSaving ? 'Saving…' : 'Save cell URL'}
+            </button>
+          </div>
+        </div>
+
+        <div className={s.field} style={{ marginTop: 16 }}>
+          <label className={s.label} htmlFor="cell-token-input">
+            Cell token (shared bearer)
+          </label>
+          <input
+            id="cell-token-input"
+            className={s.input}
+            type="text"
+            value={cellToken}
+            readOnly
+            placeholder="Not set — generate one"
+            spellCheck={false}
+            autoComplete="off"
+            onFocus={(e) => e.currentTarget.select()}
+          />
+          <div className={s.fieldHelp}>
+            The shared secret the platform proxy injects as the cell's
+            <code> Authorization</code> bearer. Generating one stores it in
+            the app KV store (read by proxies.yml as <code>kv.cellToken</code>).
+            After generating, set the <em>same</em> value on the cell as its{' '}
+            <code>UI_BEARER</code> secret and restart the cell, or the cell
+            rejects every request as unauthorized.
+          </div>
+          <div className={s.actions} style={{ marginTop: 8 }}>
+            <button
+              type="button"
+              className={s.primaryBtn}
+              onClick={() => void handleGenerateCellToken()}
+              disabled={cellTokenSaving}
+            >
+              {cellTokenSaving
+                ? 'Generating…'
+                : cellToken
+                  ? 'Regenerate cell token'
+                  : 'Generate cell token'}
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* ── Filtering & heuristics ───────────────────────── */}
