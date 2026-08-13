@@ -39,3 +39,32 @@ variable "ssm_parameter_prefix" {
   type        = string
   default     = "/apm-cell"
 }
+
+# ── Real agent-loop config (non-secret; the matching secrets —
+#    LLM_API_KEY, CRIBL_CLIENT_ID, CRIBL_CLIENT_SECRET — live in SSM
+#    alongside the bearers). Leave llm_base_url empty to run the stub
+#    agent (no LLM); set it to switch the node to the real loop. ──
+
+variable "llm_base_url" {
+  description = "OpenAI-compatible endpoint base for the agent loop (e.g. https://openrouter.ai/api/v1). Empty ⇒ stub agent."
+  type        = string
+  default     = ""
+}
+
+variable "llm_model" {
+  description = "Model id sent to the endpoint."
+  type        = string
+  default     = "deepseek/deepseek-v4-flash-0731"
+}
+
+variable "cribl_base_url" {
+  description = "Cribl workspace base URL the cell runs searches/metrics against and commits investigation events to. Required for the real loop."
+  type        = string
+  default     = ""
+}
+
+variable "cribl_dataset" {
+  description = "Telemetry dataset the investigator queries."
+  type        = string
+  default     = "otel"
+}
