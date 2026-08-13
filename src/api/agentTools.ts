@@ -22,6 +22,7 @@ import {
   type ToolCallInvocation,
   type ToolExecutionResult,
 } from '@cribl/app-utils/agent-tools';
+import type { MetricsTransport } from '@cribl/app-utils/metrics';
 import { assertReadOnlyKql } from './kqlSafety';
 import { getTrace } from './search';
 import { browserSearchClient, type SearchClient } from './searchClient';
@@ -65,6 +66,14 @@ export interface ApmToolExecutorDeps {
   dataset?: () => string;
   /** The metrics-store dataset for run_metrics_query. */
   metricsDataset?: () => string;
+  /**
+   * How run_metrics_query reaches the metrics store. Omit in the
+   * browser (the framework default reads `window.CRIBL_API_URL` +
+   * the iframe proxy). A non-browser host injects a transport that
+   * targets its own base URL with auth — the metrics parallel to the
+   * injected `client` used for run_search.
+   */
+  metricsTransport?: MetricsTransport;
 }
 
 export interface ApmToolExecutors {
@@ -202,6 +211,7 @@ export function createApmToolExecutors(deps: ApmToolExecutorDeps = {}): ApmToolE
   // straight through rather than re-stating that default here.
   const runMetricsQueryTool = createRunMetricsQueryTool({
     dataset: deps.metricsDataset,
+    transport: deps.metricsTransport,
   });
 
   async function executeToolCall(

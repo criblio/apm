@@ -32,6 +32,35 @@ export interface LlmConfig {
   model: string;
 }
 
+/** Hard cap on a single coalesced assistant-text event (chars). */
+const MAX_TEXT_CHARS = 16 * 1024;
+
+/**
+ * Bound a stored assistant message so a runaway response can't grow
+ * the per-turn pi history (which `history()` reloads in full every
+ * turn) without limit. Truncates oversized text/thinking content; a
+ * repetitive 75 KB answer carries no extra signal past the cap.
+ */
+function capMessage(msg: AssistantMessage): AssistantMessage {
+  let changed = false;
+  const content = msg.content.map((c) => {
+    if (c.type === 'text' && c.text.length > MAX_TEXT_CHARS) {
+      changed = true;
+      return { ...c, text: c.text.slice(0, MAX_TEXT_CHARS) };
+    }
+    if (c.type === 'thinking' && c.thinking.length > MAX_TEXT_CHARS) {
+      changed = true;
+      return { ...c, thinking: c.thinking.slice(0, MAX_TEXT_CHARS) };
+    }
+    return c;
+  });
+  return changed ? { ...msg, content } : msg;
+}
+
+function capText(text: string): string {
+  return text.length > MAX_TEXT_CHARS ? text.slice(0, MAX_TEXT_CHARS) : text;
+}
+
 export interface RealTurnResult {
   /** New pi messages to append to agent_messages (assistant + tool results). */
   newMessages: Message[];
@@ -100,8 +129,33 @@ export async function runRealTurn(opts: {
   let final: AssistantMessage | null = null;
   let streamFailed: string | null = null;
 
+  // Coalesce streaming text into ONE persisted event per text block
+  // instead of one per token. Each transcript event is a SQLite row +
+  // a fanout, and a runaway model response (deepseek-v4-flash was
+  // observed emitting 75 KB of repeated text) becomes thousands of
+  // rows, which eventually trips celld's "result set too large" cap on
+  // any subsequent read and wedges the DO. The poll transport reads
+  // persisted events every ~2.5s, so per-token granularity buys the UI
+  // nothing here anyway. Text is also hard-capped so one pathological
+  // response can't bloat the store.
+  let textBuf = '';
+  const flushText = () => {
+    if (!textBuf) return;
+    emit({ kind: 'assistantText', turnId, chunk: capText(textBuf) });
+    textBuf = '';
+  };
+
   const events = stream(piModel(llm), context, { apiKey: llm.apiKey, signal });
   for await (const ev of events) {
+    // Accumulate ALL of a turn's text (across text blocks) and flush
+    // it as a SINGLE event at the end — one transcript row per turn,
+    // not one per token or per block. A repetitive model can emit many
+    // text blocks; without this the row count still explodes.
+    if (ev.type === 'text_delta') {
+      if (textBuf.length < MAX_TEXT_CHARS) textBuf += ev.delta ?? '';
+      continue;
+    }
+    if (ev.type === 'text_start' || ev.type === 'text_end') continue;
     for (const wire of mapPiEvent(ev, turnId)) emit(wire);
     if (ev.type === 'done') final = ev.message;
     if (ev.type === 'error') {
@@ -111,6 +165,7 @@ export async function runRealTurn(opts: {
         (ev.reason === 'aborted' ? 'LLM stream aborted' : 'LLM stream error');
     }
   }
+  flushText();
 
   if (!final || streamFailed) {
     return {
@@ -122,7 +177,7 @@ export async function runRealTurn(opts: {
   }
 
   emit({ kind: 'assistantDone', turnId });
-  const newMessages: Message[] = [final];
+  const newMessages: Message[] = [capMessage(final)];
 
   const calls = toolCallsOf(final.content);
   let conclusion: unknown | null = null;

@@ -15,6 +15,10 @@ import { incidentKey, type FiringAlert, type InvestigationSummaryRow } from './p
 
 const MAX_CONCURRENT = 1;
 const MAX_PER_HOUR = 10;
+/** A 'running' investigation older than this is treated as orphaned
+ *  (its node died) and reclaimed so it can't wedge the queue. Well
+ *  above any real run: the InvestigationDO caps itself at MAX_TURNS. */
+const ORPHAN_RECLAIM_MS = 20 * 60_000;
 
 export class CoordinatorDO {
   private readonly state: DurableObjectState;
@@ -123,6 +127,20 @@ export class CoordinatorDO {
 
   /** Start queued investigations while below the concurrency cap. */
   private async pump(): Promise<void> {
+    // Reclaim orphaned slots: a node that dies mid-investigation
+    // leaves its row 'running' forever, and with MAX_CONCURRENT small
+    // that would wedge the queue permanently. An investigation that
+    // has been 'running' longer than any real run could take is
+    // treated as dead and marked failed, freeing the slot. (Normal
+    // runs conclude in well under this; the InvestigationDO's own
+    // MAX_TURNS cap bounds a live run far below it.)
+    this.state.storage.sql.exec(
+      `UPDATE investigations SET status = 'failed', concluded_at = ?
+       WHERE status = 'running' AND started_at IS NOT NULL AND started_at < ?`,
+      Date.now(),
+      Date.now() - ORPHAN_RECLAIM_MS,
+    );
+
     const running = Number(
       this.state.storage.sql
         .exec(`SELECT COUNT(*) AS n FROM investigations WHERE status = 'running'`)

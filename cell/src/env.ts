@@ -11,6 +11,12 @@ export interface Env {
    *  before the KV flag. */
   DISABLED?: string;
 
+  /** "on" forces the feature enabled, bypassing the KV flag read.
+   *  For deployments where the cell's machine token cannot reach the
+   *  app-scoped KV that holds `serverInvestigations` (see
+   *  serverInvestigationsEnabled). DISABLED still overrides. */
+  FORCE_ENABLE?: string;
+
   // ── Real agent mode (LLM_BASE_URL present ⇒ real loop; absent ⇒
   //    stub agent, so the scaffold smoke keeps passing configless) ──
   /** OpenAI-compatible endpoint base, e.g. https://api.openai.com/v1 */
