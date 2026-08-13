@@ -141,12 +141,17 @@ resource "aws_instance" "cell" {
   vpc_security_group_ids = [aws_security_group.cell.id]
 
   user_data = templatefile("${path.module}/user_data.sh.tftpl", {
-    bucket        = aws_s3_bucket.fleet.bucket
-    region        = var.region
-    celld_version = var.celld_version
-    caddy_version = var.caddy_version
-    domain        = "${replace(aws_eip.cell.public_ip, ".", "-")}.sslip.io"
-    ssm_prefix    = var.ssm_parameter_prefix
+    bucket         = aws_s3_bucket.fleet.bucket
+    region         = var.region
+    celld_version  = var.celld_version
+    caddy_version  = var.caddy_version
+    domain         = "${replace(aws_eip.cell.public_ip, ".", "-")}.sslip.io"
+    ssm_prefix     = var.ssm_parameter_prefix
+    llm_base_url   = var.llm_base_url
+    llm_model      = var.llm_model
+    cribl_base_url = var.cribl_base_url
+    cribl_dataset  = var.cribl_dataset
+    force_enable   = var.force_enable
   })
   user_data_replace_on_change = true
 
