@@ -1,4 +1,25 @@
-# Infra handoff — bringing the cell live from the infra VM
+# Infra handoff — bringing the cell live
+
+> **STATUS: DONE (2026-08-12).** The cell is live and smoke-passing
+> 16/16. No infra VM was needed — this ran from the dev box against
+> the Cribl test account (`243602015558`, us-west-2) with the existing
+> `test` SSO profile.
+>
+> | | |
+> |---|---|
+> | `cell_url` | https://54-71-34-177.sslip.io |
+> | `public_ip` | 54.71.34.177 (EIP, survives node replacement) |
+> | `instance_id` | i-0c56ce098677dd49d |
+> | `bucket` | cribl-apm-cell-test |
+> | celld | v0.2.0, deployment `c071c551cabea6e9` |
+>
+> Drift from the original plan is folded into `README.md` (region
+> scoping, Caddy install, sslip.io hostname, celld v0.2.0, the
+> `Persistent=true` tag, and the SSO-credential caveat on
+> `celld deploy`). The steps below are kept as the rebuild runbook —
+> read README.md first, it is more current.
+
+## Original plan (rebuild runbook)
 
 Audience: a Claude Code session running on the **infra VM** (the
 one on the right Tailscale network for AWS provisioning — not the

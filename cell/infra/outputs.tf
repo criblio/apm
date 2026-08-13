@@ -14,6 +14,6 @@ output "instance_id" {
 }
 
 output "cell_url" {
-  description = "Public base URL of the cell (once DNS points at the EIP). Null when no domain is set."
-  value       = var.domain != "" ? "https://${var.domain}" : null
+  description = "Public base URL of the cell (auto-derived via sslip.io from the EIP)."
+  value       = "https://${replace(aws_eip.cell.public_ip, ".", "-")}.sslip.io"
 }

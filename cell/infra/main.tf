@@ -119,6 +119,11 @@ data "aws_ssm_parameter" "al2023_arm64" {
   name = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64"
 }
 
+resource "aws_eip" "cell" {
+  domain = "vpc"
+  tags   = { Name = "apm-cell-node" }
+}
+
 resource "aws_instance" "cell" {
   ami                    = data.aws_ssm_parameter.al2023_arm64.value
   instance_type          = var.instance_type
@@ -129,11 +134,10 @@ resource "aws_instance" "cell" {
     bucket        = aws_s3_bucket.fleet.bucket
     region        = var.region
     celld_version = var.celld_version
-    domain        = var.domain
+    caddy_version = var.caddy_version
+    domain        = "${replace(aws_eip.cell.public_ip, ".", "-")}.sslip.io"
     ssm_prefix    = var.ssm_parameter_prefix
   })
-  # user_data changes replace the instance — safe: all durable state
-  # lives in the bucket (verified in the S2 spike).
   user_data_replace_on_change = true
 
   root_block_device {
@@ -144,7 +148,7 @@ resource "aws_instance" "cell" {
   tags = { Name = "apm-cell-node" }
 }
 
-resource "aws_eip" "cell" {
-  instance = aws_instance.cell.id
-  domain   = "vpc"
+resource "aws_eip_association" "cell" {
+  instance_id   = aws_instance.cell.id
+  allocation_id = aws_eip.cell.id
 }

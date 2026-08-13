@@ -16,9 +16,10 @@ provider "aws" {
   profile = var.aws_profile
   default_tags {
     tags = {
-      Project   = "apm-investigator-cell"
-      ManagedBy = "terraform"
-      Repo      = "criblio/apm//cell/infra"
+      Project    = "apm-investigator-cell"
+      ManagedBy  = "terraform"
+      Repo       = "criblio/apm//cell/infra"
+      Persistent = "true"
     }
   }
 }
