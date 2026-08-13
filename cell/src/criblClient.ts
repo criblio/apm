@@ -122,23 +122,6 @@ export class CriblClient {
     return text;
   }
 
-  /** Read the app's KV settings (the serverInvestigations kill switch). */
-  async readServerInvestigationsFlag(): Promise<boolean | null> {
-    try {
-      const http = await this.http();
-      const raw = await http.get('/kvstore/settings/app');
-      if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
-        const v = (raw as Record<string, unknown>).serverInvestigations;
-        return typeof v === 'boolean' ? v : null;
-      }
-      return null;
-    } catch {
-      // KV unreachable → "unknown"; the caller decides the failure
-      // posture (index.ts fails CLOSED: unknown ⇒ drop triggers).
-      return null;
-    }
-  }
-
   /** Commit one investigation lifecycle event to the dataset. */
   async commitInvestigationEvent(
     ev: Omit<InvestigationEvent, 'datatype' | 'record_kind' | 'schema_version' | 'producer'>,
