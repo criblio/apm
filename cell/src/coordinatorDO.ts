@@ -11,7 +11,14 @@
  *   - the investigations index the UI lists.
  */
 import type { Env } from './env';
-import { incidentKey, type FiringAlert, type InvestigationSummaryRow } from './protocol';
+import {
+  incidentKey,
+  titleFromPrompt,
+  type CreateInvestigationBody,
+  type FiringAlert,
+  type InvestigationMode,
+  type InvestigationSummaryRow,
+} from './protocol';
 
 const MAX_CONCURRENT = 1;
 const MAX_PER_HOUR = 10;
@@ -33,13 +40,28 @@ export class CoordinatorDO {
          event_id TEXT NOT NULL UNIQUE,
          alert_id TEXT NOT NULL,
          incident_key TEXT NOT NULL,
-         status TEXT NOT NULL,          -- queued|running|concluded|failed
-         alert_json TEXT NOT NULL,
+         status TEXT NOT NULL,          -- queued|running|idle|concluded|failed
+         alert_json TEXT NOT NULL,      -- FiringAlert (autonomous) | {prompt,context} (interactive)
          created_at INTEGER NOT NULL,
          started_at INTEGER,
          concluded_at INTEGER
        )`,
     );
+    // Additive columns for interactive investigations + the recall
+    // panel. Idempotent: SQLite has no `ADD COLUMN IF NOT EXISTS`, so
+    // a duplicate-column error on an already-migrated DO is swallowed.
+    this.addColumn('mode', `TEXT NOT NULL DEFAULT 'autonomous'`);
+    this.addColumn('title', 'TEXT');
+  }
+
+  private addColumn(name: string, decl: string): void {
+    try {
+      this.state.storage.sql.exec(
+        `ALTER TABLE investigations ADD COLUMN ${name} ${decl}`,
+      );
+    } catch {
+      /* column already exists on a previously-migrated object */
+    }
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -86,26 +108,97 @@ export class CoordinatorDO {
       return Response.json({ accepted });
     }
 
+    if (url.pathname === '/internal/create' && request.method === 'POST') {
+      const body = (await request.json()) as CreateInvestigationBody;
+      const prompt = typeof body?.prompt === 'string' ? body.prompt : '';
+      if (!prompt.trim()) {
+        return Response.json({ error: 'prompt required' }, { status: 400 });
+      }
+      const id = `inv-${crypto.randomUUID()}`;
+      // Synthetic event_id keeps the UNIQUE-column dedupe path intact
+      // for interactive rows (they have no alert to dedupe on).
+      const eventId = `ui-${crypto.randomUUID()}`;
+      const title = (body.title?.trim() || titleFromPrompt(prompt)).slice(0, 120);
+      this.state.storage.sql.exec(
+        `INSERT INTO investigations
+           (id, event_id, alert_id, incident_key, status, alert_json, created_at, mode, title)
+         VALUES (?, ?, '', 'interactive', 'queued', ?, ?, 'interactive', ?)`,
+        id,
+        eventId,
+        JSON.stringify({ prompt, context: body.context ?? null }),
+        Date.now(),
+        title,
+      );
+      await this.pump();
+      return Response.json({ id, title }, { status: 202 });
+    }
+
     if (url.pathname === '/internal/complete' && request.method === 'POST') {
       const { id, outcome } = (await request.json()) as {
         id: string;
-        outcome: 'concluded' | 'failed';
+        outcome: 'concluded' | 'failed' | 'idle' | 'resumed';
       };
-      this.state.storage.sql.exec(
-        `UPDATE investigations SET status = ?, concluded_at = ? WHERE id = ?`,
-        outcome,
-        Date.now(),
-        id,
-      );
-      await this.pump();
+      if (outcome === 'idle') {
+        // Interactive turn finished; the run is parked awaiting the
+        // next user message. Free its slot (status is no longer
+        // 'running') without marking it concluded, then let a queued
+        // investigation take the slot.
+        this.state.storage.sql.exec(
+          `UPDATE investigations SET status = 'idle' WHERE id = ?`,
+          id,
+        );
+        await this.pump();
+      } else if (outcome === 'resumed') {
+        // A parked interactive investigation got a new message and is
+        // running again. v1: this re-enters 'running' without going
+        // back through the queue's slot gate (see the interactive-and-
+        // recall design note); interactive runs are human-paced.
+        this.state.storage.sql.exec(
+          `UPDATE investigations SET status = 'running', started_at = ? WHERE id = ?`,
+          Date.now(),
+          id,
+        );
+      } else {
+        this.state.storage.sql.exec(
+          `UPDATE investigations SET status = ?, concluded_at = ? WHERE id = ?`,
+          outcome,
+          Date.now(),
+          id,
+        );
+        await this.pump();
+      }
       return Response.json({ ok: true });
     }
 
     if (url.pathname === '/internal/list') {
+      const q = (url.searchParams.get('q') ?? '').trim();
+      const limit = Math.min(
+        Math.max(Number(url.searchParams.get('limit') ?? 30) || 30, 1),
+        100,
+      );
+      // Keyset pagination: rows are newest-first, so "older page" is
+      // everything created before the last row the client holds.
+      const before = Number(url.searchParams.get('before') ?? 0) || 0;
+
+      const clauses: string[] = [];
+      const args: Array<string | number> = [];
+      if (before > 0) {
+        clauses.push('created_at < ?');
+        args.push(before);
+      }
+      if (q) {
+        clauses.push('(title LIKE ? OR incident_key LIKE ?)');
+        args.push(`%${q}%`, `%${q}%`);
+      }
+      const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+      args.push(limit);
+
       const rows = this.state.storage.sql
         .exec(
-          `SELECT id, alert_id, incident_key, status, created_at, started_at, concluded_at
-           FROM investigations ORDER BY created_at DESC LIMIT 100`,
+          `SELECT id, alert_id, incident_key, status, created_at, started_at,
+                  concluded_at, mode, title
+           FROM investigations ${where} ORDER BY created_at DESC LIMIT ?`,
+          ...args,
         )
         .toArray()
         .map(
@@ -114,6 +207,8 @@ export class CoordinatorDO {
             alertId: String(r.alert_id),
             incidentKey: String(r.incident_key),
             status: r.status as InvestigationSummaryRow['status'],
+            title: String(r.title ?? '') || String(r.incident_key),
+            mode: (r.mode as InvestigationMode) ?? 'autonomous',
             createdAt: Number(r.created_at),
             startedAt: r.started_at == null ? null : Number(r.started_at),
             concludedAt: r.concluded_at == null ? null : Number(r.concluded_at),
@@ -151,27 +246,47 @@ export class CoordinatorDO {
     while (slots > 0) {
       const next = this.state.storage.sql
         .exec(
-          `SELECT id, alert_json FROM investigations
+          `SELECT id, alert_json, mode, title FROM investigations
            WHERE status = 'queued' ORDER BY created_at LIMIT 1`,
         )
         .toArray()[0];
       if (!next) return;
 
       const id = String(next.id);
-      const alert = JSON.parse(String(next.alert_json)) as FiringAlert;
+      const mode = (next.mode as InvestigationMode) ?? 'autonomous';
       this.state.storage.sql.exec(
         `UPDATE investigations SET status = 'running', started_at = ? WHERE id = ?`,
         Date.now(),
         id,
       );
       const stub = this.env.INVESTIGATION.get(this.env.INVESTIGATION.idFromName(id));
-      // PR 7: build the seed via the shared buildAlertSeed() +
-      // preflight. The stub agent only needs the raw alert facts.
-      const res = await stub.fetch('https://investigation.internal/start', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ id, alert, seed: null }),
-      });
+      // Autonomous → /start with the raw alert facts (the DO builds the
+      // seed via buildAlertSeed + preflight). Interactive → /create
+      // with the user's prompt + context, seeded from that prompt.
+      const res =
+        mode === 'interactive'
+          ? await (() => {
+              const payload = JSON.parse(String(next.alert_json)) as CreateInvestigationBody;
+              return stub.fetch('https://investigation.internal/create', {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({
+                  id,
+                  prompt: payload.prompt,
+                  context: payload.context ?? null,
+                  title: String(next.title ?? ''),
+                }),
+              });
+            })()
+          : await stub.fetch('https://investigation.internal/start', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({
+                id,
+                alert: JSON.parse(String(next.alert_json)) as FiringAlert,
+                seed: null,
+              }),
+            });
       if (!res.ok) {
         this.state.storage.sql.exec(
           `UPDATE investigations SET status = 'failed', concluded_at = ? WHERE id = ?`,

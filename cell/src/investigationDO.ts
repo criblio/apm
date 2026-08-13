@@ -32,7 +32,10 @@ import { createCellSearchClient, createCellMetricsTransport } from './cellSearch
 import {
   PROTOCOL_VERSION,
   incidentKey,
+  titleFromPrompt,
+  type CreateInvestigationBody,
   type FiringAlert,
+  type InvestigationMode,
   type InvestigationStatus,
   type ServerFrame,
   type WireLoopEvent,
@@ -174,6 +177,24 @@ export class InvestigationDO {
          message_json TEXT NOT NULL
        )`,
     );
+    // Interactive-mode columns. Idempotent (SQLite lacks ADD COLUMN IF
+    // NOT EXISTS): a duplicate-column error on a migrated DO is ignored.
+    // `turn_budget` is the absolute turn index at which the current
+    // user-message batch must stop — reset on every /messages so the
+    // MAX_TURNS cap applies per message, not per whole conversation.
+    this.addColumn('mode', `TEXT NOT NULL DEFAULT 'autonomous'`);
+    this.addColumn('title', 'TEXT');
+    this.addColumn('turn_budget', 'INTEGER');
+  }
+
+  private addColumn(name: string, decl: string): void {
+    try {
+      this.state.storage.sql.exec(
+        `ALTER TABLE investigation ADD COLUMN ${name} ${decl}`,
+      );
+    } catch {
+      /* column already exists on a previously-migrated object */
+    }
   }
 
   // ── row helpers ────────────────────────────────────────────────
@@ -189,7 +210,8 @@ export class InvestigationDO {
     const rows = this.state.storage.sql
       .exec(
         `SELECT id, alert_id, trigger_event_id, incident_key, status,
-                error, created_at, started_at, concluded_at, turn, schema_version
+                error, created_at, started_at, concluded_at, turn, schema_version,
+                mode, turn_budget
          FROM investigation LIMIT 1`,
       )
       .toArray();
@@ -306,6 +328,68 @@ export class InvestigationDO {
       return Response.json({ ok: true });
     }
 
+    if (url.pathname.endsWith('/create') && request.method === 'POST') {
+      const body = (await request.json()) as CreateInvestigationBody & { id: string };
+      if (this.row()) {
+        return Response.json({ ok: true, already: true });
+      }
+      const prompt = typeof body?.prompt === 'string' ? body.prompt : '';
+      if (!prompt.trim()) {
+        return Response.json({ error: 'prompt required' }, { status: 400 });
+      }
+      const title = (body.title?.trim() || titleFromPrompt(prompt)).slice(0, 120);
+      this.state.storage.sql.exec(
+        `INSERT INTO investigation
+           (id, alert_id, trigger_event_id, incident_key, status, seed_json,
+            created_at, schema_version, mode, title, turn_budget)
+         VALUES (?, '', ?, 'interactive', 'queued', 'null', ?, ?, 'interactive', ?, ?)`,
+        body.id,
+        body.id,
+        Date.now(),
+        SCHEMA_VERSION,
+        title,
+        MAX_TURNS,
+      );
+      // The opening prompt + context; consumed once by
+      // ensureSeededInteractive() on the first alarm.
+      await this.state.storage.put('interactivePayload', {
+        prompt,
+        context: body.context ?? null,
+      });
+      this.setStatus('running', { started_at: Date.now() });
+      await this.state.storage.setAlarm(Date.now() + TURN_DELAY_MS);
+      return Response.json({ ok: true });
+    }
+
+    if (url.pathname.endsWith('/messages') && request.method === 'POST') {
+      const row = this.row();
+      if (!row) return Response.json({ error: 'not found' }, { status: 404 });
+      if (row.mode !== 'interactive') {
+        return Response.json({ error: 'not an interactive investigation' }, { status: 400 });
+      }
+      const { content } = (await request.json()) as { content?: string };
+      if (!content || !content.trim()) {
+        return Response.json({ error: 'content required' }, { status: 400 });
+      }
+      // Append the user's turn to the pi history and resume the loop.
+      const userMsg: UserMessage = { role: 'user', content, timestamp: Date.now() };
+      this.state.storage.sql.exec(
+        `INSERT INTO agent_messages (message_json) VALUES (?)`,
+        JSON.stringify(userMsg),
+      );
+      const turn = Number(row.turn ?? 0);
+      // Fresh per-message turn budget so a long chat isn't killed by the
+      // whole-conversation turn count.
+      this.state.storage.sql.exec(
+        `UPDATE investigation SET turn_budget = ?`,
+        turn + MAX_TURNS,
+      );
+      this.setStatus('running', { started_at: Date.now() });
+      await this.notifyCoordinator('resumed');
+      await this.state.storage.setAlarm(Date.now() + TURN_DELAY_MS);
+      return Response.json({ ok: true });
+    }
+
     if (url.pathname.endsWith('/events')) {
       const row = this.row();
       if (!row) return Response.json({ error: 'not found' }, { status: 404 });
@@ -324,11 +408,20 @@ export class InvestigationDO {
       return Response.json({
         id: row.id,
         status: row.status,
+        mode: (row.mode as InvestigationMode) ?? 'autonomous',
+        title: row.title ?? null,
         alertId: row.alert_id,
         incidentKey: row.incident_key,
         createdAt: row.created_at,
         startedAt: row.started_at,
         concludedAt: row.concluded_at,
+        // The small InvestigationSeed (not the ~75KB prompt, which lives
+        // in a separate KV entry). Lets the UI show the opening question
+        // when replaying a past interactive conversation.
+        seed: (() => {
+          const s = this.seedJson();
+          return s ? JSON.parse(s) : null;
+        })(),
         conclusion: (() => {
           const c = this.conclusionJson();
           return c ? JSON.parse(c) : null;
@@ -448,6 +541,39 @@ export class InvestigationDO {
     await this.state.storage.put('seedPromptDone', true);
   }
 
+  /**
+   * First-alarm setup for an interactive (UI-started) investigation.
+   * The user's opening prompt becomes the seed question, run through
+   * the same buildSeedPrompt() preamble the browser and the alert path
+   * use — so the agent has the identical dataset schema + KQL guidance.
+   * No preflight: the user drives the question directly, and skipping
+   * it keeps the first response fast.
+   */
+  private async ensureSeededInteractive(cribl: CriblClient): Promise<void> {
+    const existing = await this.state.storage.get<string>('seedPromptDone');
+    if (existing) return;
+    const payload = await this.state.storage.get<{
+      prompt: string;
+      context?: { service?: string; earliest?: string; latest?: string } | null;
+    }>('interactivePayload');
+    const prompt = payload?.prompt ?? '';
+
+    setCurrentDataset(cribl.dataset);
+    const seed: InvestigationSeed = {
+      question: prompt,
+      service: payload?.context?.service,
+      earliest: payload?.context?.earliest,
+      latest: payload?.context?.latest,
+    };
+    const seedPrompt = buildSeedPrompt(seed);
+    await this.state.storage.put('seedPrompt', seedPrompt);
+    this.state.storage.sql.exec(
+      `UPDATE investigation SET seed_json = ?`,
+      JSON.stringify(seed),
+    );
+    await this.state.storage.put('seedPromptDone', true);
+  }
+
   /** The full pi conversation: the seed prompt (history[0], stored as
    *  a DO KV entry, not in SQLite) followed by the accumulated
    *  assistant + tool-result messages. */
@@ -522,18 +648,35 @@ export class InvestigationDO {
     const row = this.row();
     if (!row || row.status !== 'running') return;
 
-    const alert = (await this.state.storage.get<FiringAlert>('alert'))!;
+    const mode = (row.mode as InvestigationMode) ?? 'autonomous';
+    const interactive = mode === 'interactive';
+    // Autonomous investigations carry the alert facts; interactive ones
+    // don't (they seed from the user's prompt).
+    const alert = interactive
+      ? null
+      : (await this.state.storage.get<FiringAlert>('alert'))!;
     const turn = Number(row.turn ?? 0);
     const llm = this.llmConfig();
     const cribl = this.cribl();
 
     try {
-      if (turn >= MAX_TURNS) {
+      // Turn cap. Interactive uses a per-message budget and PARKS
+      // (stays resumable) when it's hit; autonomous fails the run.
+      const cap = interactive ? Number(row.turn_budget ?? MAX_TURNS) : MAX_TURNS;
+      if (turn >= cap) {
+        if (interactive) {
+          this.append({
+            kind: 'notification',
+            turnId: 'system',
+            content: `Reached the ${MAX_TURNS}-step limit for this message. Ask a follow-up to continue.`,
+          });
+          this.append({ kind: 'done', reason: 'complete' });
+          await this.parkIdle();
+          return;
+        }
         const message = `Investigation hit the ${MAX_TURNS}-turn cap without concluding.`;
         this.append({ kind: 'error', message });
-        this.setStatus('failed', { concluded_at: Date.now(), error: message });
-        await this.commitLifecycle('investigation_failed');
-        await this.notifyCoordinator('failed');
+        await this.failRun(message);
         return;
       }
 
@@ -542,7 +685,8 @@ export class InvestigationDO {
 
       if (llm && cribl) {
         // ── real mode: one pi turn per alarm ──
-        await this.ensureSeeded(alert, cribl);
+        if (interactive) await this.ensureSeededInteractive(cribl);
+        else await this.ensureSeeded(alert!, cribl);
         const executors = createApmToolExecutors({
           client: createCellSearchClient(cribl),
           dataset: () => cribl.dataset,
@@ -563,17 +707,27 @@ export class InvestigationDO {
         }
         if (result.errorMessage) {
           this.append({ kind: 'error', message: result.errorMessage });
-          this.setStatus('failed', { concluded_at: Date.now(), error: result.errorMessage });
-          await this.commitLifecycle('investigation_failed');
-          await this.notifyCoordinator('failed');
+          // Interactive: park so the user can retry; autonomous: fail.
+          if (interactive) await this.parkIdle();
+          else await this.failRun(result.errorMessage);
           return;
         }
         done = result.done;
         conclusion = result.conclusion;
         if (done) this.append({ kind: 'done', reason: 'complete' });
+      } else if (interactive) {
+        // ── interactive stub (no LLM): echo a canned reply, then park. ──
+        this.append({
+          kind: 'assistantText',
+          turnId: `turn-${turn}`,
+          chunk: 'Interactive investigation stub: no LLM configured on this cell.',
+        });
+        this.append({ kind: 'assistantDone', turnId: `turn-${turn}` });
+        this.append({ kind: 'done', reason: 'complete' });
+        done = true;
       } else {
-        // ── stub mode (no LLM configured): scaffold behavior ──
-        const stub = stubTurnEvents(turn, alert);
+        // ── autonomous stub (no LLM configured): scaffold behavior ──
+        const stub = stubTurnEvents(turn, alert!);
         for (const ev of stub.events) {
           if (
             ev.kind === 'toolResult' &&
@@ -589,25 +743,49 @@ export class InvestigationDO {
       this.state.storage.sql.exec(`UPDATE investigation SET turn = ?`, turn + 1);
 
       if (done) {
-        this.setStatus('concluded', {
-          concluded_at: Date.now(),
-          conclusion_json: conclusion == null ? null : JSON.stringify(conclusion),
-        });
-        await this.commitLifecycle('investigated', this.conclusionSnippet(conclusion));
-        await this.notifyCoordinator('concluded');
+        if (interactive) {
+          // Interactive runs never auto-conclude — they park awaiting
+          // the next user message. No lifecycle commit (the cell's own
+          // list is the record; there's no Alerts-page badge for these).
+          await this.parkIdle();
+        } else {
+          this.setStatus('concluded', {
+            concluded_at: Date.now(),
+            conclusion_json: conclusion == null ? null : JSON.stringify(conclusion),
+          });
+          await this.commitLifecycle('investigated', this.conclusionSnippet(conclusion));
+          await this.notifyCoordinator('concluded');
+        }
       } else {
         await this.state.storage.setAlarm(Date.now() + TURN_DELAY_MS);
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.append({ kind: 'error', message });
-      this.setStatus('failed', { concluded_at: Date.now(), error: message });
-      await this.commitLifecycle('investigation_failed');
-      await this.notifyCoordinator('failed');
+      // Interactive: park so the conversation survives a transient
+      // error; autonomous: fail the run.
+      if (interactive) await this.parkIdle();
+      else await this.failRun(message);
     }
   }
 
-  private async notifyCoordinator(outcome: 'concluded' | 'failed'): Promise<void> {
+  /** Park an interactive investigation: loop yielded, awaiting the next
+   *  user message. Non-terminal — no concluded_at, no lifecycle commit. */
+  private async parkIdle(): Promise<void> {
+    this.setStatus('idle');
+    await this.notifyCoordinator('idle');
+  }
+
+  /** Fail an autonomous investigation and record it for the Alerts page. */
+  private async failRun(message: string): Promise<void> {
+    this.setStatus('failed', { concluded_at: Date.now(), error: message });
+    await this.commitLifecycle('investigation_failed');
+    await this.notifyCoordinator('failed');
+  }
+
+  private async notifyCoordinator(
+    outcome: 'concluded' | 'failed' | 'idle' | 'resumed',
+  ): Promise<void> {
     // The coordinator enforces global concurrency; it must hear about
     // completions to start the next queued investigation. Reached via
     // the DO binding, not the public router.
