@@ -9,7 +9,19 @@
  */
 import type { SearchClient } from '../../src/api/searchClient';
 import { kqlDatasetId } from '@cribl/app-utils/kql';
+import { metricsQueryPath, type MetricsTransport } from '@cribl/app-utils/metrics';
 import type { CriblClient } from './criblClient';
+
+/**
+ * The cell's metrics transport — the run_metrics_query parallel to
+ * cellSearchClient for run_search. Builds the identical request via
+ * the framework's `metricsQueryPath` and executes it through
+ * CriblClient (machine bearer, cell base URL), so the fast metrics
+ * store works server-side without browser globals.
+ */
+export function createCellMetricsTransport(cribl: CriblClient): MetricsTransport {
+  return (query, opts) => cribl.queryMetricsText(metricsQueryPath(query, opts), opts.signal);
+}
 
 export function createCellSearchClient(cribl: CriblClient): SearchClient {
   let flatFieldsProbe: Promise<boolean> | null = null;

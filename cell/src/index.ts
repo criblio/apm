@@ -39,6 +39,18 @@ const FLAG_TTL_MS = 60_000;
 let flagCache: { value: boolean; at: number } | null = null;
 
 async function serverInvestigationsEnabled(env: Env): Promise<boolean> {
+  // Operator override for the case where the KV flag is unreadable.
+  // The app writes `serverInvestigations` to APP-SCOPED KV
+  // (/api/v1/a/{appId}/kvstore/...), which a machine
+  // (client-credentials) token cannot reach — it resolves the
+  // unscoped /api/v1/kvstore path, a different, empty namespace. So
+  // when the cell is wired with a machine token the KV read always
+  // returns null and the switch fails closed. Until the flag lives
+  // somewhere the cell can read (app-scoped KV access, or a
+  // cell-owned KV key), FORCE_ENABLE='on' lets an operator turn the
+  // feature on deliberately. DISABLED still wins.
+  if (env.FORCE_ENABLE === 'on') return true;
+
   const { CRIBL_BASE_URL, CRIBL_CLIENT_ID, CRIBL_CLIENT_SECRET, CRIBL_DEV_TOKEN } = env;
   if (!CRIBL_BASE_URL || (!CRIBL_DEV_TOKEN && (!CRIBL_CLIENT_ID || !CRIBL_CLIENT_SECRET))) {
     // No Cribl wiring at all (local scaffold/dev) — nothing to

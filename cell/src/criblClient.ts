@@ -98,6 +98,30 @@ export class CriblClient {
     return runSearchJob(http, kql, options);
   }
 
+  /**
+   * GET the synchronous metrics query endpoint and return the raw
+   * NDJSON body. Parallel to runQuery for run_search: the metrics
+   * tool's injected transport calls this so PromQL runs against the
+   * fast store with the machine bearer, no browser globals. `path` is
+   * built by the framework's `metricsQueryPath`, so the request
+   * contract stays identical to the browser path.
+   */
+  async queryMetricsText(path: string, signal?: AbortSignal): Promise<string> {
+    const token = await this.bearer();
+    const resp = await fetch(`${this.cfg.baseUrl}/api/v1${path}`, {
+      headers: {
+        authorization: `Bearer ${token}`,
+        accept: 'application/x-ndjson, application/json',
+      },
+      signal,
+    });
+    const text = await resp.text();
+    if (!resp.ok) {
+      throw new Error(`metrics query failed (${resp.status}): ${text.slice(0, 400)}`);
+    }
+    return text;
+  }
+
   /** Read the app's KV settings (the serverInvestigations kill switch). */
   async readServerInvestigationsFlag(): Promise<boolean | null> {
     try {
