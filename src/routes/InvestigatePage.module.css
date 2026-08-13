@@ -92,4 +92,94 @@
   flex-direction: column;
   gap: var(--cds-space-sm);
   overflow-y: auto;
+  flex: 1 1 auto;
+}
+
+/* ── Interactive composer ─────────────────────────────────────── */
+.composer {
+  display: flex;
+  gap: var(--cds-space-sm);
+  align-items: flex-end;
+  padding-top: var(--cds-space-sm);
+  border-top: 1px solid var(--cds-color-border-subtle);
+}
+.composerInput {
+  flex: 1 1 auto;
+  resize: none;
+  min-height: 2.5rem;
+  max-height: 8rem;
+  padding: var(--cds-space-sm);
+  border: 1px solid var(--cds-color-border-subtle);
+  border-radius: var(--cds-radius-sm);
+  background: var(--cds-color-bg-input, var(--cds-color-bg-subtle));
+  color: var(--cds-color-text-default);
+  font: inherit;
+  font-size: var(--cds-font-size-sm);
+}
+.composerInput:disabled {
+  opacity: 0.6;
+}
+.composerSend {
+  padding: var(--cds-space-sm) var(--cds-space-md);
+  border: none;
+  border-radius: var(--cds-radius-sm);
+  background: var(--cds-color-interactive, #3b6ef5);
+  color: #fff;
+  cursor: pointer;
+  font-size: var(--cds-font-size-sm);
+  font-weight: var(--cds-font-weight-bold);
+  white-space: nowrap;
+}
+.composerSend:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.composerHint {
+  font-size: var(--cds-font-size-xs);
+  color: var(--cds-color-text-subtle);
+  padding-top: var(--cds-space-xs);
+  text-align: center;
+}
+
+/* ── New-investigation empty state ────────────────────────────── */
+.newInvestigation {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  gap: var(--cds-space-md);
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  padding: var(--cds-space-lg);
+}
+.newInvestigationTitle {
+  font-size: var(--cds-font-size-lg);
+  font-weight: var(--cds-font-weight-bold);
+}
+.newInvestigationHint {
+  font-size: var(--cds-font-size-sm);
+  color: var(--cds-color-text-subtle);
+  max-width: 34rem;
+}
+.suggestionRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--cds-space-sm);
+  justify-content: center;
+  max-width: 40rem;
+}
+.suggestionChip {
+  padding: var(--cds-space-xs) var(--cds-space-sm);
+  border: 1px solid var(--cds-color-border-subtle);
+  border-radius: var(--cds-radius-pill, 999px);
+  background: var(--cds-color-bg-subtle);
+  cursor: pointer;
+  font-size: var(--cds-font-size-xs);
+}
+.newComposer {
+  display: flex;
+  gap: var(--cds-space-sm);
+  width: 100%;
+  max-width: 40rem;
+  align-items: flex-end;
 }

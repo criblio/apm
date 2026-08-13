@@ -44,9 +44,28 @@ export type WireLoopEvent =
 export type InvestigationStatus =
   | 'queued'
   | 'running'
+  // Interactive investigations only: answered the current user turn,
+  // awaiting the next message. Non-terminal.
+  | 'idle'
   | 'concluded'
   | 'failed'
   | 'cancelled';
+
+export type InvestigationMode = 'autonomous' | 'interactive';
+
+/** One row of the recall panel — mirrors the cell's
+ *  InvestigationSummaryRow. */
+export interface InvestigationSummary {
+  id: string;
+  alertId: string;
+  incidentKey: string;
+  status: InvestigationStatus;
+  title: string;
+  mode: InvestigationMode;
+  createdAt: number;
+  startedAt: number | null;
+  concludedAt: number | null;
+}
 
 export interface EventsResponse {
   protocolVersion: number;
@@ -58,11 +77,15 @@ export interface EventsResponse {
 export interface InvestigationStatusResponse {
   id: string;
   status: InvestigationStatus;
+  mode?: InvestigationMode;
+  title?: string | null;
   alertId: string;
   incidentKey: string;
   createdAt: number;
   startedAt: number | null;
   concludedAt: number | null;
+  /** The small InvestigationSeed (carries the opening `question`). */
+  seed?: { question?: string } | null;
   conclusion: unknown | null;
   latestSeq: number;
 }
@@ -180,6 +203,10 @@ export interface SubscribeOptions {
   onStatus?: (status: InvestigationStatus) => void;
   /** Called on a transport error (polling continues unless stopped). */
   onError?: (err: unknown) => void;
+  /** Also stop polling when the investigation parks at `idle`. Used by
+   *  the interactive session (a follow-up message re-subscribes) so an
+   *  idle conversation isn't polled forever. */
+  stopOnIdle?: boolean;
 }
 
 /**
@@ -219,7 +246,10 @@ export function subscribeInvestigation(
         lastStatus = data.status;
         opts.onStatus?.(data.status);
       }
-      if (isTerminalStatus(data.status)) {
+      if (
+        isTerminalStatus(data.status) ||
+        (opts.stopOnIdle && data.status === 'idle')
+      ) {
         stopped = true;
         return;
       }
@@ -237,4 +267,86 @@ export function subscribeInvestigation(
     if (timer) clearTimeout(timer);
     controller.abort();
   };
+}
+
+async function postJson<T>(url: string, body: unknown, signal?: AbortSignal): Promise<T> {
+  // As with getJson: no Authorization header — the platform proxy
+  // injects the cell bearer, and strips any we set.
+  const resp = await fetch(url, {
+    method: 'POST',
+    signal,
+    headers: { accept: 'application/json', 'content-type': 'application/json' },
+    body: JSON.stringify(body ?? {}),
+  });
+  if (!resp.ok) {
+    throw new Error(`investigator cell ${resp.status}: ${await resp.text()}`);
+  }
+  return (await resp.json()) as T;
+}
+
+export interface CreateInvestigationInput {
+  /** The user's opening question. */
+  prompt: string;
+  context?: { service?: string; earliest?: string; latest?: string } | null;
+  title?: string;
+}
+
+/**
+ * Start a UI-initiated interactive investigation on the cell. Returns
+ * the new investigation id; the caller opens it in the interactive
+ * view and streams via subscribeInvestigation.
+ */
+export async function createInvestigation(
+  input: CreateInvestigationInput,
+  signal?: AbortSignal,
+): Promise<{ id: string; title?: string }> {
+  const base = getCellBaseUrl();
+  return postJson<{ id: string; title?: string }>(
+    `${base}/investigations`,
+    input,
+    signal,
+  );
+}
+
+/** Append a follow-up user turn to an interactive investigation and
+ *  resume its loop. */
+export async function sendInvestigationMessage(
+  id: string,
+  content: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  const base = getCellBaseUrl();
+  await postJson<{ ok: boolean }>(
+    `${base}/investigations/${encodeURIComponent(id)}/messages`,
+    { content },
+    signal,
+  );
+}
+
+export interface ListInvestigationsQuery {
+  /** Substring match on title / incident key. */
+  q?: string;
+  /** Page size (cell clamps to [1, 100], default 30). */
+  limit?: number;
+  /** Keyset cursor: return rows created before this epoch-ms. */
+  before?: number;
+}
+
+/** Fetch the recall-panel index (newest-first) with optional search
+ *  and keyset pagination. */
+export async function listInvestigations(
+  query: ListInvestigationsQuery = {},
+  signal?: AbortSignal,
+): Promise<InvestigationSummary[]> {
+  const base = getCellBaseUrl();
+  const params = new URLSearchParams();
+  if (query.q) params.set('q', query.q);
+  if (query.limit != null) params.set('limit', String(query.limit));
+  if (query.before != null) params.set('before', String(query.before));
+  const qs = params.toString();
+  const data = await getJson<{ investigations: InvestigationSummary[] }>(
+    `${base}/investigations${qs ? `?${qs}` : ''}`,
+    signal,
+  );
+  return data.investigations ?? [];
 }

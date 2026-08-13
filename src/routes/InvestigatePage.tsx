@@ -16,12 +16,14 @@
  *   - the render_trace result card, drawn with APM's SpanTree
  *     waterfall.
  */
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { InvestigatorChat, InvestigatorTranscript } from '@cribl/app-utils/investigator';
 import MetricsToolCard from '@cribl/app-utils/investigator/metrics-tool-card';
 import { getCurrentDataset } from '@cribl/app-utils/dataset';
-import { useInvestigationReplay } from '../hooks/useInvestigationReplay';
+import { useInvestigationSession } from '../hooks/useInvestigationSession';
+import { useServerInvestigations } from '../hooks/useServerInvestigations';
+import { createInvestigation } from '../api/investigationTransport';
 // Side effect: pins the analytics surface tag ('criblApmInvestigation')
 // before the shell runs its first loop.
 import '../api/agent';
@@ -102,17 +104,34 @@ function renderApmToolCard(ui: ToolResultUi) {
 
 interface LocationState {
   seed?: InvestigationSeed;
+  /** Passed when redirecting to `?investigation=<id>` right after
+   *  creating a server investigation, so the interactive view shows the
+   *  opening question without waiting on a status fetch. */
+  openingPrompt?: string;
+}
+
+/** Turn a seed into the create payload the cell expects: the question
+ *  becomes the prompt, and the scope becomes the context (the cell
+ *  builds the full preamble itself via buildSeedPrompt). */
+function seedToPrompt(seed: InvestigationSeed): string {
+  const signals = seed.knownSignals?.length
+    ? `\n\nWhat we already know:\n- ${seed.knownSignals.join('\n- ')}`
+    : '';
+  return `${seed.question}${signals}`;
 }
 
 export default function InvestigatePage() {
   const location = useLocation();
   const navigate = useNavigate();
-  const seed = (location.state as LocationState | null)?.seed;
+  const serverMode = useServerInvestigations();
+  const state = location.state as LocationState | null;
+  const seed = state?.seed;
+  const openingPrompt = state?.openingPrompt;
 
-  // `?investigation=<id>` opens a read-only replay of a server-side
-  // investigation (from an Alerts-page badge). It takes precedence
-  // over any router seed.
-  const replayId = new URLSearchParams(location.search).get('investigation');
+  // `?investigation=<id>` opens an existing server-side investigation —
+  // interactive (with a composer) if it's still open, read-only if it
+  // concluded or it's an autonomous alert investigation.
+  const investigationId = new URLSearchParams(location.search).get('investigation');
 
   // Clear the seed from location state once the shell consumes it
   // so a reload doesn't re-fire the same investigation.
@@ -120,10 +139,28 @@ export default function InvestigatePage() {
     navigate(location.pathname, { replace: true, state: {} });
   }, [navigate, location.pathname]);
 
-  if (replayId) {
-    return <InvestigationReplayView id={replayId} onExit={() => navigate('/alerts')} />;
+  if (investigationId) {
+    return (
+      <ServerInvestigationView
+        id={investigationId}
+        openingPrompt={openingPrompt}
+        onExit={() => navigate('/investigate')}
+      />
+    );
   }
 
+  // Server mode: every investigation runs on the cell. A seed handed
+  // from an Investigate button creates one and redirects; with no seed
+  // we show a composer to start a fresh one.
+  if (serverMode) {
+    return seed ? (
+      <CreatingInvestigation seed={seed} />
+    ) : (
+      <NewServerInvestigation />
+    );
+  }
+
+  // Flag off: the classic in-browser client Investigator.
   return (
     <InvestigatorChat<InvestigationSeed>
       seed={seed}
@@ -144,26 +181,175 @@ export default function InvestigatePage() {
   );
 }
 
+/**
+ * Create a server investigation from an Investigate-button seed, then
+ * redirect to its `?investigation=<id>` view. A ref guards React 18
+ * StrictMode's double-effect so we don't create two.
+ */
+function CreatingInvestigation({ seed }: { seed: InvestigationSeed }) {
+  const navigate = useNavigate();
+  const [error, setError] = useState<string | null>(null);
+  const startedRef = useRef(false);
+
+  useEffect(() => {
+    if (startedRef.current) return;
+    startedRef.current = true;
+    const prompt = seedToPrompt(seed);
+    createInvestigation({
+      prompt,
+      context: {
+        service: seed.service,
+        earliest: seed.earliest,
+        latest: seed.latest,
+      },
+    })
+      .then(({ id }) => {
+        navigate(`/investigate?investigation=${encodeURIComponent(id)}`, {
+          replace: true,
+          state: { openingPrompt: prompt },
+        });
+      })
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)));
+  }, [seed, navigate]);
+
+  return (
+    <div className={s.newInvestigation}>
+      {error ? (
+        <>
+          <div className={s.newInvestigationTitle}>Couldn’t start the investigation</div>
+          <div className={s.toolResultError}>{error}</div>
+        </>
+      ) : (
+        <div className={s.newInvestigationHint}>Starting investigation on the server…</div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Empty-state composer for starting a fresh server investigation (flag
+ * on, no seed). On submit it creates one and opens its view.
+ */
+function NewServerInvestigation() {
+  const navigate = useNavigate();
+  const [draft, setDraft] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const start = useCallback(
+    async (prompt: string) => {
+      const text = prompt.trim();
+      if (!text || busy) return;
+      setBusy(true);
+      setError(null);
+      try {
+        const { id } = await createInvestigation({ prompt: text });
+        navigate(`/investigate?investigation=${encodeURIComponent(id)}`, {
+          state: { openingPrompt: text },
+        });
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+        setBusy(false);
+      }
+    },
+    [busy, navigate],
+  );
+
+  return (
+    <div className={s.newInvestigation}>
+      <div className={s.newInvestigationTitle}>Cribl APM Copilot</div>
+      <div className={s.newInvestigationHint}>
+        Ask a question about your services, traces, logs, or metrics. The
+        investigation runs on the server, so it keeps working and stays
+        saved even if you close this tab.
+      </div>
+      {error && <div className={s.toolResultError}>{error}</div>}
+      <form
+        className={s.newComposer}
+        onSubmit={(e) => {
+          e.preventDefault();
+          void start(draft);
+        }}
+      >
+        <textarea
+          className={s.composerInput}
+          value={draft}
+          disabled={busy}
+          placeholder="e.g. Why is the checkout service throwing errors?"
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              void start(draft);
+            }
+          }}
+          rows={2}
+        />
+        <button type="submit" className={s.composerSend} disabled={busy || !draft.trim()}>
+          {busy ? 'Starting…' : 'Investigate'}
+        </button>
+      </form>
+      <div className={s.suggestionRow}>
+        {EMPTY_SUGGESTIONS.map((sug) => (
+          <button
+            key={sug}
+            type="button"
+            className={s.suggestionChip}
+            disabled={busy}
+            onClick={() => void start(sug)}
+          >
+            {sug}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 const REPLAY_STATUS_LABEL: Record<string, string> = {
   queued: 'Queued',
   running: 'Investigating…',
+  idle: 'Ready — ask a follow-up',
   concluded: 'Investigated',
   failed: 'Investigation failed',
   cancelled: 'Investigation cancelled',
 };
 
 /**
- * Read-only replay of a server-side investigation. Drives the shared
- * `applyLoopEvent` reducer over the cell's event stream via
- * `useInvestigationReplay`, then renders the entries through the same
- * `InvestigatorTranscript` view the live client uses — so a replayed
- * investigation is pixel-identical to a live one, including the
- * Search/Summary cards and the APM trace waterfall (via
- * `renderApmToolCard`). Approval handlers are omitted: server runs
- * never pause for a human, and replay is read-only.
+ * View for an existing server-side investigation, opened by id.
+ *
+ * Drives the shared `applyLoopEvent` reducer over the cell's event
+ * stream via `useInvestigationSession`, rendering the entries through
+ * the same `InvestigatorTranscript` view the live client uses — so it
+ * is pixel-identical to a client run (Search/Summary cards, the APM
+ * trace waterfall). When the investigation is interactive and still
+ * open (`canSend`), it shows a composer for follow-up turns; an
+ * autonomous or concluded investigation renders read-only.
  */
-function InvestigationReplayView({ id, onExit }: { id: string; onExit: () => void }) {
-  const { entries, status, running, error } = useInvestigationReplay(id);
+function ServerInvestigationView({
+  id,
+  openingPrompt,
+  onExit,
+}: {
+  id: string;
+  openingPrompt?: string;
+  onExit: () => void;
+}) {
+  const { entries, status, mode, running, canSend, sending, error, sendMessage } =
+    useInvestigationSession(id, { openingPrompt });
+  const [draft, setDraft] = useState('');
+
+  const submit = () => {
+    const text = draft.trim();
+    if (!text || sending || !canSend) return;
+    setDraft('');
+    void sendMessage(text);
+  };
+
+  const subtitle = status
+    ? REPLAY_STATUS_LABEL[status] ?? status
+    : 'Connecting…';
+  const kindLabel = mode === 'interactive' ? 'interactive' : 'read-only';
 
   return (
     <div className={s.replayPage}>
@@ -171,11 +357,11 @@ function InvestigationReplayView({ id, onExit }: { id: string; onExit: () => voi
         <div>
           <div className={s.replayTitle}>Server-side investigation</div>
           <div className={s.replaySubtitle}>
-            {status ? (REPLAY_STATUS_LABEL[status] ?? status) : 'Connecting…'} · read-only replay
+            {subtitle} · {kindLabel}
           </div>
         </div>
         <button type="button" className={s.replayExit} onClick={onExit}>
-          Back to Alerts
+          New investigation
         </button>
       </div>
 
@@ -198,6 +384,40 @@ function InvestigationReplayView({ id, onExit }: { id: string; onExit: () => voi
           renderToolCard={renderApmToolCard}
         />
       </div>
+
+      {canSend && (
+        <form
+          className={s.composer}
+          onSubmit={(e) => {
+            e.preventDefault();
+            submit();
+          }}
+        >
+          <textarea
+            className={s.composerInput}
+            value={draft}
+            disabled={sending || running}
+            placeholder={
+              running ? 'Investigating…' : 'Ask a follow-up question…'
+            }
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                submit();
+              }
+            }}
+            rows={1}
+          />
+          <button
+            type="submit"
+            className={s.composerSend}
+            disabled={sending || running || !draft.trim()}
+          >
+            {sending ? 'Sending…' : 'Send'}
+          </button>
+        </form>
+      )}
     </div>
   );
 }
