@@ -299,17 +299,24 @@ cloned from `metricsRead.ts` **but `let enabled = false`** (the
 metricsEmit/metricsRead modules have a documented default-true
 discrepancy — don't copy it); hydration in `DatasetProvider.tsx`
 with the `typeof === 'boolean'` guard; Settings toggle card noting
-the re-provision requirement. Three enforcement points:
+the re-provision requirement. Two enforcement points — both on the
+app side; the cell does **not** read the flag:
 
-1. **Provision-time**: `scripts/provision.ts` loads it from KV;
-   `getProvisioningPlan()` pushes `criblapm__alert_notify` only when
-   true (pattern: the `metricsEmit` gate).
+1. **Provision-time (the on/off)**: `getProvisioningPlan()` pushes
+   `criblapm__alert_notify` only when true. Flag off → no notify
+   search → nothing ever fires at the cell. Turning off is a
+   re-provision, not an instant toggle. (The CLI can't read the
+   app-scoped flag, so a deploy sets `SERVER_INVESTIGATIONS=true` on
+   `scripts/provision.ts` explicitly.)
 2. **UI**: badges/links/drill-in render only when true.
-3. **Cell kill switch**: the cell re-reads `settings/app` KV
-   (machine creds) with ~60s cache on every `/alerts/fire`; false →
-   202-and-drop. Plus a cell-local `DISABLED` env override. Flipping
-   the toggle stops new investigations within a minute, before
-   re-provision removes the notify search.
+
+The cell doesn't consult the flag: a trigger reaching `/alerts/fire`
+already implies the notify search exists, i.e. the feature is on. (An
+earlier design had the cell re-read `settings/app` KV, but a machine
+token resolves the unscoped, empty KV namespace and can't see the
+app-scoped setting — so that read always failed closed and was
+removed.) A per-node `DISABLED` env var remains as an operator kill
+switch for an individual cell.
 
 ## Secrets
 

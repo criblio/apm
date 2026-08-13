@@ -21,60 +21,20 @@
 import type { Env } from './env';
 import { CoordinatorDO } from './coordinatorDO';
 import { InvestigationDO } from './investigationDO';
-import { CriblClient } from './criblClient';
 import { mintTicket, verifyTicket } from './tickets';
 import type { FiringAlert } from './protocol';
 
 export { CoordinatorDO, InvestigationDO };
 
 /**
- * KV kill-switch cache. The app's `serverInvestigations` Settings
- * toggle must stop new investigations within ~a minute even before a
- * re-provision removes the trigger search. Posture on unknown:
- * serve the last-known value through transient KV failures, but if
- * the flag has NEVER been readable, fail closed — matching the
- * feature's off-by-default contract.
+ * The `serverInvestigations` flag is enforced where it belongs — the
+ * app side — not here. When it's off, `getProvisioningPlan()` doesn't
+ * create the notify search, so no webhook ever fires at the cell; and
+ * the UI hides the badges/replay. A trigger arriving at `/alerts/fire`
+ * therefore already means the feature is on. The cell doesn't (and
+ * can't: a machine token resolves the unscoped, empty KV namespace)
+ * read the flag. `DISABLED` remains a per-node operator kill switch.
  */
-const FLAG_TTL_MS = 60_000;
-let flagCache: { value: boolean; at: number } | null = null;
-
-async function serverInvestigationsEnabled(env: Env): Promise<boolean> {
-  // Operator override for the case where the KV flag is unreadable.
-  // The app writes `serverInvestigations` to APP-SCOPED KV
-  // (/api/v1/a/{appId}/kvstore/...), which a machine
-  // (client-credentials) token cannot reach — it resolves the
-  // unscoped /api/v1/kvstore path, a different, empty namespace. So
-  // when the cell is wired with a machine token the KV read always
-  // returns null and the switch fails closed. Until the flag lives
-  // somewhere the cell can read (app-scoped KV access, or a
-  // cell-owned KV key), FORCE_ENABLE='on' lets an operator turn the
-  // feature on deliberately. DISABLED still wins.
-  if (env.FORCE_ENABLE === 'on') return true;
-
-  const { CRIBL_BASE_URL, CRIBL_CLIENT_ID, CRIBL_CLIENT_SECRET, CRIBL_DEV_TOKEN } = env;
-  if (!CRIBL_BASE_URL || (!CRIBL_DEV_TOKEN && (!CRIBL_CLIENT_ID || !CRIBL_CLIENT_SECRET))) {
-    // No Cribl wiring at all (local scaffold/dev) — nothing to
-    // consult; the DISABLED env var remains the only switch.
-    return true;
-  }
-  if (flagCache && Date.now() - flagCache.at < FLAG_TTL_MS) {
-    return flagCache.value;
-  }
-  const cribl = new CriblClient({
-    baseUrl: CRIBL_BASE_URL,
-    clientId: CRIBL_CLIENT_ID ?? '',
-    clientSecret: CRIBL_CLIENT_SECRET ?? '',
-    dataset: env.CRIBL_DATASET ?? 'otel',
-    devToken: CRIBL_DEV_TOKEN,
-  });
-  const flag = await cribl.readServerInvestigationsFlag();
-  if (flag !== null) {
-    flagCache = { value: flag, at: Date.now() };
-    return flag;
-  }
-  if (flagCache) return flagCache.value; // stale-but-known beats guessing
-  return false; // never readable → closed
-}
 
 function unauthorized(): Response {
   return Response.json({ error: 'unauthorized' }, { status: 401 });
@@ -112,14 +72,11 @@ export default {
 
     if (url.pathname === '/alerts/fire' && request.method === 'POST') {
       if (!bearerOk(request, env.WEBHOOK_BEARER)) return unauthorized();
-      // Kill switches: acknowledge and drop. 202 keeps the
-      // notification target from retrying a delivery we intend to
-      // ignore. DISABLED (env) is checked first, then the app's KV
-      // serverInvestigations flag (~60s cache).
+      // Per-node operator kill switch: acknowledge and drop. 202
+      // keeps the notification target from retrying a delivery we
+      // intend to ignore. (The feature-level on/off is enforced app
+      // side by whether the notify search exists at all.)
       if (env.DISABLED === 'true') {
-        return Response.json({ accepted: 0, disabled: true }, { status: 202 });
-      }
-      if (!(await serverInvestigationsEnabled(env))) {
         return Response.json({ accepted: 0, disabled: true }, { status: 202 });
       }
       let alerts: FiringAlert[];
