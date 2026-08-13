@@ -93,33 +93,3 @@
   gap: var(--cds-space-sm);
   overflow-y: auto;
 }
-.replayUser {
-  font-size: var(--cds-font-size-xs);
-  color: var(--cds-color-text-subtle);
-  font-style: italic;
-}
-.replayAssistant {
-  white-space: pre-wrap;
-  line-height: 1.5;
-}
-.replayToolCall {
-  font-family: var(--cds-font-family-mono);
-  font-size: var(--cds-font-size-xs);
-  color: var(--cds-color-text-subtle);
-}
-.replayToolStatus {
-  opacity: 0.7;
-}
-.replaySummary {
-  padding: var(--cds-space-sm);
-  border-left: 3px solid var(--cds-color-success);
-  background: var(--cds-color-bg-subtle);
-}
-.replaySummaryLabel {
-  font-weight: var(--cds-font-weight-bold);
-  margin-bottom: var(--cds-space-xs);
-}
-.replayThinking {
-  color: var(--cds-color-text-subtle);
-  font-size: var(--cds-font-size-xs);
-}

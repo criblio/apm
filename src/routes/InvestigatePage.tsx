@@ -18,10 +18,7 @@
  */
 import { useCallback, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import {
-  InvestigatorChat,
-  type InvestigatorTranscriptEntry,
-} from '@cribl/app-utils/investigator';
+import { InvestigatorChat, InvestigatorTranscript } from '@cribl/app-utils/investigator';
 import MetricsToolCard from '@cribl/app-utils/investigator/metrics-tool-card';
 import { getCurrentDataset } from '@cribl/app-utils/dataset';
 import { useInvestigationReplay } from '../hooks/useInvestigationReplay';
@@ -158,16 +155,12 @@ const REPLAY_STATUS_LABEL: Record<string, string> = {
 /**
  * Read-only replay of a server-side investigation. Drives the shared
  * `applyLoopEvent` reducer over the cell's event stream via
- * `useInvestigationReplay`, so the transcript is byte-identical to a
- * live client run.
- *
- * NOTE: the per-entry rendering below is the compact interim view.
- * Once framework PR #23 (`InvestigatorTranscript`) merges and the
- * framework SHA is bumped, replace the entry map with:
- *   <InvestigatorTranscript entries={entries} running={running}
- *     renderToolCard={renderApmToolCard} />
- * to get the rich Search/Summary/Trace cards. The data layer
- * (hook + transport) does not change.
+ * `useInvestigationReplay`, then renders the entries through the same
+ * `InvestigatorTranscript` view the live client uses — so a replayed
+ * investigation is pixel-identical to a live one, including the
+ * Search/Summary cards and the APM trace waterfall (via
+ * `renderApmToolCard`). Approval handlers are omitted: server runs
+ * never pause for a human, and replay is read-only.
  */
 function InvestigationReplayView({ id, onExit }: { id: string; onExit: () => void }) {
   const { entries, status, running, error } = useInvestigationReplay(id);
@@ -199,41 +192,12 @@ function InvestigationReplayView({ id, onExit }: { id: string; onExit: () => voi
       )}
 
       <div className={s.replayTranscript}>
-        {entries.map((entry) => (
-          <ReplayEntry key={entry.id} entry={entry} />
-        ))}
-        {running && <div className={s.replayThinking}>▋ thinking…</div>}
+        <InvestigatorTranscript
+          entries={entries}
+          running={running}
+          renderToolCard={renderApmToolCard}
+        />
       </div>
-    </div>
-  );
-}
-
-function ReplayEntry({ entry }: { entry: InvestigatorTranscriptEntry }) {
-  if (entry.kind === 'user') {
-    // The seed prompt is large boilerplate; show a short marker
-    // rather than the full dataset-schema preamble.
-    return <div className={s.replayUser}>Investigation started.</div>;
-  }
-  if (entry.kind === 'assistant') {
-    return <div className={s.replayAssistant}>{entry.content}</div>;
-  }
-  if (entry.kind === 'error') {
-    return <div className={s.toolResultError}>{entry.message}</div>;
-  }
-  // toolCall
-  const name = entry.call.function.name;
-  const ui = entry.result?.ui as { kind?: string; conclusion?: string } | undefined;
-  if (name === 'present_investigation_summary' && ui?.conclusion) {
-    return (
-      <div className={s.replaySummary}>
-        <div className={s.replaySummaryLabel}>📋 Conclusion</div>
-        <div>{ui.conclusion}</div>
-      </div>
-    );
-  }
-  return (
-    <div className={s.replayToolCall}>
-      🔧 {name} <span className={s.replayToolStatus}>({entry.status})</span>
     </div>
   );
 }
