@@ -49,3 +49,47 @@
   border-radius: var(--cds-radius-sm);
   background: var(--cds-color-bg-subtle);
 }
+
+/* ── Server-side investigation replay (read-only) ──────────────────
+ * Compact interim styling; the transcript body is replaced by the
+ * shared InvestigatorTranscript view once framework PR #23 lands. */
+.replayPage {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  gap: var(--cds-space-md);
+}
+.replayHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: var(--cds-space-sm);
+  border-bottom: 1px solid var(--cds-color-border-subtle);
+}
+.replayTitle {
+  font-size: var(--cds-font-size-md);
+  font-weight: var(--cds-font-weight-bold);
+}
+.replaySubtitle {
+  font-size: var(--cds-font-size-xs);
+  color: var(--cds-color-text-subtle);
+}
+.replayExit {
+  padding: var(--cds-space-xs) var(--cds-space-sm);
+  border: 1px solid var(--cds-color-border-subtle);
+  border-radius: var(--cds-radius-sm);
+  background: var(--cds-color-bg-subtle);
+  cursor: pointer;
+  font-size: var(--cds-font-size-xs);
+}
+.replayEmpty {
+  padding: var(--cds-space-lg);
+  color: var(--cds-color-text-subtle);
+  text-align: center;
+}
+.replayTranscript {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cds-space-sm);
+  overflow-y: auto;
+}

@@ -18,9 +18,10 @@
  */
 import { useCallback, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { InvestigatorChat } from '@cribl/app-utils/investigator';
+import { InvestigatorChat, InvestigatorTranscript } from '@cribl/app-utils/investigator';
 import MetricsToolCard from '@cribl/app-utils/investigator/metrics-tool-card';
 import { getCurrentDataset } from '@cribl/app-utils/dataset';
+import { useInvestigationReplay } from '../hooks/useInvestigationReplay';
 // Side effect: pins the analytics surface tag ('criblApmInvestigation')
 // before the shell runs its first loop.
 import '../api/agent';
@@ -108,11 +109,20 @@ export default function InvestigatePage() {
   const navigate = useNavigate();
   const seed = (location.state as LocationState | null)?.seed;
 
+  // `?investigation=<id>` opens a read-only replay of a server-side
+  // investigation (from an Alerts-page badge). It takes precedence
+  // over any router seed.
+  const replayId = new URLSearchParams(location.search).get('investigation');
+
   // Clear the seed from location state once the shell consumes it
   // so a reload doesn't re-fire the same investigation.
   const handleSeedConsumed = useCallback(() => {
     navigate(location.pathname, { replace: true, state: {} });
   }, [navigate, location.pathname]);
+
+  if (replayId) {
+    return <InvestigationReplayView id={replayId} onExit={() => navigate('/alerts')} />;
+  }
 
   return (
     <InvestigatorChat<InvestigationSeed>
@@ -131,6 +141,64 @@ export default function InvestigatePage() {
       renderToolCard={renderApmToolCard}
       onSeedConsumed={handleSeedConsumed}
     />
+  );
+}
+
+const REPLAY_STATUS_LABEL: Record<string, string> = {
+  queued: 'Queued',
+  running: 'Investigating…',
+  concluded: 'Investigated',
+  failed: 'Investigation failed',
+  cancelled: 'Investigation cancelled',
+};
+
+/**
+ * Read-only replay of a server-side investigation. Drives the shared
+ * `applyLoopEvent` reducer over the cell's event stream via
+ * `useInvestigationReplay`, then renders the entries through the same
+ * `InvestigatorTranscript` view the live client uses — so a replayed
+ * investigation is pixel-identical to a live one, including the
+ * Search/Summary cards and the APM trace waterfall (via
+ * `renderApmToolCard`). Approval handlers are omitted: server runs
+ * never pause for a human, and replay is read-only.
+ */
+function InvestigationReplayView({ id, onExit }: { id: string; onExit: () => void }) {
+  const { entries, status, running, error } = useInvestigationReplay(id);
+
+  return (
+    <div className={s.replayPage}>
+      <div className={s.replayHeader}>
+        <div>
+          <div className={s.replayTitle}>Server-side investigation</div>
+          <div className={s.replaySubtitle}>
+            {status ? (REPLAY_STATUS_LABEL[status] ?? status) : 'Connecting…'} · read-only replay
+          </div>
+        </div>
+        <button type="button" className={s.replayExit} onClick={onExit}>
+          Back to Alerts
+        </button>
+      </div>
+
+      {error && (
+        <div className={s.toolResultError}>
+          Couldn’t reach the investigator: {error}
+        </div>
+      )}
+
+      {entries.length === 0 && !error && (
+        <div className={s.replayEmpty}>
+          {running ? 'Waiting for the investigation to produce output…' : 'No transcript yet.'}
+        </div>
+      )}
+
+      <div className={s.replayTranscript}>
+        <InvestigatorTranscript
+          entries={entries}
+          running={running}
+          renderToolCard={renderApmToolCard}
+        />
+      </div>
+    </div>
   );
 }
 
