@@ -15,8 +15,8 @@ export function createCellSearchClient(cribl: CriblClient): SearchClient {
   let flatFieldsProbe: Promise<boolean> | null = null;
 
   return {
-    runQuery: (kql, earliest, latest, limit, signal) =>
-      cribl.runQuery(kql, earliest, latest, limit ?? 200, signal),
+    runQuery: (kql, earliest, latest, limit) =>
+      cribl.runQuery(kql, earliest, latest, limit ?? 200),
 
     flatFields() {
       if (!flatFieldsProbe) {
