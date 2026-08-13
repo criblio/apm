@@ -42,9 +42,13 @@ export interface AppSettings {
    *  autonomous investigation on the server-side investigator cell, and
    *  the Alerts page shows investigation badges/drill-ins. Off by
    *  default (dark). Provision-time for the trigger search (re-provision
-   *  after toggling) but the cell also re-reads this flag as a kill
-   *  switch. Design: docs/research/server-investigations/design.md. */
+   *  after toggling). Design: docs/research/server-investigations/design.md. */
   serverInvestigations?: boolean;
+  /** Override for the investigator cell's base URL (the UI transport
+   *  target). Must match the domain declared in config/proxies.yml, or
+   *  the platform proxy blocks it. Unset ⇒ the pinned default in
+   *  investigationTransport.ts. */
+  cellUrl?: string;
   [k: string]: unknown;
 }
 
