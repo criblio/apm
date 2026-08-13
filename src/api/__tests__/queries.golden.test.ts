@@ -66,6 +66,7 @@ const BUILDERS: Array<{ id: string; call: () => string }> = [
   { id: 'alertHistory',                  call: () => Q.alertHistory() },
   { id: 'investigationEvents (all)',     call: () => Q.investigationEvents() },
   { id: 'investigationEvents (scoped)',  call: () => Q.investigationEvents(50, 'test-svc') },
+  { id: 'alertNotify',                   call: () => Q.alertNotify() },
   { id: 'deployEventsSend',              call: () => Q.deployEventsSend() },
   { id: 'recentDeployEvents',            call: () => Q.recentDeployEvents() },
   { id: 'noiseBudgetByService',          call: () => Q.noiseBudgetByService() },

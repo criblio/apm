@@ -814,6 +814,27 @@ export function investigationEvents(limit = 200, service?: string): string {
 }
 
 /**
+ * Trigger query for the server-side investigator. Selects the firing
+ * alert events in the search's window (run with `earliest=-15m`) and
+ * projects exactly the fields the cell's `FiringAlert` / seed builder
+ * need. The `criblapm__alert_notify` scheduled search runs this; when
+ * it returns rows, its notification target POSTs them to the cell's
+ * `/alerts/fire`, which dedupes on `event_id`. Canaries excluded.
+ */
+export function alertNotify(): string {
+  return `${datasetClause()}
+    | where ${generatedDatatypePredicate(ALERT_EVENT_DATATYPE)}
+    | where record_kind == "evaluation"
+    | where event_type == "firing"
+    | where isnull(is_canary) or tostring(is_canary) != "true"
+    | summarize _time=max(_time)
+      by event_id, alert_id, svc, signal_type, curr_error_rate, fire_count
+    | project event_id, alert_id, svc, signal_type, curr_error_rate, fire_count, _time
+    | sort by _time desc
+    | limit 50`;
+}
+
+/**
  * Noise-budget aggregation (P1.1) — per-service fire counts read
  * from the alert-history events already in the dataset. Powers the
  * "is this threshold causing too many false alarms?" question that
