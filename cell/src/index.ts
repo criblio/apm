@@ -21,10 +21,48 @@
 import type { Env } from './env';
 import { CoordinatorDO } from './coordinatorDO';
 import { InvestigationDO } from './investigationDO';
+import { CriblClient } from './criblClient';
 import { mintTicket, verifyTicket } from './tickets';
 import type { FiringAlert } from './protocol';
 
 export { CoordinatorDO, InvestigationDO };
+
+/**
+ * KV kill-switch cache. The app's `serverInvestigations` Settings
+ * toggle must stop new investigations within ~a minute even before a
+ * re-provision removes the trigger search. Posture on unknown:
+ * serve the last-known value through transient KV failures, but if
+ * the flag has NEVER been readable, fail closed — matching the
+ * feature's off-by-default contract.
+ */
+const FLAG_TTL_MS = 60_000;
+let flagCache: { value: boolean; at: number } | null = null;
+
+async function serverInvestigationsEnabled(env: Env): Promise<boolean> {
+  const { CRIBL_BASE_URL, CRIBL_CLIENT_ID, CRIBL_CLIENT_SECRET, CRIBL_DEV_TOKEN } = env;
+  if (!CRIBL_BASE_URL || (!CRIBL_DEV_TOKEN && (!CRIBL_CLIENT_ID || !CRIBL_CLIENT_SECRET))) {
+    // No Cribl wiring at all (local scaffold/dev) — nothing to
+    // consult; the DISABLED env var remains the only switch.
+    return true;
+  }
+  if (flagCache && Date.now() - flagCache.at < FLAG_TTL_MS) {
+    return flagCache.value;
+  }
+  const cribl = new CriblClient({
+    baseUrl: CRIBL_BASE_URL,
+    clientId: CRIBL_CLIENT_ID ?? '',
+    clientSecret: CRIBL_CLIENT_SECRET ?? '',
+    dataset: env.CRIBL_DATASET ?? 'otel',
+    devToken: CRIBL_DEV_TOKEN,
+  });
+  const flag = await cribl.readServerInvestigationsFlag();
+  if (flag !== null) {
+    flagCache = { value: flag, at: Date.now() };
+    return flag;
+  }
+  if (flagCache) return flagCache.value; // stale-but-known beats guessing
+  return false; // never readable → closed
+}
 
 function unauthorized(): Response {
   return Response.json({ error: 'unauthorized' }, { status: 401 });
@@ -62,9 +100,14 @@ export default {
 
     if (url.pathname === '/alerts/fire' && request.method === 'POST') {
       if (!bearerOk(request, env.WEBHOOK_BEARER)) return unauthorized();
-      // Kill switch: acknowledge and drop. 202 keeps the notification
-      // target from retrying a delivery we intend to ignore.
+      // Kill switches: acknowledge and drop. 202 keeps the
+      // notification target from retrying a delivery we intend to
+      // ignore. DISABLED (env) is checked first, then the app's KV
+      // serverInvestigations flag (~60s cache).
       if (env.DISABLED === 'true') {
+        return Response.json({ accepted: 0, disabled: true }, { status: 202 });
+      }
+      if (!(await serverInvestigationsEnabled(env))) {
         return Response.json({ accepted: 0, disabled: true }, { status: 202 });
       }
       let alerts: FiringAlert[];

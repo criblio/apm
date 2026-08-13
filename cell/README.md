@@ -7,10 +7,15 @@ runs an autonomous investigation and streams the transcript to the
 APM UI. Design and PR sequence:
 `docs/research/server-investigations/design.md`.
 
-**Status: PR 6 scaffold.** The full pipe works end-to-end with a
-stub agent (fire → dedupe → queue → alarm-driven turns → transcript
-→ WS/poll replay → conclusion). The real pi-agent-core loop, Cribl
-search tools, and dataset event commits land in PR 7.
+**Status: real agent loop (PR 7).** With LLM + Cribl config set the
+cell runs the actual investigation: pi-ai streaming against an
+OpenAI-compatible endpoint, the app's shared tool executors
+(run_search / run_metrics_query / render_trace /
+present_investigation_summary) against the Cribl API, the same
+seed + preflight the browser Investigator builds, and
+started/investigated lifecycle events committed to the dataset.
+Without LLM config the stub agent from the PR 6 scaffold runs, so
+the configless smoke keeps working.
 
 This directory is excluded from the packaged app (`files` in the
 app's package.json packaging config does not include it; the
@@ -72,10 +77,26 @@ npm run smoke
 | `UI_BEARER` | Auth for the UI's proxied calls (`kv.cellToken` in proxies.yml) |
 | `TICKET_SECRET` | HMAC key for WS tickets |
 | `DISABLED` | `"true"` drops all new triggers (local kill switch) |
+| `LLM_BASE_URL` | OpenAI-compatible endpoint base (absent ⇒ stub agent) |
+| `LLM_API_KEY` / `LLM_MODEL` | Endpoint key + model id |
+| `CRIBL_BASE_URL` | Cribl workspace base URL |
+| `CRIBL_CLIENT_ID` / `CRIBL_CLIENT_SECRET` | Machine OAuth (search tools, KV kill switch, event commits) |
+| `CRIBL_DATASET` | Telemetry dataset (default `otel`) |
+| `CRIBL_DEV_TOKEN` | Offline testing only: static bearer for a mock Cribl |
 
-PR 7 adds: `CRIBL_CLIENT_ID`/`CRIBL_CLIENT_SECRET` (search tools,
-KV-flag kill switch, dataset event commits) and the
-OpenAI-compatible endpoint key (pi-ai).
+The app's `serverInvestigations` KV flag is a second kill switch:
+the cell re-reads it (~60s cache) on every trigger; stale-but-known
+values survive KV blips, and a flag that was never readable fails
+closed.
+
+## Offline real-mode test
+
+```bash
+node scripts/mock-backends.mjs &        # scripted LLM + mock Cribl (:9370)
+# deploy + run a node with LLM_BASE_URL=http://127.0.0.1:9370/v1,
+# CRIBL_BASE_URL=http://127.0.0.1:9370, CRIBL_DEV_TOKEN=dev, then:
+npm run smoke:real
+```
 
 ## Hosting
 

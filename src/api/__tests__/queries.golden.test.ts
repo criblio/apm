@@ -64,6 +64,8 @@ const BUILDERS: Array<{ id: string; call: () => string }> = [
   { id: 'prevWindowSummary',             call: () => Q.prevWindowSummary() },
   { id: 'alertEvaluator',                call: () => Q.alertEvaluator() },
   { id: 'alertHistory',                  call: () => Q.alertHistory() },
+  { id: 'investigationEvents (all)',     call: () => Q.investigationEvents() },
+  { id: 'investigationEvents (scoped)',  call: () => Q.investigationEvents(50, 'test-svc') },
   { id: 'deployEventsSend',              call: () => Q.deployEventsSend() },
   { id: 'recentDeployEvents',            call: () => Q.recentDeployEvents() },
   { id: 'noiseBudgetByService',          call: () => Q.noiseBudgetByService() },

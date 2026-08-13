@@ -15,7 +15,20 @@
  * (re)connect with ?since=N to replay from where it left off. The
  * poll fallback (GET /events?since=N) reads the same rows.
  */
+import { setCurrentDataset } from '@cribl/app-utils/dataset';
+import {
+  buildAlertSeed,
+  buildSeedPrompt,
+  type InvestigationSeed,
+} from '../../src/api/agentContext';
+import {
+  runPreflight,
+  formatPreflightSignals,
+} from '../../src/api/agentPreflight';
+import { createApmToolExecutors } from '../../src/api/agentTools';
 import type { Env } from './env';
+import { CriblClient } from './criblClient';
+import { createCellSearchClient } from './cellSearchClient';
 import {
   PROTOCOL_VERSION,
   incidentKey,
@@ -24,10 +37,14 @@ import {
   type ServerFrame,
   type WireLoopEvent,
 } from './protocol';
+import { runRealTurn, type LlmConfig } from './agent/realTurn';
 import { stubTurnEvents } from './stubAgent';
+import type { Message, UserMessage } from '@earendil-works/pi-ai';
 
 const TURN_DELAY_MS = 1_000;
 const SCHEMA_VERSION = 1;
+/** Parity with the client loop's cap (framework agent-loop.ts). */
+const MAX_TURNS = 12;
 
 interface StartBody {
   id: string;
@@ -38,6 +55,7 @@ interface StartBody {
 export class InvestigationDO {
   private readonly state: DurableObjectState;
   private readonly env: Env;
+  private criblRef: CriblClient | null = null;
 
   /**
    * Next transcript seq to hand out. Seeded lazily from the table on
@@ -183,6 +201,13 @@ export class InvestigationDO {
       );
       await this.state.storage.put('alert', body.alert);
       this.setStatus('running', { started_at: Date.now() });
+      // The 'started' commit powers the Alerts page's "Investigating…"
+      // badge. Fire-and-forget: commitLifecycle never throws, and the
+      // coordinator's pump must not wait on a search job.
+      const startCommit = this.commitLifecycle('started');
+      if (typeof this.state.waitUntil === 'function') {
+        this.state.waitUntil(startCommit);
+      }
       await this.state.storage.setAlarm(Date.now() + TURN_DELAY_MS);
       return Response.json({ ok: true });
     }
@@ -253,6 +278,125 @@ export class InvestigationDO {
     ws.send(JSON.stringify({ type: 'ping' } satisfies ServerFrame));
   }
 
+  // ── agent-mode wiring ──────────────────────────────────────────
+
+  private llmConfig(): LlmConfig | null {
+    if (!this.env.LLM_BASE_URL) return null;
+    return {
+      baseUrl: this.env.LLM_BASE_URL,
+      apiKey: this.env.LLM_API_KEY ?? '',
+      model: this.env.LLM_MODEL ?? 'gpt-4.1',
+    };
+  }
+
+  private cribl(): CriblClient | null {
+    if (this.criblRef) return this.criblRef;
+    const { CRIBL_BASE_URL, CRIBL_CLIENT_ID, CRIBL_CLIENT_SECRET } = this.env;
+    if (!CRIBL_BASE_URL || (!this.env.CRIBL_DEV_TOKEN && (!CRIBL_CLIENT_ID || !CRIBL_CLIENT_SECRET))) {
+      return null;
+    }
+    this.criblRef = new CriblClient({
+      baseUrl: CRIBL_BASE_URL,
+      clientId: CRIBL_CLIENT_ID ?? '',
+      clientSecret: CRIBL_CLIENT_SECRET ?? '',
+      dataset: this.env.CRIBL_DATASET ?? 'otel',
+      devToken: this.env.CRIBL_DEV_TOKEN,
+    });
+    return this.criblRef;
+  }
+
+  /**
+   * First-alarm setup for real mode: build the seed exactly like the
+   * Alerts page does, enrich it with the preflight (same signals the
+   * browser injects), render the seed prompt, and persist it as
+   * history[0]. Idempotent — keyed on the stored prompt.
+   */
+  private async ensureSeeded(alert: FiringAlert, cribl: CriblClient): Promise<void> {
+    const existing = await this.state.storage.get<string>('seedPromptDone');
+    if (existing) return;
+
+    setCurrentDataset(cribl.dataset);
+    const seed: InvestigationSeed = buildAlertSeed({
+      service: alert.svc,
+      signalType: alert.signal_type,
+      errorRate: Number(alert.curr_error_rate ?? 0),
+    });
+
+    // Preflight parity with InvestigatePage.enrichSeed(): silent
+    // services, rate drops, error spikes, recent deploys — injected
+    // as known signals. Best-effort by construction (runPreflight
+    // swallows failures into an empty result).
+    const client = createCellSearchClient(cribl);
+    const preflight = await runPreflight(seed.earliest ?? '-1h', seed.latest ?? 'now', client);
+    seed.knownSignals = [
+      ...(seed.knownSignals ?? []),
+      ...formatPreflightSignals(preflight),
+    ];
+
+    const prompt = buildSeedPrompt(seed);
+    const user: UserMessage = {
+      role: 'user',
+      content: prompt,
+      timestamp: Date.now(),
+    };
+    this.state.storage.sql.exec(
+      `INSERT INTO agent_messages (message_json) VALUES (?)`,
+      JSON.stringify(user),
+    );
+    this.state.storage.sql.exec(
+      `UPDATE investigation SET seed_json = ?`,
+      JSON.stringify(seed),
+    );
+    await this.state.storage.put('seedPromptDone', true);
+  }
+
+  private history(): Message[] {
+    return this.state.storage.sql
+      .exec(`SELECT message_json FROM agent_messages ORDER BY seq`)
+      .toArray()
+      .map((r) => JSON.parse(String(r.message_json)) as Message);
+  }
+
+  private async commitLifecycle(
+    eventType: 'started' | 'investigated' | 'investigation_failed',
+    conclusionText?: string,
+  ): Promise<void> {
+    const cribl = this.cribl();
+    const row = this.row();
+    if (!cribl || !row) return;
+    const alert = await this.state.storage.get<FiringAlert>('alert');
+    try {
+      await cribl.commitInvestigationEvent({
+        event_id: `${row.id}:${eventType}`,
+        event_type: eventType,
+        alert_id: String(row.alert_id),
+        investigation_id: String(row.id),
+        trigger_event_id: String(row.trigger_event_id),
+        svc: alert?.svc ?? '',
+        signal_type: alert?.signal_type ?? '',
+        conclusion: conclusionText,
+      });
+    } catch (err) {
+      // The commit is the durable record for the Alerts page, but a
+      // Cribl outage must not fail the investigation itself. The
+      // transcript notes the gap instead.
+      this.append({
+        kind: 'notification',
+        turnId: 'lifecycle',
+        content: `Could not commit '${eventType}' event to the dataset: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    }
+  }
+
+  /** Extract a ≤1KB text snippet from a SummaryUi-shaped conclusion. */
+  private conclusionSnippet(conclusion: unknown): string {
+    if (conclusion && typeof conclusion === 'object') {
+      const c = conclusion as { conclusion?: unknown };
+      if (typeof c.conclusion === 'string') return c.conclusion;
+    }
+    return '';
+  }
+
   // ── the alarm-driven loop ──────────────────────────────────────
 
   async alarm(): Promise<void> {
@@ -261,22 +405,67 @@ export class InvestigationDO {
 
     const alert = (await this.state.storage.get<FiringAlert>('alert'))!;
     const turn = Number(row.turn ?? 0);
+    const llm = this.llmConfig();
+    const cribl = this.cribl();
 
     try {
-      // PR 7 replaces stubTurnEvents with one real pi-agent-core turn
-      // (LLM call + tool execution). The machinery around it — one
-      // turn per alarm, persist, reschedule — stays exactly this.
-      const { events, done } = stubTurnEvents(turn, alert);
-      let conclusion: unknown = null;
-      for (const ev of events) {
-        if (
-          ev.kind === 'toolResult' &&
-          ev.result.name === 'present_investigation_summary'
-        ) {
-          conclusion = ev.result.ui ?? null;
-        }
-        this.append(ev);
+      if (turn >= MAX_TURNS) {
+        const message = `Investigation hit the ${MAX_TURNS}-turn cap without concluding.`;
+        this.append({ kind: 'error', message });
+        this.setStatus('failed', { concluded_at: Date.now(), error: message });
+        await this.commitLifecycle('investigation_failed');
+        await this.notifyCoordinator('failed');
+        return;
       }
+
+      let done: boolean;
+      let conclusion: unknown = null;
+
+      if (llm && cribl) {
+        // ── real mode: one pi turn per alarm ──
+        await this.ensureSeeded(alert, cribl);
+        const executors = createApmToolExecutors({
+          client: createCellSearchClient(cribl),
+          dataset: () => cribl.dataset,
+        });
+        const result = await runRealTurn({
+          llm,
+          history: this.history(),
+          turnIndex: turn,
+          executors,
+          emit: (ev) => this.append(ev),
+        });
+        for (const m of result.newMessages) {
+          this.state.storage.sql.exec(
+            `INSERT INTO agent_messages (message_json) VALUES (?)`,
+            JSON.stringify(m),
+          );
+        }
+        if (result.errorMessage) {
+          this.append({ kind: 'error', message: result.errorMessage });
+          this.setStatus('failed', { concluded_at: Date.now(), error: result.errorMessage });
+          await this.commitLifecycle('investigation_failed');
+          await this.notifyCoordinator('failed');
+          return;
+        }
+        done = result.done;
+        conclusion = result.conclusion;
+        if (done) this.append({ kind: 'done', reason: 'complete' });
+      } else {
+        // ── stub mode (no LLM configured): scaffold behavior ──
+        const stub = stubTurnEvents(turn, alert);
+        for (const ev of stub.events) {
+          if (
+            ev.kind === 'toolResult' &&
+            ev.result.name === 'present_investigation_summary'
+          ) {
+            conclusion = ev.result.ui ?? null;
+          }
+          this.append(ev);
+        }
+        done = stub.done;
+      }
+
       this.state.storage.sql.exec(`UPDATE investigation SET turn = ?`, turn + 1);
 
       if (done) {
@@ -284,8 +473,7 @@ export class InvestigationDO {
           concluded_at: Date.now(),
           conclusion_json: conclusion == null ? null : JSON.stringify(conclusion),
         });
-        // PR 7: commit the `investigated` event to the Cribl dataset
-        // here (the durable record). PR 6 keeps the cell offline.
+        await this.commitLifecycle('investigated', this.conclusionSnippet(conclusion));
         await this.notifyCoordinator('concluded');
       } else {
         await this.state.storage.setAlarm(Date.now() + TURN_DELAY_MS);
@@ -294,6 +482,7 @@ export class InvestigationDO {
       const message = err instanceof Error ? err.message : String(err);
       this.append({ kind: 'error', message });
       this.setStatus('failed', { concluded_at: Date.now(), error: message });
+      await this.commitLifecycle('investigation_failed');
       await this.notifyCoordinator('failed');
     }
   }

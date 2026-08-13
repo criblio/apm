@@ -417,6 +417,36 @@ exports[`queries.ts — golden snapshots + invariants > findTraces (no filters) 
     | limit 20"
 `;
 
+exports[`queries.ts — golden snapshots + invariants > investigationEvents (all) > snapshot stable 1`] = `
+"dataset="otel"
+    | where coalesce(tostring(data_datatype), tostring(datatype)) == "criblapm_alert"
+    | where record_kind == "investigation"
+    | where isnull(is_canary) or tostring(is_canary) != "true"
+
+    | summarize _time=max(_time)
+      by event_id, schema_version, event_type, alert_id,
+         investigation_id, trigger_event_id, svc, signal_type, conclusion
+    | project _time, event_id, schema_version, event_type, alert_id,
+              investigation_id, trigger_event_id, svc, signal_type, conclusion
+    | sort by _time desc
+    | limit 200"
+`;
+
+exports[`queries.ts — golden snapshots + invariants > investigationEvents (scoped) > snapshot stable 1`] = `
+"dataset="otel"
+    | where coalesce(tostring(data_datatype), tostring(datatype)) == "criblapm_alert"
+    | where record_kind == "investigation"
+    | where isnull(is_canary) or tostring(is_canary) != "true"
+    | where svc == "test-svc"
+    | summarize _time=max(_time)
+      by event_id, schema_version, event_type, alert_id,
+         investigation_id, trigger_event_id, svc, signal_type, conclusion
+    | project _time, event_id, schema_version, event_type, alert_id,
+              investigation_id, trigger_event_id, svc, signal_type, conclusion
+    | sort by _time desc
+    | limit 50"
+`;
+
 exports[`queries.ts — golden snapshots + invariants > listMetricNames > snapshot stable 1`] = `
 "dataset="otel" | where datatype == "generic_metrics"
     | where isnotnull(_metric)

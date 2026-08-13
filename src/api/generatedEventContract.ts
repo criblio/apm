@@ -51,6 +51,79 @@ export interface DeployEvent extends GeneratedEventBase {
   n_spans: number;
 }
 
+/**
+ * Server-side investigation lifecycle, committed by the investigator
+ * cell (producer `criblapm_cell_investigator`) through the same
+ * `| export tee=true to search` boundary as evaluations. Uses
+ * `record_kind: 'investigation'` and event_types disjoint from the
+ * evaluation set, so every existing reader (state join, history,
+ * noise budget) is blind to these rows by construction.
+ */
+export const INVESTIGATION_PRODUCER = 'criblapm_cell_investigator';
+
+export type InvestigationEventType =
+  | 'started'
+  | 'investigated'
+  | 'investigation_failed';
+
+export interface InvestigationEvent extends GeneratedEventBase {
+  datatype: typeof ALERT_EVENT_DATATYPE;
+  record_kind: 'investigation';
+  event_type: InvestigationEventType;
+  alert_id: string;
+  investigation_id: string;
+  /** event_id of the firing evaluation row that triggered this run. */
+  trigger_event_id: string;
+  svc: string;
+  signal_type: string;
+  /** ≤1KB summary snippet; only on `investigated`. */
+  conclusion?: string;
+}
+
+/** Max stored conclusion length — a snippet for the Alerts page, not
+ *  the transcript (that lives in the cell, keyed by investigation_id). */
+export const INVESTIGATION_CONCLUSION_MAX = 1024;
+
+function kqlStr(value: string): string {
+  return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+}
+
+/**
+ * KQL that commits one investigation lifecycle event. Shared by the
+ * cell (which runs it as a search job) and the contract canary, so
+ * the write shape can't drift from the interface above.
+ */
+export function investigationEventCommitQuery(
+  ev: Omit<InvestigationEvent, 'datatype' | 'record_kind' | 'schema_version' | 'producer'>,
+  dataset: string,
+): string {
+  for (const [field, value] of Object.entries({
+    event_id: ev.event_id,
+    alert_id: ev.alert_id,
+    investigation_id: ev.investigation_id,
+    trigger_event_id: ev.trigger_event_id,
+  })) {
+    if (!value || typeof value !== 'string') {
+      throw new Error(`investigation event ${field} must be a non-empty string`);
+    }
+  }
+  const conclusion = (ev.conclusion ?? '').slice(0, INVESTIGATION_CONCLUSION_MAX);
+  const canary = ev.is_canary ? `, is_canary=true` : '';
+  return `print datatype="${ALERT_EVENT_DATATYPE}",
+      schema_version=tolong(${GENERATED_EVENT_SCHEMA_VERSION}),
+      event_id=${kqlStr(ev.event_id)},
+      producer="${INVESTIGATION_PRODUCER}",
+      record_kind="investigation",
+      event_type=${kqlStr(ev.event_type)},
+      alert_id=${kqlStr(ev.alert_id)},
+      investigation_id=${kqlStr(ev.investigation_id)},
+      trigger_event_id=${kqlStr(ev.trigger_event_id)},
+      svc=${kqlStr(ev.svc)},
+      signal_type=${kqlStr(ev.signal_type)},
+      conclusion=${kqlStr(conclusion)}${canary}
+    | export tee=true to search ${kqlStr(dataset)}`;
+}
+
 export function generatedDatatypePredicate(datatype: string): string {
   if (datatype !== ALERT_EVENT_DATATYPE && datatype !== DEPLOY_EVENT_DATATYPE) {
     throw new Error(`unsupported generated-event datatype: ${datatype}`);

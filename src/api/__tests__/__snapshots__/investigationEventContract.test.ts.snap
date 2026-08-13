@@ -1,0 +1,17 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`investigationEventCommitQuery > produces the pinned commit shape 1`] = `
+"print datatype="criblapm_alert",
+      schema_version=tolong(1),
+      event_id="inv-abc:investigated",
+      producer="criblapm_cell_investigator",
+      record_kind="investigation",
+      event_type="investigated",
+      alert_id="auto:health:payment",
+      investigation_id="inv-abc",
+      trigger_event_id="criblapm:alert:criblapm-eval:123:auto:health:payment",
+      svc="payment",
+      signal_type="error_rate",
+      conclusion="Root cause: bad deploy."
+    | export tee=true to search "otel""
+`;

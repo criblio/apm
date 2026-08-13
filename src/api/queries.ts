@@ -788,6 +788,32 @@ export function alertHistory(
 }
 
 /**
+ * Server-side investigation lifecycle events committed by the
+ * investigator cell (record_kind='investigation'). The Alerts page
+ * joins these to incidents by alert_id + time to render
+ * "Investigating…"/"Investigated" badges and the drill-in link
+ * (investigation_id). Latest event per investigation wins.
+ */
+export function investigationEvents(limit = 200, service?: string): string {
+  const safeLimit = Math.max(1, Math.min(2_000, Math.trunc(limit)));
+  const serviceFilter = service
+    ? `| where svc == ${kqlStringLiteral(service)}`
+    : '';
+  return `${datasetClause()}
+    | where ${generatedDatatypePredicate(ALERT_EVENT_DATATYPE)}
+    | where record_kind == "investigation"
+    | where isnull(is_canary) or tostring(is_canary) != "true"
+    ${serviceFilter}
+    | summarize _time=max(_time)
+      by event_id, schema_version, event_type, alert_id,
+         investigation_id, trigger_event_id, svc, signal_type, conclusion
+    | project _time, event_id, schema_version, event_type, alert_id,
+              investigation_id, trigger_event_id, svc, signal_type, conclusion
+    | sort by _time desc
+    | limit ${safeLimit}`;
+}
+
+/**
  * Noise-budget aggregation (P1.1) — per-service fire counts read
  * from the alert-history events already in the dataset. Powers the
  * "is this threshold causing too many false alarms?" question that
