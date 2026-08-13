@@ -16,7 +16,7 @@
  *   - the render_trace result card, drawn with APM's SpanTree
  *     waterfall.
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { InvestigatorChat, InvestigatorTranscript } from '@cribl/app-utils/investigator';
 import MetricsToolCard from '@cribl/app-utils/investigator/metrics-tool-card';
@@ -24,6 +24,8 @@ import { getCurrentDataset } from '@cribl/app-utils/dataset';
 import { useInvestigationSession } from '../hooks/useInvestigationSession';
 import { useServerInvestigations } from '../hooks/useServerInvestigations';
 import { createInvestigation } from '../api/investigationTransport';
+import InvestigationsSidebar from '../components/InvestigationsSidebar';
+import sidebar from '../components/InvestigationsSidebar.module.css';
 // Side effect: pins the analytics surface tag ('criblApmInvestigation')
 // before the shell runs its first loop.
 import '../api/agent';
@@ -139,45 +141,54 @@ export default function InvestigatePage() {
     navigate(location.pathname, { replace: true, state: {} });
   }, [navigate, location.pathname]);
 
-  if (investigationId) {
+  // Flag off: the classic in-browser client Investigator (no server
+  // record, so no recall panel).
+  if (!serverMode) {
     return (
+      <InvestigatorChat<InvestigationSeed>
+        seed={seed}
+        title="Copilot Investigation"
+        subtitle="AI-assisted root-cause analysis on Cribl APM data"
+        emptyStateTitle="Cribl APM Copilot"
+        emptyStateHint="Ask a question about your services, traces, logs, or metrics — or start from one of these:"
+        emptyStateSuggestions={EMPTY_SUGGESTIONS}
+        buildSeedPrompt={buildSeedPrompt}
+        enrichSeed={enrichSeed}
+        toolDefinitions={APM_TOOL_DEFINITIONS}
+        buildContext={buildContext}
+        executeToolCall={executeToolCall}
+        requiresApproval={requiresApproval}
+        renderToolCard={renderApmToolCard}
+        onSeedConsumed={handleSeedConsumed}
+      />
+    );
+  }
+
+  // Server mode: the recall panel wraps whichever view is active.
+  //  - `?investigation=<id>` → open that investigation (interactive or
+  //    read-only).
+  //  - a seed from an Investigate button → create one, then redirect.
+  //  - otherwise → a composer to start a fresh one.
+  let content: ReactNode;
+  if (investigationId) {
+    content = (
       <ServerInvestigationView
         id={investigationId}
         openingPrompt={openingPrompt}
         onExit={() => navigate('/investigate')}
       />
     );
+  } else if (seed) {
+    content = <CreatingInvestigation seed={seed} />;
+  } else {
+    content = <NewServerInvestigation />;
   }
 
-  // Server mode: every investigation runs on the cell. A seed handed
-  // from an Investigate button creates one and redirects; with no seed
-  // we show a composer to start a fresh one.
-  if (serverMode) {
-    return seed ? (
-      <CreatingInvestigation seed={seed} />
-    ) : (
-      <NewServerInvestigation />
-    );
-  }
-
-  // Flag off: the classic in-browser client Investigator.
   return (
-    <InvestigatorChat<InvestigationSeed>
-      seed={seed}
-      title="Copilot Investigation"
-      subtitle="AI-assisted root-cause analysis on Cribl APM data"
-      emptyStateTitle="Cribl APM Copilot"
-      emptyStateHint="Ask a question about your services, traces, logs, or metrics — or start from one of these:"
-      emptyStateSuggestions={EMPTY_SUGGESTIONS}
-      buildSeedPrompt={buildSeedPrompt}
-      enrichSeed={enrichSeed}
-      toolDefinitions={APM_TOOL_DEFINITIONS}
-      buildContext={buildContext}
-      executeToolCall={executeToolCall}
-      requiresApproval={requiresApproval}
-      renderToolCard={renderApmToolCard}
-      onSeedConsumed={handleSeedConsumed}
-    />
+    <div className={sidebar.layout}>
+      <InvestigationsSidebar activeId={investigationId} />
+      <div className={sidebar.main}>{content}</div>
+    </div>
   );
 }
 
