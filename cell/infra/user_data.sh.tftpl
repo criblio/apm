@@ -64,13 +64,44 @@ systemctl daemon-reload
 systemctl enable --now celld
 
 # ── Caddy: TLS termination + reverse proxy ───────────────────────
+# AL2023 has no `caddy` package (dnf: "Unable to find a match"), so we
+# install the official static binary and write our own unit. Caddy
+# handles ACME itself on the first request to $DOMAIN.
 if [ -n "$DOMAIN" ]; then
-  dnf install -y caddy
+  CADDY_VERSION="${caddy_version}"
+  curl -fsSL -o /tmp/caddy.tar.gz \
+    "https://github.com/caddyserver/caddy/releases/download/v$CADDY_VERSION/caddy_$${CADDY_VERSION}_linux_arm64.tar.gz"
+  tar -xzf /tmp/caddy.tar.gz -C /tmp caddy
+  install -m 0755 /tmp/caddy /usr/local/bin/caddy
+  /usr/local/bin/caddy version
+
+  mkdir -p /etc/caddy /var/lib/caddy
   cat > /etc/caddy/Caddyfile <<EOF
 $DOMAIN {
 	reverse_proxy 127.0.0.1:8787
 }
 EOF
+
+  cat > /etc/systemd/system/caddy.service <<'EOF'
+[Unit]
+Description=Caddy — TLS termination for the cell node
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Environment=XDG_DATA_HOME=/var/lib
+ExecStart=/usr/local/bin/caddy run --config /etc/caddy/Caddyfile
+ExecReload=/usr/local/bin/caddy reload --config /etc/caddy/Caddyfile --force
+Restart=always
+RestartSec=2
+User=root
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+  systemctl daemon-reload
   systemctl enable --now caddy
 else
   echo "No domain set — skipping Caddy. celld listens on 127.0.0.1:8787 only." >&2

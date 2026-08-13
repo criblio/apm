@@ -1,13 +1,13 @@
 variable "region" {
   description = "AWS region for the cell."
   type        = string
-  default     = "us-east-1"
+  default     = "us-west-2"
 }
 
 variable "aws_profile" {
   description = "AWS CLI profile (SSO) to authenticate with."
   type        = string
-  default     = "apm-cell"
+  default     = "test"
 }
 
 variable "bucket_name" {
@@ -15,11 +15,6 @@ variable "bucket_name" {
   type        = string
 }
 
-variable "domain" {
-  description = "Public hostname for the cell (Caddy terminates TLS via ACME). Leave empty to skip Caddy and serve plain HTTP on :8080 — dev only; Cribl webhooks and the platform proxy require HTTPS."
-  type        = string
-  default     = ""
-}
 
 variable "instance_type" {
   description = "EC2 instance type (arm64 — celld ships an aarch64 binary)."
@@ -28,9 +23,15 @@ variable "instance_type" {
 }
 
 variable "celld_version" {
-  description = "celld release tag to install."
+  description = "celld release tag to install. v0.2.0+ splits the public listener from an internal peer/operator listener; our public listener is loopback-only behind Caddy, so no --internal-listen is required. A fleet must never mix v0.1.0 and v0.2.0 nodes (block-format replication objects are not backward-readable) — upgrade by replacing every node, not rolling."
   type        = string
-  default     = "v0.1.0"
+  default     = "v0.2.0"
+}
+
+variable "caddy_version" {
+  description = "Caddy release version (no leading v). Installed from the official GitHub static binary — AL2023 has no caddy package."
+  type        = string
+  default     = "2.10.2"
 }
 
 variable "ssm_parameter_prefix" {
