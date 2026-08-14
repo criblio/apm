@@ -24,6 +24,12 @@ export interface WireToolCall {
 }
 
 export type WireLoopEvent =
+  // A user's turn (interactive investigations): the opening prompt or a
+  // follow-up message. Recorded as a transcript event so a reopened
+  // session replays the user's side of the conversation, not just the
+  // assistant's. Not a framework LoopEvent — the UI renders it as a
+  // user bubble directly.
+  | { kind: 'userMessage'; turnId: string; content: string }
   | { kind: 'assistantText'; turnId: string; chunk: string }
   | { kind: 'assistantDone'; turnId: string }
   | {

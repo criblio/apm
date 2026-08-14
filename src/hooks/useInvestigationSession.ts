@@ -12,11 +12,11 @@
  *   - stops polling when the run parks at `idle` (a follow-up
  *     re-subscribes), so an idle conversation isn't polled forever.
  *
- * v1 replay-fidelity note: reopening a *past* multi-turn conversation
- * shows the opening question + every assistant/tool event, but not the
- * intermediate user follow-up prompts (the cell stores them in agent
- * history, not as replayable events). A live session shows everything
- * because sendMessage appends the user bubble locally.
+ * Reopening a past multi-turn conversation replays the user's side too:
+ * the cell records each follow-up as a `userMessage` transcript event,
+ * which this hook renders as a user bubble (deduped against the local
+ * optimistic append during a live send). The opening question comes
+ * from the stored seed.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -75,6 +75,11 @@ export function useInvestigationSession(
 
   const seqRef = useRef(0);
   const unsubRef = useRef<(() => void) | null>(null);
+  // Contents of optimistically-appended user turns awaiting their echo
+  // from the cell's userMessage frames. Lets us skip the streamed copy
+  // of a message we already rendered locally (live send), while still
+  // appending user turns we've never seen (replay of a saved session).
+  const pendingUserRef = useRef<string[]>([]);
   // Guards a stale async setup (id changed / unmounted) from wiring a
   // subscription for the previous investigation.
   const genRef = useRef(0);
@@ -87,6 +92,15 @@ export function useInvestigationSession(
         onEvent: (ev, seq) => {
           seqRef.current = Math.max(seqRef.current, seq);
           setEntries((prev) => applyLoopEvent(prev, ev));
+        },
+        onUserMessage: (content, seq) => {
+          seqRef.current = Math.max(seqRef.current, seq);
+          // Dedup the echo of a message we already appended optimistically.
+          if (pendingUserRef.current[0] === content) {
+            pendingUserRef.current.shift();
+            return;
+          }
+          setEntries((prev) => [...prev, userEntry(content)]);
         },
         onStatus: (s) => setStatus(s),
         onError: (err) => setError(err instanceof Error ? err.message : String(err)),
@@ -101,6 +115,7 @@ export function useInvestigationSession(
     unsubRef.current?.();
     unsubRef.current = null;
     seqRef.current = 0;
+    pendingUserRef.current = [];
     setError(null);
     setStatus(null);
 
@@ -149,8 +164,10 @@ export function useInvestigationSession(
       if (!id || !text || sending) return;
       setSending(true);
       setError(null);
-      // Optimistic: show the user's turn before the round-trip.
+      // Optimistic: show the user's turn before the round-trip, and record
+      // it so we skip the cell's echoed userMessage frame for it.
       setEntries((prev) => [...prev, userEntry(text)]);
+      pendingUserRef.current.push(text);
       try {
         await sendInvestigationMessage(id, text);
         // The prior subscription stopped at idle; resume from where we
