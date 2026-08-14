@@ -20,9 +20,16 @@ import { listTraceOriginators, type TraceOriginatorRow } from '../api/search';
 import { useStreamFilterEnabled } from '../hooks/useStreamFilter';
 import { useLowVolumeMode } from '../hooks/useLowVolumeMode';
 import { useServerInvestigations } from '../hooks/useServerInvestigations';
-import { setServerInvestigations } from '../api/serverInvestigations';
-import { setCellBaseUrl } from '../api/investigationTransport';
+import { setServerInvestigations, getServerInvestigations } from '../api/serverInvestigations';
+import { setCellBaseUrl, getCellBaseUrl } from '../api/investigationTransport';
 import { kvGet, kvPut } from '../api/kvstore';
+import {
+  ensureCellWebhookTarget,
+  ensureAlertNotification,
+  removeAlertNotification,
+} from '../api/cellProvisioning';
+import type { HttpClient } from '../api/provisioner';
+import type { ProvisioningExtraStep } from '@cribl/app-utils/provisioning-panel';
 import { useSearchCadence } from '../hooks/useSearchCadence';
 import s from './SettingsPage.module.css';
 
@@ -61,6 +68,8 @@ export default function SettingsPage() {
   const [cellUrlSaving, setCellUrlSaving] = useState(false);
   const [cellToken, setCellToken] = useState('');
   const [cellTokenSaving, setCellTokenSaving] = useState(false);
+  const [cellWebhookBearer, setCellWebhookBearer] = useState('');
+  const [cellWebhookBearerSaving, setCellWebhookBearerSaving] = useState(false);
   const [cadenceSaving, setCadenceSaving] = useState(false);
   const [disabledRules, setDisabledRules] = useState<Record<string, boolean>>({});
   const [rulesSaving, setRulesSaving] = useState(false);
@@ -88,6 +97,12 @@ export default function SettingsPage() {
     // `kv.cellToken`), stored raw so the proxy injects it verbatim.
     kvGet<string>('cellToken')
       .then((t) => { if (typeof t === 'string') setCellToken(t); })
+      .catch(() => {});
+    // The cell's WEBHOOK_BEARER (its /alerts/fire bearer). Stored in KV
+    // so browser provisioning can create the webhook target — the same
+    // secret the CLI reads from CELL_WEBHOOK_BEARER.
+    kvGet<string>('cellWebhookBearer')
+      .then((t) => { if (typeof t === 'string') setCellWebhookBearer(t); })
       .catch(() => {});
     listTraceOriginators()
       .then(setOriginators)
@@ -259,6 +274,61 @@ export default function SettingsPage() {
     }
   }
 
+  async function handleSaveCellWebhookBearer() {
+    if (cellWebhookBearerSaving) return;
+    const token = cellWebhookBearer.trim();
+    if (!token) {
+      setError('Enter the cell’s webhook bearer to save.');
+      return;
+    }
+    setCellWebhookBearerSaving(true);
+    setError(null);
+    try {
+      // Must match the cell's WEBHOOK_BEARER (its /alerts/fire bearer).
+      // Used by "Provision" below to create the webhook notification target.
+      await kvPut('cellWebhookBearer', token);
+      setCellWebhookBearer(token);
+      setFlash('Cell webhook bearer saved. Re-run Provision to (re)create the webhook target.');
+      setTimeout(() => setFlash(null), 8000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setCellWebhookBearerSaving(false);
+    }
+  }
+
+  // Runs on the shared ProvisioningPanel's "Apply", after the search
+  // reconcile — the SAME cell-trigger wiring scripts/provision.ts does,
+  // so UI and CLI provisioning are identical. When server investigations
+  // is off it tears the notification down; when on it ensures the webhook
+  // target (needs the Cell URL + webhook bearer above) and binds the
+  // alert-notify notification.
+  async function handleProvisionCellTrigger(
+    http: HttpClient,
+  ): Promise<ProvisioningExtraStep[]> {
+    const steps: ProvisioningExtraStep[] = [];
+    if (!getServerInvestigations()) {
+      await removeAlertNotification(http);
+      steps.push({ label: 'Alert trigger: removed (server investigations off)', ok: true });
+      return steps;
+    }
+    const url = getCellBaseUrl();
+    const bearer = cellWebhookBearer.trim();
+    if (url && bearer) {
+      const t = await ensureCellWebhookTarget(http, { cellUrl: url, bearer });
+      steps.push({ label: `Webhook target: ${t} (${url})`, ok: true });
+    } else {
+      steps.push({
+        label: 'Webhook target: skipped',
+        ok: false,
+        detail: 'Set the Cell URL and Cell webhook bearer above — the alert trigger cannot fire without it.',
+      });
+    }
+    const n = await ensureAlertNotification(http);
+    steps.push({ label: `Alert notification: ${n} (alert_notify → cell)`, ok: true });
+    return steps;
+  }
+
   async function handleStreamFilterToggle(next: boolean) {
     if (streamFilterSaving) return;
     if (streamFilterSaving) return;
@@ -361,6 +431,7 @@ export default function SettingsPage() {
                 plan: getProvisioningPlan,
                 seedLookups: SEED_LOOKUPS,
               }}
+              afterReconcile={handleProvisionCellTrigger}
               helpText={
                 <>
                   Cribl APM caches its expensive panel queries (Home catalog,
@@ -653,6 +724,40 @@ export default function SettingsPage() {
               disabled={cellTokenSaving}
             >
               {cellToken ? 'Generate new' : 'Generate'}
+            </button>
+          </div>
+        </div>
+
+        <div className={s.field} style={{ marginTop: 16 }}>
+          <label className={s.label} htmlFor="cell-webhook-bearer-input">
+            Cell webhook bearer (alert trigger)
+          </label>
+          <input
+            id="cell-webhook-bearer-input"
+            className={s.input}
+            type="text"
+            value={cellWebhookBearer}
+            onChange={(e) => setCellWebhookBearer(e.target.value)}
+            placeholder="Paste the cell’s WEBHOOK_BEARER"
+            spellCheck={false}
+            autoComplete="off"
+            autoCapitalize="none"
+          />
+          <div className={s.fieldHelp}>
+            The cell’s <code>WEBHOOK_BEARER</code> (its <code>/alerts/fire</code>{' '}
+            bearer — distinct from the UI token above). Stored in the app KV
+            store so <strong>Provision</strong> below can create the webhook
+            notification target that fires the cell when alerts fire. Must
+            match the cell exactly, or the trigger is rejected as unauthorized.
+          </div>
+          <div className={s.actions} style={{ marginTop: 8 }}>
+            <button
+              type="button"
+              className={s.primaryBtn}
+              onClick={() => void handleSaveCellWebhookBearer()}
+              disabled={cellWebhookBearerSaving || !cellWebhookBearer.trim()}
+            >
+              {cellWebhookBearerSaving ? 'Saving…' : 'Save webhook bearer'}
             </button>
           </div>
         </div>
