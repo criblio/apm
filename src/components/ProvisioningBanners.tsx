@@ -33,6 +33,7 @@ import { createBrowserHttpClient } from '@cribl/app-utils/provisioner';
 import { useDataset } from '@cribl/app-utils/dataset';
 import { planOnly, type PlanAction } from '../api/provisioner';
 import { getStatus as getDatasetStatus } from '../api/datasetProvisioner';
+import { useServerInvestigations } from '../hooks/useServerInvestigations';
 import { CONFIGURATION_PATH } from '../routes/paths';
 import s from './ProvisioningBanners.module.css';
 
@@ -44,6 +45,12 @@ export default function ProvisioningBanners() {
   // the check races the async settings load and compares the
   // server's plan against one built from the wrong dataset.
   const dataset = useDataset();
+  // Also a dep: getProvisioningPlan() gates criblapm__alert_notify on
+  // this flag, which loads async from KV after mount. Without it here
+  // the banner checks once with the flag still at its default and never
+  // re-checks when the real value arrives — so it flaps in/out
+  // depending on reload-vs-navigation timing.
+  const serverInvestigations = useServerInvestigations();
   const sources = useMemo<ProvisioningBannerSource[]>(
     () => {
       const http = createBrowserHttpClient();
@@ -104,8 +111,10 @@ export default function ProvisioningBanners() {
     //     the banner instead of it lingering until a full app reload.
     //     planOnly() is a saved-search list (one cheap GET), not a
     //     search job, so re-checking per navigation is inexpensive.
+    //   - serverInvestigations: gates criblapm__alert_notify in the plan;
+    //     loads async, so it must trigger a re-check when it arrives.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [dataset, location.pathname],
+    [dataset, location.pathname, serverInvestigations],
   );
 
   const banners = useProvisioningBanners(sources);

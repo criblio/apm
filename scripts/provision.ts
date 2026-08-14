@@ -19,6 +19,7 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   createNodeHttpClient,
+  listProvisioned,
   type HttpClient,
   type PlanAction,
 } from '@cribl/app-utils/provisioner';
@@ -29,6 +30,7 @@ import {
   getProvisioningPlan,
   SEED_LOOKUPS,
   CELL_WEBHOOK_TARGET_ID,
+  CRIBLAPM_PREFIX,
 } from '../src/api/provisionedSearches.js';
 import {
   apply as applyDatasetProvisioning,
@@ -185,17 +187,39 @@ async function main(): Promise<void> {
   // The `serverInvestigations` flag lives in APP-SCOPED KV, which this
   // CLI (a machine token on the unscoped path) can't read — so the
   // browser "Reconcile" sees it but `npm run provision` wouldn't.
-  // Let the deploy set it explicitly: SERVER_INVESTIGATIONS=true
-  // provisions the trigger search + webhook target. (`false` forces
-  // it off regardless of KV.)
-  if (process.env.SERVER_INVESTIGATIONS === 'true') setServerInvestigations(true);
-  else if (process.env.SERVER_INVESTIGATIONS === 'false') setServerInvestigations(false);
+  //
+  // Explicit env wins: SERVER_INVESTIGATIONS=true provisions the trigger
+  // search + webhook target; `false` forces it off (deletes them).
+  //
+  // When UNSET, do NOT default OFF — that would delete the flag-gated
+  // `criblapm__alert_notify` search out from under a UI that has the
+  // feature ON, and every routine `npm run deploy` would fight the user's
+  // setting (the source of the "searches not provisioned" banner flapping).
+  // Instead, infer the flag from the server's current state so an unset
+  // deploy neither creates nor deletes it.
+  const envFlag = process.env.SERVER_INVESTIGATIONS;
+  const flagExplicit = envFlag === 'true' || envFlag === 'false';
+  if (envFlag === 'true') setServerInvestigations(true);
+  else if (envFlag === 'false') setServerInvestigations(false);
+  else {
+    const current = await listProvisioned(http, CRIBLAPM_PREFIX);
+    const hasNotify = current.some((s) => s.id === `${CRIBLAPM_PREFIX}alert_notify`);
+    setServerInvestigations(hasNotify);
+    if (hasNotify) {
+      console.log(
+        '▶ serverInvestigations: inferred ON — preserving existing alert-notify search ' +
+          '(set SERVER_INVESTIGATIONS=false to remove it)',
+      );
+    }
+  }
 
   // The alert-notify search references the investigator-cell webhook
   // target by id, and Cribl validates target refs at search-creation
-  // time — so the target must exist before reconcile. Only when
-  // server investigations are on.
-  await ensureCellWebhookTarget(http, dryRun);
+  // time — so the target must exist before reconcile. Only ensure it on
+  // an EXPLICIT enable: when inferred from existing state the target is
+  // already present, and we must not hard-exit a routine deploy on a
+  // missing CELL_URL.
+  if (flagExplicit) await ensureCellWebhookTarget(http, dryRun);
 
   // P0.1 tripwire: refuse to push a corrupt plan to the server. The
   // June 2026 outage chain (dataset="" in 17 searches, unjoinable
