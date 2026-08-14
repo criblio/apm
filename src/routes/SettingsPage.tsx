@@ -226,8 +226,32 @@ export default function SettingsPage() {
       // proxy's `kv.cellToken` injects exactly this value.
       await kvPut('cellToken', token);
       setCellToken(token);
-      setFlash('Cell token generated. Copy it into the cell deploy as UI_BEARER (see below), then restart the cell.');
+      setFlash('Cell token generated and saved. Copy it into the cell deploy as UI_BEARER (see below), then restart the cell.');
       setTimeout(() => setFlash(null), 12000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setCellTokenSaving(false);
+    }
+  }
+
+  async function handleSaveCellToken() {
+    if (cellTokenSaving) return;
+    const token = cellToken.trim();
+    if (!token) {
+      setError('Enter a token to save, or generate one.');
+      return;
+    }
+    setCellTokenSaving(true);
+    setError(null);
+    try {
+      // Stored raw so the proxy's `kv.cellToken` injects it verbatim.
+      // Manual entry lets you paste a token already set on the cell as
+      // UI_BEARER (e.g. `openssl rand -hex 32`) instead of generating.
+      await kvPut('cellToken', token);
+      setCellToken(token);
+      setFlash('Cell token saved. It must match the cell’s UI_BEARER exactly.');
+      setTimeout(() => setFlash(null), 8000);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -597,32 +621,38 @@ export default function SettingsPage() {
             className={s.input}
             type="text"
             value={cellToken}
-            readOnly
-            placeholder="Not set — generate one"
+            onChange={(e) => setCellToken(e.target.value)}
+            placeholder="Paste a token or generate one"
             spellCheck={false}
             autoComplete="off"
-            onFocus={(e) => e.currentTarget.select()}
+            autoCapitalize="none"
           />
           <div className={s.fieldHelp}>
             The shared secret the platform proxy injects as the cell's
-            <code> Authorization</code> bearer. Generating one stores it in
-            the app KV store (read by proxies.yml as <code>kv.cellToken</code>).
-            After generating, set the <em>same</em> value on the cell as its{' '}
-            <code>UI_BEARER</code> secret and restart the cell, or the cell
-            rejects every request as unauthorized.
+            <code> Authorization</code> bearer, stored raw in the app KV store
+            (read by proxies.yml as <code>kv.cellToken</code>). Either{' '}
+            <strong>paste</strong> a token already set on the cell as its{' '}
+            <code>UI_BEARER</code> and click Save, or <strong>Generate</strong>{' '}
+            a random one and set that same value on the cell. The two must
+            match <em>exactly</em>, or the cell rejects every request as
+            unauthorized.
           </div>
           <div className={s.actions} style={{ marginTop: 8 }}>
             <button
               type="button"
               className={s.primaryBtn}
+              onClick={() => void handleSaveCellToken()}
+              disabled={cellTokenSaving || !cellToken.trim()}
+            >
+              {cellTokenSaving ? 'Saving…' : 'Save token'}
+            </button>
+            <button
+              type="button"
+              className={s.secondaryBtn}
               onClick={() => void handleGenerateCellToken()}
               disabled={cellTokenSaving}
             >
-              {cellTokenSaving
-                ? 'Generating…'
-                : cellToken
-                  ? 'Regenerate cell token'
-                  : 'Generate cell token'}
+              {cellToken ? 'Generate new' : 'Generate'}
             </button>
           </div>
         </div>
