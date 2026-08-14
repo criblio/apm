@@ -687,19 +687,32 @@ export function getProvisioningPlan(): ProvisionedSearch[] {
         cronSchedule: notifyCronSchedule,
         tz: 'UTC',
         keepLastN: 2,
+        // Structure mirrors a known-good Cribl saved-search notification
+        // exactly. The API SILENTLY stores `{}` (dropping the whole
+        // notification) if any of these are missing: a unique `items[].id`,
+        // `items[].disabled`, `conf.savedQueryId`, and `targetConfigs[].id`.
         notifications: {
+          disabled: false,
           items: [
             {
+              disabled: false,
               condition: 'search',
               targets: [CELL_WEBHOOK_TARGET_ID],
               conf: {
                 triggerType: 'resultsCount',
                 triggerComparator: '>',
                 triggerCount: 0,
+                savedQueryId: 'criblapm__alert_notify',
                 message: 'Cribl APM: firing alert(s) — triggering server-side investigation.',
               },
-              targetConfigs: [{ conf: { includeResults: true, attachmentType: 'inline' } }],
+              targetConfigs: [
+                {
+                  id: CELL_WEBHOOK_TARGET_ID,
+                  conf: { includeResults: true, attachmentType: 'inline' },
+                },
+              ],
               group: 'default_search',
+              id: 'criblapm__alert_notify_Notification_1',
             },
           ],
         },
