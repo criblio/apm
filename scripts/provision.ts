@@ -33,6 +33,12 @@ import {
   CRIBLAPM_PREFIX,
 } from '../src/api/provisionedSearches.js';
 import {
+  ensureCellWebhookTarget,
+  ensureAlertNotification,
+  removeAlertNotification,
+  ALERT_NOTIFY_SEARCH_ID,
+} from '../src/api/cellProvisioning.js';
+import {
   apply as applyDatasetProvisioning,
   getStatus as getDatasetStatus,
 } from '../src/api/datasetProvisioner.js';
@@ -107,63 +113,42 @@ async function loadAppSettingsFromKV(http: HttpClient): Promise<void> {
 }
 
 /**
- * Create/update the webhook notification target the alert-notify
- * search fires at. Points at the investigator cell's /alerts/fire
- * with the cell's WEBHOOK_BEARER; POSTs the search results inlined so
- * the cell's `extractAlerts` can read them. No-op when server
- * investigations are off (the notify search won't exist to reference
- * it). CELL_URL / CELL_WEBHOOK_BEARER come from the environment/.env;
- * if the flag is on but they're missing, fail loudly — a dangling
- * target ref would break the notify search's creation.
+ * Wire the alert → cell trigger: the webhook target + the alert-notify
+ * notification binding. Delegates to the shared cellProvisioning module
+ * (the same code the Settings UI uses) so CLI and UI stay identical.
+ * Must run AFTER the search reconcile so alert_notify exists before its
+ * notification binds. No-op when server investigations are off.
+ * CELL_URL / CELL_WEBHOOK_BEARER come from the environment/.env.
  */
-async function ensureCellWebhookTarget(http: HttpClient, dryRun: boolean): Promise<void> {
+async function wireCellTrigger(
+  http: HttpClient,
+  flagExplicit: boolean,
+  dryRun: boolean,
+): Promise<void> {
   if (!getServerInvestigations()) return;
+  if (dryRun) {
+    console.log('▶ Cell trigger (dry-run): would ensure webhook target + alert notification');
+    return;
+  }
   const cellUrl = process.env.CELL_URL;
   const bearer = process.env.CELL_WEBHOOK_BEARER;
-  if (!cellUrl || !bearer) {
+  if (cellUrl && bearer) {
+    const t = await ensureCellWebhookTarget(http, { cellUrl, bearer });
+    console.log(`▶ Notification target: ${t === 'created' ? '+ create' : '~ update'} ${CELL_WEBHOOK_TARGET_ID}`);
+  } else if (flagExplicit) {
+    // An explicit enable needs the target's config; a dangling target
+    // ref would break the trigger. (When inferred-on, the target
+    // already exists from a prior enable — don't hard-exit a routine run.)
     console.error(
       '✗ serverInvestigations is on but CELL_URL / CELL_WEBHOOK_BEARER are not set — ' +
-        'the alert-notify search would reference a missing notification target. Set them in .env.',
+        'set them in .env to provision the webhook target.',
     );
     process.exit(1);
   }
-  const body = {
-    id: CELL_WEBHOOK_TARGET_ID,
-    type: 'webhook',
-    method: 'POST',
-    url: `${cellUrl.replace(/\/$/, '')}/alerts/fire`,
-    format: 'custom',
-    customContentType: 'application/json',
-    // The cell's extractAlerts accepts { results: [...] }; `events`
-    // is the per-batch result set in the target's expression context.
-    customSourceExpression: '`${JSON.stringify({ savedQueryId, message, results: events })}`',
-    customPayloadExpression: '`${events}`',
-    authType: 'token',
-    token: bearer,
-    onBackpressure: 'drop',
-  };
-  if (dryRun) {
-    console.log(`▶ Notification target (dry-run): would ensure ${CELL_WEBHOOK_TARGET_ID} → ${body.url}`);
-    return;
-  }
-  const path = `/notification-targets/${CELL_WEBHOOK_TARGET_ID}`;
-  let exists = false;
-  try {
-    // The by-id GET returns 200 `{items:[], count:0}` when the target
-    // is absent (NOT a 404), so "GET didn't throw" is not "it exists" —
-    // check the payload, or we PATCH a nonexistent target and 404.
-    const r = (await http.get(path)) as { count?: number; items?: unknown[] };
-    exists = (r?.count ?? r?.items?.length ?? 0) > 0;
-  } catch {
-    exists = false;
-  }
-  if (exists) {
-    await http.patch(path, body);
-    console.log(`▶ Notification target: ~ update ${CELL_WEBHOOK_TARGET_ID} → ${body.url}`);
-  } else {
-    await http.post('/notification-targets', body);
-    console.log(`▶ Notification target: + create ${CELL_WEBHOOK_TARGET_ID} → ${body.url}`);
-  }
+  // Bind alert_notify → target via the notifications resource (writing
+  // it inline in the search body is silently dropped by the API).
+  const n = await ensureAlertNotification(http);
+  console.log(`▶ Alert notification: ${n === 'created' ? '+ create' : '~ update'} ${ALERT_NOTIFY_SEARCH_ID} → cell webhook`);
 }
 
 async function main(): Promise<void> {
@@ -216,14 +201,6 @@ async function main(): Promise<void> {
     }
   }
 
-  // The alert-notify search references the investigator-cell webhook
-  // target by id, and Cribl validates target refs at search-creation
-  // time — so the target must exist before reconcile. Only ensure it on
-  // an EXPLICIT enable: when inferred from existing state the target is
-  // already present, and we must not hard-exit a routine deploy on a
-  // missing CELL_URL.
-  if (flagExplicit) await ensureCellWebhookTarget(http, dryRun);
-
   // P0.1 tripwire: refuse to push a corrupt plan to the server. The
   // June 2026 outage chain (dataset="" in 17 searches, unjoinable
   // lookup CSVs) shipped through a reconcile that reported success.
@@ -246,6 +223,7 @@ async function main(): Promise<void> {
       console.log(`▶ Provision dry-run: ${actions.length} action(s)`);
       for (const a of actions) console.log(actionLabel(a));
     }
+    await wireCellTrigger(http, flagExplicit, true);
     // Dataset acceleration dry-run
     const status = await getDatasetStatus(http);
     console.log('▶ Dataset acceleration:');
@@ -272,6 +250,17 @@ async function main(): Promise<void> {
       console.error(`▶ Provision: ${failed} action(s) failed`);
       process.exit(1);
     }
+  }
+
+  // Wire (or tear down) the alert → cell trigger, AFTER the search
+  // reconcile so alert_notify exists before its notification binds.
+  if (getServerInvestigations()) {
+    await wireCellTrigger(http, flagExplicit, false);
+  } else if (flagExplicit) {
+    // Explicit disable: remove the notification binding (the search
+    // itself is removed by the reconcile above).
+    await removeAlertNotification(http);
+    console.log(`▶ Alert notification: removed (server investigations off)`);
   }
 
   // Reconcile dataset acceleration (ruleset + acceleratedFields).
