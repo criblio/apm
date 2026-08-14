@@ -378,6 +378,10 @@ export class InvestigationDO {
         JSON.stringify(userMsg),
       );
       const turn = Number(row.turn ?? 0);
+      // Also record it as a transcript event (ordered before the assistant's
+      // reply) so a reopened session replays the user's message, not just the
+      // agent's response.
+      this.append({ kind: 'userMessage', turnId: `user-${turn}`, content });
       // Fresh per-message turn budget so a long chat isn't killed by the
       // whole-conversation turn count.
       this.state.storage.sql.exec(

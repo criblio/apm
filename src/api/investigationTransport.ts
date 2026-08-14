@@ -24,6 +24,8 @@ import type { ToolResultUi } from '@cribl/app-utils/agent-tools';
 /** Wire form of a single LoopEvent (error carries a message, not an
  *  Error instance). Mirrors cell/src/protocol.ts WireLoopEvent. */
 export type WireLoopEvent =
+  // A user's turn — rendered as a user bubble, not a framework LoopEvent.
+  | { kind: 'userMessage'; turnId: string; content: string }
   | { kind: 'assistantText'; turnId: string; chunk: string }
   | { kind: 'assistantDone'; turnId: string }
   | {
@@ -199,6 +201,10 @@ export interface SubscribeOptions {
   intervalMs?: number;
   /** Called with each new LoopEvent in seq order. */
   onEvent: (ev: LoopEvent, seq: number) => void;
+  /** Called for each user-message frame (the user's own turns) in seq
+   *  order. These aren't framework LoopEvents — the caller renders them
+   *  as user bubbles. */
+  onUserMessage?: (content: string, seq: number) => void;
   /** Called whenever the investigation status changes. */
   onStatus?: (status: InvestigationStatus) => void;
   /** Called on a transport error (polling continues unless stopped). */
@@ -238,8 +244,12 @@ export function subscribeInvestigation(
       );
       if (stopped) return;
       for (const frame of data.frames) {
-        const loop = wireEventToLoopEvent(frame.ev);
-        if (loop) opts.onEvent(loop, frame.seq);
+        if (frame.ev.kind === 'userMessage') {
+          opts.onUserMessage?.(frame.ev.content, frame.seq);
+        } else {
+          const loop = wireEventToLoopEvent(frame.ev);
+          if (loop) opts.onEvent(loop, frame.seq);
+        }
         since = Math.max(since, frame.seq);
       }
       if (data.status !== lastStatus) {

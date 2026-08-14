@@ -246,6 +246,13 @@ async function waitForStatus(id, target, tries = 30) {
   const r = await waitForStatus(interactiveId, 'idle');
   check('interactive resumes then parks at idle again', r.status === 'idle', `status=${r.status}`);
   check('follow-up produced new transcript events', r.latestSeq > seqBefore, `before=${seqBefore} after=${r.latestSeq}`);
+  // The user's follow-up is recorded as a transcript event, so a reopened
+  // session replays it (not just the assistant's reply).
+  const replay = await api(`/investigations/${interactiveId}/events?since=0`);
+  const userFrame = (replay.json?.frames ?? []).find(
+    (f) => f.ev?.kind === 'userMessage' && f.ev?.content === 'and what about the checkout service?',
+  );
+  check('follow-up recorded as a userMessage transcript event', !!userFrame);
 }
 
 // Recall panel: search by the unique marker in the title, and paginate.
