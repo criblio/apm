@@ -149,8 +149,11 @@ async function ensureCellWebhookTarget(http: HttpClient, dryRun: boolean): Promi
   const path = `/notification-targets/${CELL_WEBHOOK_TARGET_ID}`;
   let exists = false;
   try {
-    await http.get(path);
-    exists = true;
+    // The by-id GET returns 200 `{items:[], count:0}` when the target
+    // is absent (NOT a 404), so "GET didn't throw" is not "it exists" —
+    // check the payload, or we PATCH a nonexistent target and 404.
+    const r = (await http.get(path)) as { count?: number; items?: unknown[] };
+    exists = (r?.count ?? r?.items?.length ?? 0) > 0;
   } catch {
     exists = false;
   }
