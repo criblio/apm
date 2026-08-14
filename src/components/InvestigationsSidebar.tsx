@@ -48,6 +48,8 @@ function formatAgo(ms: number): string {
   return `${days}d ago`;
 }
 
+const COLLAPSE_KEY = 'apm.investigationsPanel.collapsed';
+
 export interface InvestigationsSidebarProps {
   /** The currently open investigation id, highlighted in the list. */
   activeId?: string | null;
@@ -55,6 +57,24 @@ export interface InvestigationsSidebarProps {
 
 export default function InvestigationsSidebar({ activeId }: InvestigationsSidebarProps) {
   const navigate = useNavigate();
+  const [collapsed, setCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(COLLAPSE_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
+  const toggleCollapsed = useCallback(() => {
+    setCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(COLLAPSE_KEY, next ? '1' : '0');
+      } catch {
+        /* private mode / storage disabled — collapse still works for the session */
+      }
+      return next;
+    });
+  }, []);
   const [items, setItems] = useState<InvestigationSummary[]>([]);
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(true);
@@ -118,18 +138,47 @@ export default function InvestigationsSidebar({ activeId }: InvestigationsSideba
     }
   }, [items, loadingMore, query]);
 
+  // Collapsed: a slim rail with just an expand affordance, so the
+  // transcript gets the full width.
+  if (collapsed) {
+    return (
+      <aside className={s.rail}>
+        <button
+          type="button"
+          className={s.railBtn}
+          onClick={toggleCollapsed}
+          title="Show investigations"
+          aria-label="Show investigations"
+        >
+          ☰
+        </button>
+      </aside>
+    );
+  }
+
   return (
     <aside className={s.sidebar}>
       <div className={s.header}>
         <span className={s.title}>Investigations</span>
-        <button
-          type="button"
-          className={s.newBtn}
-          onClick={() => navigate('/investigate')}
-          title="Start a new investigation"
-        >
-          + New
-        </button>
+        <div className={s.headerBtns}>
+          <button
+            type="button"
+            className={s.newBtn}
+            onClick={() => navigate('/investigate')}
+            title="Start a new investigation"
+          >
+            + New
+          </button>
+          <button
+            type="button"
+            className={s.collapseBtn}
+            onClick={toggleCollapsed}
+            title="Collapse panel"
+            aria-label="Collapse panel"
+          >
+            «
+          </button>
+        </div>
       </div>
 
       <input
