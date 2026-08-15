@@ -30,4 +30,13 @@ export interface Env {
   /** Static bearer for offline testing against a mock Cribl server —
    *  never set in production. */
   CRIBL_DEV_TOKEN?: string;
+
+  // ── Source-code investigation (optional) ──
+  /** JSON array of source repos the agent may check out, e.g.
+   *  `[{"url":"github.com/org/repo","service":"*"}]`. Absent ⇒ code
+   *  tools are not offered. (PR 2 will thread this from app Settings;
+   *  for now it's cell config.) */
+  REPOS_JSON?: string;
+  /** GitHub token for checking out private repos (optional). */
+  GITHUB_TOKEN?: string;
 }
