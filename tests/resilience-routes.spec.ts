@@ -3,9 +3,15 @@ import { apmFrame, gotoApm } from './helpers/apmSession';
 
 interface RouteCase {
   nav: string;
-  content: string;
+  content: string | RegExp;
   role?: 'heading' | 'button' | 'tab';
 }
+
+// The Investigator page's title depends on the `serverInvestigations`
+// flag — "Copilot Investigation" (client) vs "Cribl APM Copilot"
+// (server-side composer) — so match either. This test only cares that
+// the route renders content, not which mode it's in.
+const INVESTIGATE_TITLE = /Copilot Investigation|Cribl APM Copilot/;
 
 const ROUTES: RouteCase[] = [
   { nav: 'Overview', content: 'Overview', role: 'heading' },
@@ -16,15 +22,16 @@ const ROUTES: RouteCase[] = [
   { nav: 'Metrics', content: 'Metrics', role: 'heading' },
   { nav: 'Alerts', content: 'Alerts', role: 'heading' },
   { nav: 'Errors', content: 'Errors', role: 'heading' },
-  { nav: 'Investigate', content: 'Copilot Investigation' },
+  { nav: 'Investigate', content: INVESTIGATE_TITLE },
   { nav: 'Configuration', content: 'Setup status' },
 ];
 
 async function clickNav(apm: FrameLocator, item: RouteCase): Promise<void> {
   await apm.getByText(item.nav, { exact: true }).first().click();
+  const exact = typeof item.content === 'string';
   const content = item.role
-    ? apm.getByRole(item.role, { name: item.content, exact: true }).first()
-    : apm.getByText(item.content, { exact: true }).first();
+    ? apm.getByRole(item.role, { name: item.content, exact }).first()
+    : apm.getByText(item.content, exact ? { exact: true } : undefined).first();
   await expect(content).toBeVisible({ timeout: 45_000 });
   await expect(apm.getByText(/temporarily unavailable/i)).toHaveCount(0);
 }
@@ -45,7 +52,7 @@ test('all top-level routes survive iframe navigation, history, and wildcard reco
     window.history.replaceState({}, '', `${base.replace(/\/$/, '')}/investigate`);
     window.dispatchEvent(new PopStateEvent('popstate'));
   });
-  await expect(apm.getByText('Copilot Investigation', { exact: true })).toBeVisible({
+  await expect(apm.getByText(INVESTIGATE_TITLE).first()).toBeVisible({
     timeout: 30_000,
   });
   await frame!.evaluate(() => {
