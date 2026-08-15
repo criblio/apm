@@ -74,6 +74,11 @@
   font-size: var(--cds-font-size-xs);
   color: var(--cds-color-text-subtle);
 }
+.replayHeaderActions {
+  display: flex;
+  align-items: center;
+  gap: var(--cds-space-sm);
+}
 .replayExit {
   padding: var(--cds-space-xs) var(--cds-space-sm);
   border: 1px solid var(--cds-color-border-subtle);
@@ -81,6 +86,20 @@
   background: var(--cds-color-bg-subtle);
   cursor: pointer;
   font-size: var(--cds-font-size-xs);
+}
+.replayStop {
+  padding: var(--cds-space-xs) var(--cds-space-sm);
+  border: 1px solid var(--cds-color-border-danger, var(--cds-color-border-subtle));
+  border-radius: var(--cds-radius-sm);
+  background: var(--cds-color-bg-danger-subtle, var(--cds-color-bg-subtle));
+  color: var(--cds-color-text-danger, var(--cds-color-text-default));
+  cursor: pointer;
+  font-size: var(--cds-font-size-xs);
+  font-weight: var(--cds-font-weight-bold);
+}
+.replayStop:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 .replayEmpty {
   padding: var(--cds-space-lg);

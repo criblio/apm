@@ -24,6 +24,7 @@ import {
   type InvestigatorTranscriptEntry,
 } from '@cribl/app-utils/investigator';
 import {
+  cancelInvestigation,
   fetchInvestigationStatus,
   sendInvestigationMessage,
   subscribeInvestigation,
@@ -45,6 +46,11 @@ export interface InvestigationSession {
   error: string | null;
   sending: boolean;
   sendMessage: (content: string) => Promise<void>;
+  /** True while the agent is working (running) and can be stopped. */
+  canCancel: boolean;
+  cancelling: boolean;
+  /** Stop the in-progress investigation. */
+  cancel: () => Promise<void>;
 }
 
 export interface UseInvestigationSessionOptions {
@@ -71,6 +77,7 @@ export function useInvestigationSession(
   );
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
 
   const seqRef = useRef(0);
   const unsubRef = useRef<(() => void) | null>(null);
@@ -182,6 +189,23 @@ export function useInvestigationSession(
     [id, sending, subscribe],
   );
 
+  const cancel = useCallback(async () => {
+    if (!id || cancelling) return;
+    setCancelling(true);
+    setError(null);
+    try {
+      await cancelInvestigation(id);
+      // Stop the current poll and re-read from where we are so the
+      // 'cancelled' status + the cancellation notice stream in.
+      setStatus('cancelled');
+      subscribe(id, seqRef.current);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setCancelling(false);
+    }
+  }, [id, cancelling, subscribe]);
+
   return {
     entries,
     status,
@@ -192,6 +216,9 @@ export function useInvestigationSession(
     // working — including a concluded/failed one, which the cell reopens
     // (a message resumes the loop). Hidden only while queued/running.
     canSend: status != null && status !== 'queued' && status !== 'running',
+    canCancel: status === 'queued' || status === 'running',
+    cancelling,
+    cancel,
     error,
     sending,
     sendMessage,

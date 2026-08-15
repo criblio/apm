@@ -137,7 +137,7 @@ export class CoordinatorDO {
     if (url.pathname === '/internal/complete' && request.method === 'POST') {
       const { id, outcome } = (await request.json()) as {
         id: string;
-        outcome: 'concluded' | 'failed' | 'idle' | 'resumed';
+        outcome: 'concluded' | 'failed' | 'idle' | 'resumed' | 'cancelled';
       };
       if (outcome === 'idle') {
         // Interactive turn finished; the run is parked awaiting the

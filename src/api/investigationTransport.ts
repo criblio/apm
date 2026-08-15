@@ -369,6 +369,21 @@ export async function getCellRepos(signal?: AbortSignal): Promise<SourceRepo[]> 
   return data.repos ?? [];
 }
 
+/** Stop an in-progress investigation. The cell aborts the running turn
+ *  (LLM stream + any tool/checkout) and marks it `cancelled`. Idempotent
+ *  — cancelling an already-terminal run is a no-op success. */
+export async function cancelInvestigation(
+  id: string,
+  signal?: AbortSignal,
+): Promise<{ status: InvestigationStatus }> {
+  const base = getCellBaseUrl();
+  return postJson<{ status: InvestigationStatus }>(
+    `${base}/investigations/${encodeURIComponent(id)}/cancel`,
+    {},
+    signal,
+  );
+}
+
 export interface ListInvestigationsQuery {
   /** Substring match on title / incident key. */
   q?: string;

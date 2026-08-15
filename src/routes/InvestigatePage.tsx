@@ -356,8 +356,10 @@ function ServerInvestigationView({
   openingPrompt?: string;
   onExit: () => void;
 }) {
-  const { entries, status, mode, running, canSend, sending, error, sendMessage } =
-    useInvestigationSession(id, { openingPrompt });
+  const {
+    entries, status, mode, running, canSend, sending, error, sendMessage,
+    canCancel, cancelling, cancel,
+  } = useInvestigationSession(id, { openingPrompt });
   const [draft, setDraft] = useState('');
 
   const submit = () => {
@@ -387,9 +389,21 @@ function ServerInvestigationView({
             {subtitle} · {kindLabel}
           </div>
         </div>
-        <button type="button" className={s.replayExit} onClick={onExit}>
-          New investigation
-        </button>
+        <div className={s.replayHeaderActions}>
+          {canCancel && (
+            <button
+              type="button"
+              className={s.replayStop}
+              onClick={() => void cancel()}
+              disabled={cancelling}
+            >
+              {cancelling ? 'Stopping…' : 'Stop'}
+            </button>
+          )}
+          <button type="button" className={s.replayExit} onClick={onExit}>
+            New investigation
+          </button>
+        </div>
       </div>
 
       {error && (

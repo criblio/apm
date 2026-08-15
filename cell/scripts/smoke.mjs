@@ -287,5 +287,33 @@ async function waitForStatus(id, target, tries = 30) {
   await api('/config/repos', { method: 'POST', bearer: UI_BEARER, body: { repos } });
 }
 
+// Cancel: stop an in-progress investigation.
+{
+  const noAuth = await api(`/investigations/${interactiveId}/cancel`, { method: 'POST', bearer: 'wrong' });
+  check('cancel rejects a bad bearer', noAuth.status === 401);
+
+  const create = await api('/investigations', {
+    method: 'POST',
+    bearer: UI_BEARER,
+    body: { prompt: `${marker} cancel me — take your time and run several searches` },
+  });
+  const cancelId = create.json?.id;
+  check('created an investigation to cancel', !!cancelId, JSON.stringify(create.json));
+
+  const cancel = await api(`/investigations/${cancelId}/cancel`, { method: 'POST', bearer: UI_BEARER });
+  check('cancel returns cancelled', cancel.status === 200 && cancel.json?.status === 'cancelled', JSON.stringify(cancel.json));
+
+  const after = await api(`/investigations/${cancelId}/status`);
+  check('status is cancelled after cancel', after.json?.status === 'cancelled', JSON.stringify(after.json?.status));
+
+  // Idempotent: cancelling a terminal run is a no-op success.
+  const again = await api(`/investigations/${cancelId}/cancel`, { method: 'POST', bearer: UI_BEARER });
+  check('cancel is idempotent on a terminal run', again.status === 200);
+
+  const replay = await api(`/investigations/${cancelId}/events?since=0`);
+  const abortedDone = (replay.json?.frames ?? []).some((f) => f.ev?.kind === 'done' && f.ev?.reason === 'aborted');
+  check('transcript records an aborted done frame', abortedDone);
+}
+
 console.log(failures === 0 ? '\nSMOKE PASS' : `\nSMOKE FAIL (${failures})`);
 process.exit(failures === 0 ? 0 : 1);

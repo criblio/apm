@@ -70,6 +70,7 @@ function extractAlerts(body: unknown): FiringAlert[] {
 
 const INV_PATH = /^\/investigations\/([A-Za-z0-9-]+)\/(events|status|ws)$/;
 const INV_MESSAGES_PATH = /^\/investigations\/([A-Za-z0-9-]+)\/messages$/;
+const INV_CANCEL_PATH = /^\/investigations\/([A-Za-z0-9-]+)\/cancel$/;
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -181,6 +182,14 @@ export default {
         return Response.json({ error: 'cell disabled' }, { status: 503 });
       }
       const stub = env.INVESTIGATION.get(env.INVESTIGATION.idFromName(msg[1]));
+      return stub.fetch(request);
+    }
+
+    // Stop an in-progress investigation (aborts the turn, marks cancelled).
+    const cancel = INV_CANCEL_PATH.exec(url.pathname);
+    if (cancel && request.method === 'POST') {
+      if (!bearerOk(request, env.UI_BEARER)) return unauthorized();
+      const stub = env.INVESTIGATION.get(env.INVESTIGATION.idFromName(cancel[1]));
       return stub.fetch(request);
     }
 

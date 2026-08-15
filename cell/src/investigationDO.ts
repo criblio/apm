@@ -40,6 +40,7 @@ import { createCellSearchClient, createCellMetricsTransport } from './cellSearch
 import {
   PROTOCOL_VERSION,
   incidentKey,
+  isTerminalStatus,
   titleFromPrompt,
   type CreateInvestigationBody,
   type FiringAlert,
@@ -161,6 +162,16 @@ export class InvestigationDO {
    *  counter, and flooding the transcript. Set synchronously at the
    *  top of alarm() before any await so a later invocation bails. */
   private turnInFlight = false;
+
+  /** Aborts the in-flight turn when the user cancels. celld serializes
+   *  fetch + alarm on the DO's single thread, but a fetch can interleave
+   *  at the turn's await points — so POST /cancel can abort the LLM
+   *  stream (and the checkout store loop) mid-turn. Null when no turn is
+   *  running. */
+  private turnAbort: AbortController | null = null;
+  /** Set by POST /cancel so the interleaving turn, when it unwinds, does
+   *  NOT overwrite the terminal 'cancelled' status with idle/failed. */
+  private cancelRequested = false;
 
   /**
    * Next transcript seq to hand out. Seeded lazily from the table on
@@ -438,6 +449,31 @@ export class InvestigationDO {
       await this.notifyCoordinator('resumed');
       await this.state.storage.setAlarm(Date.now() + TURN_DELAY_MS);
       return Response.json({ ok: true });
+    }
+
+    if (url.pathname.endsWith('/cancel') && request.method === 'POST') {
+      const row = this.row();
+      if (!row) return Response.json({ error: 'not found' }, { status: 404 });
+      // Idempotent: cancelling an already-terminal run is a no-op success.
+      if (isTerminalStatus(row.status as InvestigationStatus)) {
+        return Response.json({ ok: true, status: row.status });
+      }
+      // Own the terminal state before aborting the turn: the guard flag
+      // stops the interleaving turn from reparking/failing as it unwinds.
+      this.cancelRequested = true;
+      this.turnAbort?.abort();
+      // Drop the watchdog/next-turn alarm so nothing re-fires the loop.
+      await this.state.storage.deleteAlarm();
+      this.append({ kind: 'notification', turnId: 'system', content: 'Investigation cancelled by the user.' });
+      this.append({ kind: 'done', reason: 'aborted' });
+      this.setStatus('cancelled', { concluded_at: Date.now() });
+      // An autonomous run records the outcome for the Alerts page; an
+      // interactive one has no badge, so skip the lifecycle commit.
+      if ((row.mode as InvestigationMode) !== 'interactive') {
+        await this.commitLifecycle('investigation_failed');
+      }
+      await this.notifyCoordinator('cancelled');
+      return Response.json({ ok: true, status: 'cancelled' });
     }
 
     if (url.pathname.endsWith('/events')) {
@@ -804,6 +840,7 @@ export class InvestigationDO {
           };
           extraTools = CODE_TOOL_DEFINITIONS;
         }
+        this.turnAbort = new AbortController();
         const result = await runRealTurn({
           llm,
           history: await this.history(),
@@ -811,7 +848,11 @@ export class InvestigationDO {
           executors,
           extraTools,
           emit: (ev) => this.append(ev),
+          signal: this.turnAbort.signal,
         });
+        // A concurrent POST /cancel aborted this turn and already set the
+        // terminal state; don't reschedule or override it.
+        if (this.cancelRequested) return;
         for (const m of result.newMessages) {
           this.state.storage.sql.exec(
             `INSERT INTO agent_messages (message_json) VALUES (?)`,
@@ -873,12 +914,17 @@ export class InvestigationDO {
         await this.state.storage.setAlarm(Date.now() + TURN_DELAY_MS);
       }
     } catch (err) {
+      // A cancel aborted the turn — the /cancel handler owns the
+      // terminal state; swallow the abort without reparking/failing.
+      if (this.cancelRequested) return;
       const message = err instanceof Error ? err.message : String(err);
       this.append({ kind: 'error', message });
       // Interactive: park so the conversation survives a transient
       // error; autonomous: fail the run.
       if (interactive) await this.parkIdle();
       else await this.failRun(message);
+    } finally {
+      this.turnAbort = null;
     }
   }
 
@@ -897,7 +943,7 @@ export class InvestigationDO {
   }
 
   private async notifyCoordinator(
-    outcome: 'concluded' | 'failed' | 'idle' | 'resumed',
+    outcome: 'concluded' | 'failed' | 'idle' | 'resumed' | 'cancelled',
   ): Promise<void> {
     // The coordinator enforces global concurrency; it must hear about
     // completions to start the next queued investigation. Reached via
