@@ -125,7 +125,7 @@ export class CoordinatorDO {
          VALUES (?, ?, '', 'interactive', 'queued', ?, ?, 'interactive', ?)`,
         id,
         eventId,
-        JSON.stringify({ prompt, context: body.context ?? null }),
+        JSON.stringify({ prompt, context: body.context ?? null, repos: body.repos ?? null }),
         Date.now(),
         title,
       );
@@ -275,6 +275,7 @@ export class CoordinatorDO {
                   prompt: payload.prompt,
                   context: payload.context ?? null,
                   title: String(next.title ?? ''),
+                  repos: payload.repos ?? null,
                 }),
               });
             })()

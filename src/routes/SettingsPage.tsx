@@ -29,6 +29,7 @@ import {
   removeAlertNotification,
 } from '../api/cellProvisioning';
 import type { HttpClient } from '../api/provisioner';
+import type { SourceRepo } from '../api/investigationTransport';
 import type { ProvisioningExtraStep } from '@cribl/app-utils/provisioning-panel';
 import { useSearchCadence } from '../hooks/useSearchCadence';
 import s from './SettingsPage.module.css';
@@ -70,6 +71,8 @@ export default function SettingsPage() {
   const [cellTokenSaving, setCellTokenSaving] = useState(false);
   const [cellWebhookBearer, setCellWebhookBearer] = useState('');
   const [cellWebhookBearerSaving, setCellWebhookBearerSaving] = useState(false);
+  const [sourceRepos, setSourceRepos] = useState<SourceRepo[]>([]);
+  const [sourceReposSaving, setSourceReposSaving] = useState(false);
   const [cadenceSaving, setCadenceSaving] = useState(false);
   const [disabledRules, setDisabledRules] = useState<Record<string, boolean>>({});
   const [rulesSaving, setRulesSaving] = useState(false);
@@ -91,6 +94,9 @@ export default function SettingsPage() {
       }
       if (typeof s?.cellUrl === 'string') {
         setCellUrl(s.cellUrl);
+      }
+      if (Array.isArray(s?.sourceRepos)) {
+        setSourceRepos(s.sourceRepos as SourceRepo[]);
       }
     }).catch(() => {});
     // The cell token is a top-level KV key (proxies.yml reads it as
@@ -294,6 +300,39 @@ export default function SettingsPage() {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setCellWebhookBearerSaving(false);
+    }
+  }
+
+  function updateRepo(i: number, patch: Partial<SourceRepo>) {
+    setSourceRepos((prev) => prev.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
+  }
+  function addRepo() {
+    setSourceRepos((prev) => [...prev, { url: '', service: '*' }]);
+  }
+  function removeRepo(i: number) {
+    setSourceRepos((prev) => prev.filter((_, idx) => idx !== i));
+  }
+  async function handleSaveSourceRepos() {
+    if (sourceReposSaving) return;
+    setSourceReposSaving(true);
+    setError(null);
+    try {
+      // Drop empty rows and trim; `service` empty ⇒ omit (monorepo catch-all).
+      const cleaned = sourceRepos
+        .map((r) => ({
+          url: r.url.trim(),
+          name: r.name?.trim() || undefined,
+          service: r.service?.trim() || undefined,
+        }))
+        .filter((r) => r.url);
+      await saveAppSettings({ sourceRepos: cleaned });
+      setSourceRepos(cleaned);
+      setFlash('Source repositories saved. New server investigations can inspect them.');
+      setTimeout(() => setFlash(null), 6000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSourceReposSaving(false);
     }
   }
 
@@ -758,6 +797,72 @@ export default function SettingsPage() {
               disabled={cellWebhookBearerSaving || !cellWebhookBearer.trim()}
             >
               {cellWebhookBearerSaving ? 'Saving…' : 'Save webhook bearer'}
+            </button>
+          </div>
+        </div>
+
+        <div className={s.field} style={{ marginTop: 16 }}>
+          <label className={s.label}>Source repositories</label>
+          <div className={s.fieldHelp}>
+            Repos the investigator may check out to read code once telemetry
+            narrows to a service. <strong>Service</strong> maps a repo to a
+            telemetry service; leave it <code>*</code> for a monorepo that
+            backs every service (e.g. the OTel Demo). Threaded into
+            investigations you start from the Investigate button.
+          </div>
+          {sourceRepos.length === 0 && (
+            <div className={s.fieldHelp} style={{ opacity: 0.8 }}>
+              No repositories configured.
+            </div>
+          )}
+          {sourceRepos.map((repo, i) => (
+            <div
+              key={i}
+              style={{ display: 'flex', gap: 8, marginTop: 8, alignItems: 'center' }}
+            >
+              <input
+                className={s.input}
+                type="text"
+                value={repo.url}
+                placeholder="github.com/org/repo"
+                spellCheck={false}
+                autoCapitalize="none"
+                autoComplete="off"
+                onChange={(e) => updateRepo(i, { url: e.target.value })}
+                style={{ flex: 2 }}
+              />
+              <input
+                className={s.input}
+                type="text"
+                value={repo.service ?? ''}
+                placeholder="service (or *)"
+                spellCheck={false}
+                autoComplete="off"
+                onChange={(e) => updateRepo(i, { service: e.target.value })}
+                style={{ flex: 1 }}
+              />
+              <button
+                type="button"
+                className={s.secondaryBtn}
+                onClick={() => removeRepo(i)}
+                title="Remove"
+                aria-label="Remove repository"
+              >
+                ✕
+              </button>
+            </div>
+          ))}
+          <div className={s.actions} style={{ marginTop: 8 }}>
+            <button type="button" className={s.secondaryBtn} onClick={addRepo}>
+              + Add repository
+            </button>
+            <button
+              type="button"
+              className={s.primaryBtn}
+              onClick={() => void handleSaveSourceRepos()}
+              disabled={sourceReposSaving}
+            >
+              {sourceReposSaving ? 'Saving…' : 'Save repositories'}
             </button>
           </div>
         </div>

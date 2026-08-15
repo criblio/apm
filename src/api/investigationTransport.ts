@@ -294,11 +294,23 @@ async function postJson<T>(url: string, body: unknown, signal?: AbortSignal): Pr
   return (await resp.json()) as T;
 }
 
+/** A source repo the agent may check out. `service` maps it to a
+ *  telemetry service; `*`/omitted = monorepo catch-all. Mirrors the
+ *  cell's protocol SourceRepo. */
+export interface SourceRepo {
+  url: string;
+  name?: string;
+  service?: string;
+  ref?: string;
+}
+
 export interface CreateInvestigationInput {
   /** The user's opening question. */
   prompt: string;
   context?: { service?: string; earliest?: string; latest?: string } | null;
   title?: string;
+  /** Repos (from app Settings) the agent may check out for this run. */
+  repos?: SourceRepo[];
 }
 
 /**
