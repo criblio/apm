@@ -24,6 +24,7 @@ import { getCurrentDataset } from '@cribl/app-utils/dataset';
 import { useInvestigationSession } from '../hooks/useInvestigationSession';
 import { useServerInvestigations } from '../hooks/useServerInvestigations';
 import { createInvestigation } from '../api/investigationTransport';
+import { loadAppSettings } from '../api/appSettings';
 import InvestigationsSidebar from '../components/InvestigationsSidebar';
 import sidebar from '../components/InvestigationsSidebar.module.css';
 // Side effect: pins the analytics surface tag ('criblApmInvestigation')
@@ -206,14 +207,19 @@ function CreatingInvestigation({ seed }: { seed: InvestigationSeed }) {
     if (startedRef.current) return;
     startedRef.current = true;
     const prompt = seedToPrompt(seed);
-    createInvestigation({
-      prompt,
-      context: {
-        service: seed.service,
-        earliest: seed.earliest,
-        latest: seed.latest,
-      },
-    })
+    loadAppSettings()
+      .catch(() => null)
+      .then((settings) =>
+        createInvestigation({
+          prompt,
+          context: {
+            service: seed.service,
+            earliest: seed.earliest,
+            latest: seed.latest,
+          },
+          repos: settings?.sourceRepos,
+        }),
+      )
       .then(({ id }) => {
         navigate(`/investigate?investigation=${encodeURIComponent(id)}`, {
           replace: true,
@@ -254,7 +260,11 @@ function NewServerInvestigation() {
       setBusy(true);
       setError(null);
       try {
-        const { id } = await createInvestigation({ prompt: text });
+        const settings = await loadAppSettings().catch(() => null);
+        const { id } = await createInvestigation({
+          prompt: text,
+          repos: settings?.sourceRepos,
+        });
         navigate(`/investigate?investigation=${encodeURIComponent(id)}`, {
           state: { openingPrompt: text },
         });

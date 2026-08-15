@@ -100,11 +100,23 @@ export interface InvestigationSummaryRow {
   concludedAt: number | null;
 }
 
+/** A source repo the agent may check out. `service` maps it to a
+ *  telemetry service; `*`/undefined = monorepo catch-all. */
+export interface SourceRepo {
+  url: string;
+  name?: string;
+  service?: string;
+  ref?: string;
+}
+
 /** Body for a UI-initiated (interactive) investigation. */
 export interface CreateInvestigationBody {
   prompt: string;
   context?: { service?: string; earliest?: string; latest?: string } | null;
   title?: string;
+  /** Repos the agent may check out (from app Settings). Falls back to
+   *  the cell's REPOS_JSON env when absent. */
+  repos?: SourceRepo[];
 }
 
 /** Derive a short recall-panel title from a free-form prompt. */

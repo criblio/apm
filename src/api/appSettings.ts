@@ -4,6 +4,7 @@
  * react-refresh/only-export-components rule.
  */
 import { kvGet, kvPut } from './kvstore';
+import type { SourceRepo } from './investigationTransport';
 
 export const SETTINGS_KEY = 'settings/app';
 
@@ -49,6 +50,10 @@ export interface AppSettings {
    *  the platform proxy blocks it. Unset ⇒ the pinned default in
    *  investigationTransport.ts. */
   cellUrl?: string;
+  /** Source repos the server-side agent may check out to inspect code
+   *  when telemetry narrows to a service. Threaded into interactive
+   *  investigations; `service: '*'`/omitted = monorepo catch-all. */
+  sourceRepos?: SourceRepo[];
   [k: string]: unknown;
 }
 

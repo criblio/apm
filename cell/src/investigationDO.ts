@@ -379,6 +379,7 @@ export class InvestigationDO {
       await this.state.storage.put('interactivePayload', {
         prompt,
         context: body.context ?? null,
+        repos: body.repos ?? null,
       });
       this.setStatus('running', { started_at: Date.now() });
       await this.state.storage.setAlarm(Date.now() + TURN_DELAY_MS);
@@ -533,10 +534,17 @@ export class InvestigationDO {
    * history[0]. Idempotent — keyed on the stored prompt.
    */
   /** Server-only code-tools guidance appended to the seed prompt when
-   *  the cell has source repos configured (empty otherwise). */
-  private codeAddendum(): string {
-    const repos = parseReposConfig(this.env.REPOS_JSON);
+   *  source repos are configured (empty otherwise). */
+  private codeAddendum(repos: RepoConfig[]): string {
     return repos.length ? codeToolsAddendum(repos) : '';
+  }
+
+  /** The repos the agent may check out: the investigation's own (from
+   *  app Settings, interactive) if present, else the cell's REPOS_JSON. */
+  private effectiveRepos(payloadRepos?: RepoConfig[] | null): RepoConfig[] {
+    return payloadRepos && payloadRepos.length
+      ? payloadRepos
+      : parseReposConfig(this.env.REPOS_JSON);
   }
 
   private async ensureSeeded(alert: FiringAlert, cribl: CriblClient): Promise<void> {
@@ -561,7 +569,7 @@ export class InvestigationDO {
       ...formatPreflightSignals(preflight),
     ];
 
-    const prompt = buildSeedPrompt(seed) + this.codeAddendum();
+    const prompt = buildSeedPrompt(seed) + this.codeAddendum(this.effectiveRepos());
     // The seed prompt is ~75 KB (the dataset-schema preamble). Keep it
     // OUT of the agent_messages SQLite table — history() reads that
     // whole table every turn, and a 75 KB constant row pushes the DO's
@@ -590,6 +598,7 @@ export class InvestigationDO {
     const payload = await this.state.storage.get<{
       prompt: string;
       context?: { service?: string; earliest?: string; latest?: string } | null;
+      repos?: RepoConfig[] | null;
     }>('interactivePayload');
     const prompt = payload?.prompt ?? '';
 
@@ -600,7 +609,8 @@ export class InvestigationDO {
       earliest: payload?.context?.earliest,
       latest: payload?.context?.latest,
     };
-    const seedPrompt = buildSeedPrompt(seed) + this.codeAddendum();
+    const seedPrompt =
+      buildSeedPrompt(seed) + this.codeAddendum(this.effectiveRepos(payload?.repos));
     await this.state.storage.put('seedPrompt', seedPrompt);
     this.state.storage.sql.exec(
       `UPDATE investigation SET seed_json = ?`,
@@ -728,7 +738,13 @@ export class InvestigationDO {
           metricsTransport: createCellMetricsTransport(cribl),
         });
         // Server-only code tools, offered only when repos are configured.
-        const repos = parseReposConfig(this.env.REPOS_JSON);
+        // Interactive investigations carry their own repos (from app
+        // Settings); autonomous ones fall back to the cell's REPOS_JSON.
+        const payloadRepos = interactive
+          ? (await this.state.storage.get<{ repos?: RepoConfig[] | null }>('interactivePayload'))
+              ?.repos
+          : undefined;
+        const repos = this.effectiveRepos(payloadRepos);
         let executors: ApmToolExecutors = apmExecutors;
         let extraTools: AgentToolDefinition[] | undefined;
         if (repos.length > 0) {

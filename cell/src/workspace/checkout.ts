@@ -5,19 +5,12 @@
  */
 import { gunzipUntar } from './untar';
 import type { RepoStore, CheckoutStats } from './repoStore';
+import type { SourceRepo } from '../protocol';
 
-/** One configured source repo (from Settings / cell env). `service`
- *  maps it to a telemetry service; `*` or omitted = monorepo catch-all. */
-export interface RepoConfig {
-  /** GitHub URL or `owner/repo`. */
-  url: string;
-  /** Short name the agent references (defaults to the repo name). */
-  name?: string;
-  /** Service this repo backs; `*`/undefined = catch-all monorepo. */
-  service?: string;
-  /** Optional branch/tag/sha; default branch if omitted. */
-  ref?: string;
-}
+/** One configured source repo (from Settings / cell env). `url` is a
+ *  GitHub URL or `owner/repo`; `service` maps it to a telemetry service
+ *  (`*`/omitted = monorepo catch-all); `ref` is an optional branch/sha. */
+export type RepoConfig = SourceRepo;
 
 export interface ResolvedRepo {
   owner: string;
