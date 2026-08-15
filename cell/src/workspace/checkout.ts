@@ -74,16 +74,21 @@ export async function checkoutRepo(
   store: RepoStore,
   resolved: ResolvedRepo,
   token?: string,
+  signal?: AbortSignal,
 ): Promise<CheckoutStats> {
   const { owner, repo, ref, name } = resolved;
   const tarUrl = `${GITHUB_API}/repos/${owner}/${repo}/tarball${ref ? `/${ref}` : ''}`;
-  const resp = await fetch(tarUrl, { headers: authHeaders(token) });
+  const resp = await fetch(tarUrl, { headers: authHeaders(token), signal });
   if (!resp.ok) {
     throw new Error(`tarball fetch failed (${resp.status}): ${(await resp.text()).slice(0, 200)}`);
   }
   const entries = await gunzipUntar(await resp.arrayBuffer());
   const stats = store.store(name, entries);
-  store.writeFile(name, RECENT_COMMITS_PATH, await fetchRecentCommits(owner, repo, ref, token));
+  store.writeFile(
+    name,
+    RECENT_COMMITS_PATH,
+    await fetchRecentCommits(owner, repo, ref, token, signal),
+  );
   return stats;
 }
 
@@ -93,12 +98,13 @@ async function fetchRecentCommits(
   repo: string,
   ref: string | undefined,
   token?: string,
+  signal?: AbortSignal,
 ): Promise<string> {
   const url = new URL(`${GITHUB_API}/repos/${owner}/${repo}/commits`);
   url.searchParams.set('per_page', String(COMMIT_COUNT));
   if (ref) url.searchParams.set('sha', ref);
   try {
-    const resp = await fetch(url.toString(), { headers: authHeaders(token) });
+    const resp = await fetch(url.toString(), { headers: authHeaders(token), signal });
     if (!resp.ok) return `# Recent commits\n\n(could not fetch: HTTP ${resp.status})\n`;
     const commits = (await resp.json()) as Array<{
       sha: string;

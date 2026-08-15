@@ -113,9 +113,12 @@ export interface CodeToolDeps {
 
 export function createCodeToolExecutors(deps: CodeToolDeps): {
   names: ReadonlySet<string>;
-  executeToolCall(call: ToolCallInvocation): Promise<ToolExecutionResult>;
+  executeToolCall(call: ToolCallInvocation, signal?: AbortSignal): Promise<ToolExecutionResult>;
 } {
-  async function executeToolCall(call: ToolCallInvocation): Promise<ToolExecutionResult> {
+  async function executeToolCall(
+    call: ToolCallInvocation,
+    signal?: AbortSignal,
+  ): Promise<ToolExecutionResult> {
     const args = (() => {
       try {
         return JSON.parse(call.arguments || '{}') as Record<string, string | undefined>;
@@ -143,7 +146,7 @@ export function createCodeToolExecutors(deps: CodeToolDeps): {
           return done(`Repo "${resolved.name}" is already checked out. Use list_dir/read_file/grep_code with repo="${resolved.name}".`);
         }
         try {
-          const stats = await checkoutRepo(deps.store, resolved, deps.token);
+          const stats = await checkoutRepo(deps.store, resolved, deps.token, signal);
           return done(
             `Checked out "${resolved.name}" (${resolved.owner}/${resolved.repo}${resolved.ref ? `@${resolved.ref}` : ''}): ${stats.stored} files` +
               `${stats.truncated ? ' (truncated at the file cap)' : ''}. Read RECENT_COMMITS.md for recent changes. ` +

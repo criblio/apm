@@ -56,6 +56,10 @@ const TURN_DELAY_MS = 1_000;
 const SCHEMA_VERSION = 1;
 /** Parity with the client loop's cap (framework agent-loop.ts). */
 const MAX_TURNS = 12;
+/** Watchdog alarm delay — must exceed runRealTurn's whole-turn timeout
+ *  (180s) plus margin, so it only fires when a turn's isolate died
+ *  mid-run rather than racing a healthy turn. */
+const TURN_WATCHDOG_MS = 240_000;
 
 // Persisted-event size caps. Real staging metrics/search results are
 // far larger than the stub's canned events, and every event is stored
@@ -689,6 +693,14 @@ export class InvestigationDO {
     // alarm when it finishes, so bailing here loses nothing.
     if (this.turnInFlight) return;
     this.turnInFlight = true;
+    // Watchdog: the per-turn timeout in runRealTurn recovers a hung LLM
+    // or tool while THIS isolate lives, but if celld evicts the isolate
+    // mid-turn (e.g. the handler exceeds its budget), the run is left
+    // 'running' with no pending alarm. Set a durable alarm now so a fresh
+    // isolate re-fires and re-runs the turn (turnInFlight resets per
+    // isolate; runTurn no-ops if the row is no longer 'running'). A normal
+    // turn reschedules its own next alarm on completion, replacing this.
+    await this.state.storage.setAlarm(Date.now() + TURN_WATCHDOG_MS);
     try {
       await this.runTurn();
     } finally {
@@ -764,7 +776,7 @@ export class InvestigationDO {
           executors = {
             executeToolCall: (call, signal) =>
               codeExec.names.has(call.name)
-                ? codeExec.executeToolCall(call)
+                ? codeExec.executeToolCall(call, signal)
                 : apmExecutors.executeToolCall(call, signal),
           };
           extraTools = CODE_TOOL_DEFINITIONS;
