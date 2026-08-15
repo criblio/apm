@@ -71,13 +71,21 @@ New `cell/src/workspace/` (or similar):
 
 ## Rollout
 
-- **PR 1 (cell)**: workspace vfs + `checkout_repo` (tarball + RECENT_COMMITS)
-  + `list_dir`/`read_file`/`grep_code`, wired server-only. Unit/smoke:
-  check out a small public repo, read a known file, grep a known symbol.
+- **PR 1 (cell) — LANDED.** `cell/src/workspace/` (untar, RepoStore over
+  the DO SQLite, checkout) + `cell/src/agent/codeTools.ts`
+  (`checkout_repo`/`list_dir`/`read_file`/`grep_code`, server-only,
+  offered only when repos are configured), the seed-prompt addendum, and
+  the wiring in `investigationDO`/`realTurn`. Repos come from the cell
+  env **`REPOS_JSON`** for now (+ optional `GITHUB_TOKEN`); `parseRepo` /
+  `resolveRepoForService` (service→repo with `*` catch-all) unit-tested.
+  Storage is per-investigation in the DO SQLite (re-checkout per run);
+  a cached WorkspaceDO is the PR 3 optimization. **Needs a cell redeploy**
+  and `REPOS_JSON` set to activate. The DO-backed store + live tarball
+  fetch are validated by the cell smoke against a live cell.
 - **PR 2 (app)**: Settings repo list + token; thread the mapping into the
-  seed for both triggers.
-- **PR 3**: optional read-only `bash`, service→repo resolution niceties,
-  caching across investigations.
+  investigation seed for both triggers (replaces the `REPOS_JSON` env).
+- **PR 3**: optional read-only `bash` (just-bash over the vfs), a shared
+  cached WorkspaceDO so repeated investigations reuse a checkout.
 
 Cell redeploy required (new tools live in the cell). Off the critical
 path — gated by `serverInvestigations` like the rest.

@@ -25,7 +25,15 @@ import {
   runPreflight,
   formatPreflightSignals,
 } from '../../src/api/agentPreflight';
-import { createApmToolExecutors } from '../../src/api/agentTools';
+import { createApmToolExecutors, type ApmToolExecutors } from '../../src/api/agentTools';
+import type { AgentToolDefinition } from '@cribl/app-utils/agent';
+import { RepoStore } from './workspace/repoStore';
+import {
+  createCodeToolExecutors,
+  CODE_TOOL_DEFINITIONS,
+  codeToolsAddendum,
+} from './agent/codeTools';
+import type { RepoConfig } from './workspace/checkout';
 import type { Env } from './env';
 import { CriblClient } from './criblClient';
 import { createCellSearchClient, createCellMetricsTransport } from './cellSearchClient';
@@ -108,6 +116,22 @@ export function capEvent(ev: WireLoopEvent): WireLoopEvent {
     };
   }
   return out;
+}
+
+/** Parse the cell's REPOS_JSON env into a repo list (empty on any
+ *  problem — code tools just aren't offered). */
+function parseReposConfig(json: string | undefined): RepoConfig[] {
+  if (!json) return [];
+  try {
+    const parsed = JSON.parse(json) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (r): r is RepoConfig =>
+        !!r && typeof (r as RepoConfig).url === 'string',
+    );
+  } catch {
+    return [];
+  }
 }
 
 interface StartBody {
@@ -508,6 +532,13 @@ export class InvestigationDO {
    * browser injects), render the seed prompt, and persist it as
    * history[0]. Idempotent — keyed on the stored prompt.
    */
+  /** Server-only code-tools guidance appended to the seed prompt when
+   *  the cell has source repos configured (empty otherwise). */
+  private codeAddendum(): string {
+    const repos = parseReposConfig(this.env.REPOS_JSON);
+    return repos.length ? codeToolsAddendum(repos) : '';
+  }
+
   private async ensureSeeded(alert: FiringAlert, cribl: CriblClient): Promise<void> {
     const existing = await this.state.storage.get<string>('seedPromptDone');
     if (existing) return;
@@ -530,7 +561,7 @@ export class InvestigationDO {
       ...formatPreflightSignals(preflight),
     ];
 
-    const prompt = buildSeedPrompt(seed);
+    const prompt = buildSeedPrompt(seed) + this.codeAddendum();
     // The seed prompt is ~75 KB (the dataset-schema preamble). Keep it
     // OUT of the agent_messages SQLite table — history() reads that
     // whole table every turn, and a 75 KB constant row pushes the DO's
@@ -569,7 +600,7 @@ export class InvestigationDO {
       earliest: payload?.context?.earliest,
       latest: payload?.context?.latest,
     };
-    const seedPrompt = buildSeedPrompt(seed);
+    const seedPrompt = buildSeedPrompt(seed) + this.codeAddendum();
     await this.state.storage.put('seedPrompt', seedPrompt);
     this.state.storage.sql.exec(
       `UPDATE investigation SET seed_json = ?`,
@@ -691,16 +722,36 @@ export class InvestigationDO {
         // ── real mode: one pi turn per alarm ──
         if (interactive) await this.ensureSeededInteractive(cribl);
         else await this.ensureSeeded(alert!, cribl);
-        const executors = createApmToolExecutors({
+        const apmExecutors = createApmToolExecutors({
           client: createCellSearchClient(cribl),
           dataset: () => cribl.dataset,
           metricsTransport: createCellMetricsTransport(cribl),
         });
+        // Server-only code tools, offered only when repos are configured.
+        const repos = parseReposConfig(this.env.REPOS_JSON);
+        let executors: ApmToolExecutors = apmExecutors;
+        let extraTools: AgentToolDefinition[] | undefined;
+        if (repos.length > 0) {
+          const codeExec = createCodeToolExecutors({
+            store: new RepoStore(this.state.storage.sql),
+            repos,
+            token: this.env.GITHUB_TOKEN,
+            targetService: alert?.svc,
+          });
+          executors = {
+            executeToolCall: (call, signal) =>
+              codeExec.names.has(call.name)
+                ? codeExec.executeToolCall(call)
+                : apmExecutors.executeToolCall(call, signal),
+          };
+          extraTools = CODE_TOOL_DEFINITIONS;
+        }
         const result = await runRealTurn({
           llm,
           history: await this.history(),
           turnIndex: turn,
           executors,
+          extraTools,
           emit: (ev) => this.append(ev),
         });
         for (const m of result.newMessages) {

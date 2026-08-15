@@ -22,6 +22,7 @@ import type {
   ToolResultMessage,
 } from '@earendil-works/pi-ai';
 import { APM_TOOL_DEFINITIONS } from '../../../src/api/agentToolDefs';
+import type { AgentToolDefinition } from '@cribl/app-utils/agent';
 import type { ApmToolExecutors } from '../../../src/api/agentTools';
 import type { WireLoopEvent } from '../protocol';
 import { mapPiEvent, toolCallsOf } from './loopEventMap';
@@ -90,12 +91,13 @@ function piModel(cfg: LlmConfig): Model<'openai-completions'> {
   };
 }
 
-function piTools(): Tool[] {
+function piTools(extra: AgentToolDefinition[]): Tool[] {
   // AgentToolDefinition {id, description, schema} → pi Tool. The
   // schemas are plain JSON Schema objects, which is what typebox's
   // TSchema is structurally; the cast is the seam between the two
-  // type systems, not a data conversion.
-  return APM_TOOL_DEFINITIONS.map((def) => ({
+  // type systems, not a data conversion. `extra` carries the
+  // server-only code tools when a repo is configured.
+  return [...APM_TOOL_DEFINITIONS, ...extra].map((def) => ({
     name: def.id,
     description: def.description,
     parameters: (def.schema ?? { type: 'object', properties: {} }) as Tool['parameters'],
@@ -115,15 +117,18 @@ export async function runRealTurn(opts: {
   history: Message[];
   turnIndex: number;
   executors: ApmToolExecutors;
+  /** Server-only tool definitions to offer alongside the APM tools
+   *  (the code tools when a repo is configured). */
+  extraTools?: AgentToolDefinition[];
   emit: (ev: WireLoopEvent) => void;
   signal?: AbortSignal;
 }): Promise<RealTurnResult> {
-  const { llm, history, turnIndex, executors, emit, signal } = opts;
+  const { llm, history, turnIndex, executors, extraTools, emit, signal } = opts;
   const turnId = `turn-${turnIndex}`;
 
   const context: Context = {
     messages: history,
-    tools: piTools(),
+    tools: piTools(extraTools ?? []),
   };
 
   let final: AssistantMessage | null = null;
