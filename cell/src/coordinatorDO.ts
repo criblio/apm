@@ -149,12 +149,13 @@ export class CoordinatorDO {
         );
         await this.pump();
       } else if (outcome === 'resumed') {
-        // A parked interactive investigation got a new message and is
-        // running again. v1: this re-enters 'running' without going
-        // back through the queue's slot gate (see the interactive-and-
-        // recall design note); interactive runs are human-paced.
+        // A parked (or reopened concluded) investigation got a new
+        // message and is running again — and is now conversational, so
+        // reflect that in the index. v1: this re-enters 'running'
+        // without going back through the queue's slot gate (see the
+        // interactive-and-recall design note); runs are human-paced.
         this.state.storage.sql.exec(
-          `UPDATE investigations SET status = 'running', started_at = ? WHERE id = ?`,
+          `UPDATE investigations SET status = 'running', started_at = ?, mode = 'interactive' WHERE id = ?`,
           Date.now(),
           id,
         );

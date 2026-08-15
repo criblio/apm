@@ -370,7 +370,13 @@ function ServerInvestigationView({
   const subtitle = status
     ? REPLAY_STATUS_LABEL[status] ?? status
     : 'Connecting…';
-  const kindLabel = mode === 'interactive' ? 'interactive' : 'read-only';
+  const kindLabel = canSend
+    ? 'ask a follow-up below'
+    : running
+      ? mode === 'interactive'
+        ? 'interactive'
+        : 'running'
+      : 'read-only';
 
   return (
     <div className={s.replayPage}>
