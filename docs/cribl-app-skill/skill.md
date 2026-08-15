@@ -17,6 +17,24 @@ Every external domain your app calls must be declared in
 `config/proxies.yml` with path allowlists and header injection.
 Calls to undeclared domains return a JSON error, not a network error.
 
+**The `local/`-override trap (cost hours, 2026-08-14).** The pack ships
+`proxies.yml` to `default/`, but the platform stores the effective grant
+in a per-app **`local/`** override that shadows it. Symptoms: the runtime
+says `Domain X is not declared in proxies.yml` even though the pack (and
+`GET /apps/<id>/proxies` on a *fresh* app id) is correct, while the
+existing app id keeps serving a stale grant.
+- `GET /apps/<id>/proxies` shows the **effective** (local-wins) config,
+  not your pack's `default/`. If it doesn't match your `proxies.yml`,
+  a stale local override is in play.
+- Redeploy (PATCH upgrade) does **not** re-read proxies; even a
+  `DELETE /apps/<id>` + fresh install pulled the old grant back — the
+  override survives on disk keyed to the app id. Proxies are **not**
+  API-writable (`PATCH /apps/<id>/proxies` → 404), and the framework
+  `inspect` blocks shipping a `local/` file in the pack.
+- Confirm by deploying under a **throwaway app id**: a brand-new id gets
+  the correct grant from the pack. Fix = clear the app's stale on-disk
+  `local/` config server-side (or Cribl support), then reinstall.
+
 ### Globals
 - `window.CRIBL_API_URL` — full URL to `/api/v1` (injected by host)
 - `window.CRIBL_BASE_PATH` — React Router basename (e.g., `/app-ui/mypack/`)
@@ -39,6 +57,32 @@ Product-level notification targets (Slack, PagerDuty, email, webhooks)
 are available at `GET /api/v1/notification-targets`. They're configured
 by the Cribl admin and shared across Stream and Search. Reference them
 by ID — never ask users to paste webhook URLs into your app.
+
+**Existence check — 200, not 404 (2026-08-14).** A by-id GET
+(`/notification-targets/<id>`, and `/m/<group>/notifications/<id>`)
+returns `200 {items:[], count:0}` when the object is **absent**, not a
+404. "The GET didn't throw" ≠ "it exists" — check `count`/`items.length`
+or you'll PATCH a nonexistent object and 404.
+
+**Saved-search notifications are a SEPARATE resource (cost hours).**
+A scheduled search's `schedule.notifications` is **read-only on write**:
+it's populated by JOINing from `/m/<group>/notifications` on read, so
+writing `schedule.notifications` in the search body (POST or PATCH) is
+**silently dropped** — the server keeps `{}` and the search notifies
+nothing. To bind a notification, POST/PUT it to
+`/m/<group>/notifications` (e.g. `/m/default_search/notifications`). The
+record needs a unique `id` (`<savedQueryId>_Notification_1`), `disabled`,
+`conf.savedQueryId`, and `targetConfigs[].id` — omit any and the item is
+dropped. Match a known-good notification's exact shape. Keep the same
+structure in your plan's `schedule.notifications` only so the
+provisioner's `isSameAsPlan` deep-subset-matches the joined read and
+doesn't churn.
+
+**Webhook target auth.** A webhook target's `token` must equal the
+receiving service's expected bearer; a mismatch is a plain `401` from
+that service (distinct from the proxy's `403 not declared`). Redeploying
+the receiver can rotate the secret and silently break a previously
+working trigger — re-align both sides after any receiver redeploy.
 
 ## KQL caveats
 
@@ -89,6 +133,29 @@ Declare searches in a plan file. The provisioner diffs against the
 server and creates/updates/deletes as needed. Choose a pack-specific
 prefix (e.g., `mypack__`) for managed search IDs to avoid touching
 user-created searches.
+
+**Deploy needs a version bump.** `installUploadedPack` no-ops when the
+installed version equals the pack version (returns `unchanged`) — a
+redeploy at the same `package.json` version silently does nothing and
+you'll debug a "my change didn't ship" ghost. Bump the version for
+every deploy that must land.
+
+**Keep the UI and CLI provisioners identical.** Anything the CLI
+(`scripts/provision.ts`) does beyond the saved-search reconcile — e.g.
+create a webhook target, bind a notification — the in-app "Provision"
+button must do too, or the two diverge (UI creates the search but not
+the trigger). Put those steps in a shared, browser-safe `src/api/`
+module and run them from both: the CLI directly, the UI via the
+framework `ProvisioningPanel`'s `afterReconcile` hook (added 2026-08-14).
+
+**Feature-flag-gated searches vs. an unreadable CLI flag.** When a
+plan item is gated on an app-scoped KV flag the machine-token CLI can't
+read, don't default the flag OFF — that DELETES the gated search out
+from under a UI that has it ON, and every routine deploy fights the
+user's setting (a "searches not provisioned" banner that flaps). Infer
+the flag from server state (does the gated search exist?) when the
+explicit env override is unset, so an unset deploy neither creates nor
+deletes it.
 
 ### Panel caching
 Scheduled searches write to `$vt_results`. The UI reads all panels
