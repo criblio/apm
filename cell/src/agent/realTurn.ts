@@ -36,6 +36,11 @@ export interface LlmConfig {
 /** Hard cap on a single coalesced assistant-text event (chars). */
 const MAX_TEXT_CHARS = 16 * 1024;
 
+/** Whole-turn budget (LLM stream + tool calls). A hung model or stalled
+ *  tool aborts here so the investigation can't wedge at "thinking"
+ *  forever — well under celld's ~300s handler budget. */
+const TURN_TIMEOUT_MS = 180_000;
+
 /**
  * Bound a stored assistant message so a runaway response can't grow
  * the per-turn pi history (which `history()` reloads in full every
@@ -131,6 +136,21 @@ export async function runRealTurn(opts: {
     tools: piTools(extraTools ?? []),
   };
 
+  // Bound the whole turn: a timeout (combined with any caller signal)
+  // aborts the LLM stream AND the tool calls, so a hung model or a
+  // stalled tool fails the turn instead of wedging it at "thinking".
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, TURN_TIMEOUT_MS);
+  if (signal) {
+    if (signal.aborted) controller.abort();
+    else signal.addEventListener('abort', () => controller.abort(), { once: true });
+  }
+  const turnSignal = controller.signal;
+
   let final: AssistantMessage | null = null;
   let streamFailed: string | null = null;
 
@@ -150,29 +170,39 @@ export async function runRealTurn(opts: {
     textBuf = '';
   };
 
-  const events = stream(piModel(llm), context, { apiKey: llm.apiKey, signal });
-  for await (const ev of events) {
-    // Accumulate ALL of a turn's text (across text blocks) and flush
-    // it as a SINGLE event at the end — one transcript row per turn,
-    // not one per token or per block. A repetitive model can emit many
-    // text blocks; without this the row count still explodes.
-    if (ev.type === 'text_delta') {
-      if (textBuf.length < MAX_TEXT_CHARS) textBuf += ev.delta ?? '';
-      continue;
+  try {
+    const events = stream(piModel(llm), context, { apiKey: llm.apiKey, signal: turnSignal });
+    for await (const ev of events) {
+      // Accumulate ALL of a turn's text (across text blocks) and flush
+      // it as a SINGLE event at the end — one transcript row per turn,
+      // not one per token or per block. A repetitive model can emit many
+      // text blocks; without this the row count still explodes.
+      if (ev.type === 'text_delta') {
+        if (textBuf.length < MAX_TEXT_CHARS) textBuf += ev.delta ?? '';
+        continue;
+      }
+      if (ev.type === 'text_start' || ev.type === 'text_end') continue;
+      for (const wire of mapPiEvent(ev, turnId)) emit(wire);
+      if (ev.type === 'done') final = ev.message;
+      if (ev.type === 'error') {
+        final = ev.error;
+        streamFailed =
+          ev.error.errorMessage ??
+          (ev.reason === 'aborted' ? 'LLM stream aborted' : 'LLM stream error');
+      }
     }
-    if (ev.type === 'text_start' || ev.type === 'text_end') continue;
-    for (const wire of mapPiEvent(ev, turnId)) emit(wire);
-    if (ev.type === 'done') final = ev.message;
-    if (ev.type === 'error') {
-      final = ev.error;
-      streamFailed =
-        ev.error.errorMessage ??
-        (ev.reason === 'aborted' ? 'LLM stream aborted' : 'LLM stream error');
-    }
+  } catch (err) {
+    // An aborted stream may throw rather than emit an error event.
+    streamFailed = err instanceof Error ? err.message : String(err);
+  } finally {
+    clearTimeout(timer);
   }
-  flushText();
+  if (timedOut) {
+    streamFailed = `LLM turn timed out after ${Math.round(TURN_TIMEOUT_MS / 1000)}s`;
+  }
 
   if (!final || streamFailed) {
+    flushText();
     return {
       newMessages: final ? [final] : [],
       conclusion: null,
@@ -181,10 +211,17 @@ export async function runRealTurn(opts: {
     };
   }
 
-  emit({ kind: 'assistantDone', turnId });
   const newMessages: Message[] = [capMessage(final)];
-
   const calls = toolCallsOf(final.content);
+  const concluding = calls.some((c) => c.name === 'present_investigation_summary');
+  // The summary tool's card IS the final report. Drop any wrap-up text
+  // the model emits alongside it — the seed prompt says STOP after the
+  // summary, but deepseek routinely adds a redundant sentence beside the
+  // card. Suppressing it here keeps the transcript clean regardless.
+  if (concluding) textBuf = '';
+  else flushText();
+  emit({ kind: 'assistantDone', turnId });
+
   let conclusion: unknown | null = null;
 
   for (const call of calls) {
@@ -194,7 +231,7 @@ export async function runRealTurn(opts: {
         name: call.name,
         arguments: JSON.stringify(call.arguments ?? {}),
       },
-      signal,
+      turnSignal,
     );
     emit({
       kind: 'toolResult',
