@@ -389,8 +389,11 @@ export class InvestigationDO {
     if (url.pathname.endsWith('/messages') && request.method === 'POST') {
       const row = this.row();
       if (!row) return Response.json({ error: 'not found' }, { status: 404 });
-      if (row.mode !== 'interactive') {
-        return Response.json({ error: 'not an interactive investigation' }, { status: 400 });
+      // Any investigation can take a follow-up — including a concluded
+      // autonomous one. Reject only while it's actively working (a
+      // message mid-run would race the loop).
+      if (row.status === 'running' || row.status === 'queued') {
+        return Response.json({ error: 'investigation is still running' }, { status: 409 });
       }
       const { content } = (await request.json()) as { content?: string };
       if (!content || !content.trim()) {
@@ -408,9 +411,13 @@ export class InvestigationDO {
       // agent's response.
       this.append({ kind: 'userMessage', turnId: `user-${turn}`, content });
       // Fresh per-message turn budget so a long chat isn't killed by the
-      // whole-conversation turn count.
+      // whole-conversation turn count. Reopening a concluded/failed run
+      // also flips it to interactive (so the next answer PARKS at idle
+      // rather than re-concluding + re-committing a lifecycle event) and
+      // clears its terminal fields.
       this.state.storage.sql.exec(
-        `UPDATE investigation SET turn_budget = ?`,
+        `UPDATE investigation
+           SET turn_budget = ?, mode = 'interactive', concluded_at = NULL, error = NULL`,
         turn + MAX_TURNS,
       );
       this.setStatus('running', { started_at: Date.now() });

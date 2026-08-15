@@ -25,7 +25,6 @@ import {
 } from '@cribl/app-utils/investigator';
 import {
   fetchInvestigationStatus,
-  isTerminalStatus,
   sendInvestigationMessage,
   subscribeInvestigation,
   type InvestigationMode,
@@ -189,8 +188,10 @@ export function useInvestigationSession(
     mode,
     running: status === 'queued' || status === 'running',
     idle: status === 'idle',
-    canSend:
-      mode === 'interactive' && (status == null || !isTerminalStatus(status)),
+    // A follow-up can be sent to any investigation that isn't actively
+    // working — including a concluded/failed one, which the cell reopens
+    // (a message resumes the loop). Hidden only while queued/running.
+    canSend: status != null && status !== 'queued' && status !== 'running',
     error,
     sending,
     sendMessage,
