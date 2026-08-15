@@ -64,12 +64,19 @@ function shouldSkipPath(path: string): boolean {
 
 export interface CheckoutStats {
   stored: number;
+  /** Total bytes stored (drives the total-size cap). */
+  bytes: number;
   skippedLarge: number;
   skippedBinary: number;
   /** Files in dependency/build/generated trees or asset extensions,
    *  filtered before decode. */
   skippedNoise: number;
   truncated: boolean;
+}
+
+/** A fresh zeroed stats accumulator for a streaming checkout. */
+export function emptyStats(): CheckoutStats {
+  return { stored: 0, bytes: 0, skippedLarge: 0, skippedBinary: 0, skippedNoise: 0, truncated: false };
 }
 
 export interface GrepMatch {
@@ -115,62 +122,81 @@ export class RepoStore {
     );
   }
 
-  /** Store a tarball's entries under `repo`, stripping GitHub's top dir
-   *  and skipping noise (dependency/build/generated trees), binary, and
-   *  oversized files. Async: yields to the DO's request queue every few
-   *  hundred inserts and checks `signal` so a large repo can't wedge the
-   *  single-threaded DO. Idempotent-ish: clears any prior copy first. */
-  async store(repo: string, entries: TarEntry[], signal?: AbortSignal): Promise<CheckoutStats> {
+  private readonly decoder = new TextDecoder(); // utf-8, non-fatal
+
+  /** Clear any prior copy of a repo before a fresh (streaming) checkout. */
+  beginRepo(repo: string): void {
     this.sql.exec(`DELETE FROM repo_files WHERE repo = ?`, repo);
-    const stats: CheckoutStats = {
-      stored: 0,
-      skippedLarge: 0,
-      skippedBinary: 0,
-      skippedNoise: 0,
-      truncated: false,
-    };
-    let total = 0;
-    const decoder = new TextDecoder(); // utf-8, non-fatal
-    for (const entry of entries) {
-      if (stats.stored >= MAX_FILES || total >= MAX_TOTAL_BYTES) {
-        stats.truncated = true;
-        break;
-      }
-      const path = stripTopDir(entry.path);
-      if (!path) continue;
-      if (shouldSkipPath(path)) {
-        stats.skippedNoise++;
-        continue;
-      }
-      if (entry.content.length > MAX_FILE_BYTES) {
-        stats.skippedLarge++;
-        continue;
-      }
-      if (isBinary(entry.content)) {
-        stats.skippedBinary++;
-        continue;
-      }
-      this.sql.exec(
-        `INSERT OR REPLACE INTO repo_files (repo, path, content) VALUES (?, ?, ?)`,
-        repo,
-        path,
-        decoder.decode(entry.content),
-      );
-      stats.stored++;
-      total += entry.content.length;
-      if (stats.stored % YIELD_EVERY === 0) {
-        if (signal?.aborted) throw new Error('checkout aborted');
-        // Macrotask yield: lets queued status/events requests interleave
-        // between insert batches instead of 502-ing while we grind.
-        await new Promise((r) => setTimeout(r, 0));
-      }
-    }
+  }
+
+  /** Record the repo's file count once a streaming checkout finishes. */
+  finalizeRepo(repo: string, stats: CheckoutStats): void {
     this.sql.exec(
       `INSERT OR REPLACE INTO repo_meta (repo, checked_out_at, file_count) VALUES (?, ?, ?)`,
       repo,
       Date.now(),
       stats.stored,
     );
+  }
+
+  /**
+   * Store one tar entry (called per-file by the streaming untar), applying
+   * the noise/size/binary filters and updating `stats` in place. Returns
+   * `false` once a cap is hit so the caller can stop extracting the rest of
+   * the archive. Yields to the DO's request queue every few hundred inserts
+   * and honors `signal`, so a large repo can neither wedge nor outlive a
+   * cancel.
+   */
+  async addFile(
+    repo: string,
+    entry: TarEntry,
+    stats: CheckoutStats,
+    signal?: AbortSignal,
+  ): Promise<boolean> {
+    if (stats.stored >= MAX_FILES || stats.bytes >= MAX_TOTAL_BYTES) {
+      stats.truncated = true;
+      return false;
+    }
+    const path = stripTopDir(entry.path);
+    if (!path) return true;
+    if (shouldSkipPath(path)) {
+      stats.skippedNoise++;
+      return true;
+    }
+    if (entry.content.length > MAX_FILE_BYTES) {
+      stats.skippedLarge++;
+      return true;
+    }
+    if (isBinary(entry.content)) {
+      stats.skippedBinary++;
+      return true;
+    }
+    this.sql.exec(
+      `INSERT OR REPLACE INTO repo_files (repo, path, content) VALUES (?, ?, ?)`,
+      repo,
+      path,
+      this.decoder.decode(entry.content),
+    );
+    stats.stored++;
+    stats.bytes += entry.content.length;
+    if (stats.stored % YIELD_EVERY === 0) {
+      if (signal?.aborted) throw new Error('checkout aborted');
+      // Macrotask yield: lets queued status/events requests interleave
+      // between insert batches instead of 502-ing while we grind.
+      await new Promise((r) => setTimeout(r, 0));
+    }
+    return true;
+  }
+
+  /** Store an in-memory list of entries (test/non-streaming convenience;
+   *  the cell checkout streams via beginRepo + addFile + finalizeRepo). */
+  async store(repo: string, entries: TarEntry[], signal?: AbortSignal): Promise<CheckoutStats> {
+    this.beginRepo(repo);
+    const stats = emptyStats();
+    for (const entry of entries) {
+      if (!(await this.addFile(repo, entry, stats, signal))) break;
+    }
+    this.finalizeRepo(repo, stats);
     return stats;
   }
 
