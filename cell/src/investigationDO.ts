@@ -142,6 +142,12 @@ interface StartBody {
   id: string;
   alert: FiringAlert;
   seed: unknown;
+  /** Default source repos for this autonomous run, threaded from the
+   *  coordinator's provisioned default (Settings → provisioning →
+   *  /config/repos). The alert webhook carries no repos itself, and the
+   *  cell can't read the app-settings KV, so this is how Settings repos
+   *  reach an alert-fired investigation. */
+  repos?: RepoConfig[] | null;
 }
 
 export class InvestigationDO {
@@ -344,6 +350,10 @@ export class InvestigationDO {
         SCHEMA_VERSION,
       );
       await this.state.storage.put('alert', body.alert);
+      // The coordinator's provisioned default repos (may be null). Read
+      // by ensureSeeded() and every turn so an alert-fired investigation
+      // gets the same code tools an interactive one carries from Settings.
+      await this.state.storage.put('autonomousRepos', body.repos ?? null);
       this.setStatus('running', { started_at: Date.now() });
       // The 'started' commit powers the Alerts page's "Investigating…"
       // badge. Fire-and-forget: commitLifecycle never throws, and the
@@ -551,11 +561,22 @@ export class InvestigationDO {
   }
 
   /** The repos the agent may check out: the investigation's own (from
-   *  app Settings, interactive) if present, else the cell's REPOS_JSON. */
+   *  app Settings — interactive payload, or an autonomous run's
+   *  coordinator-provisioned default) if present, else the cell's
+   *  REPOS_JSON env fallback. */
   private effectiveRepos(payloadRepos?: RepoConfig[] | null): RepoConfig[] {
     return payloadRepos && payloadRepos.length
       ? payloadRepos
       : parseReposConfig(this.env.REPOS_JSON);
+  }
+
+  /** Autonomous run's default repos, stored at /start from the
+   *  coordinator's provisioned default. Null for older runs / when
+   *  provisioning never pushed a list. */
+  private async autonomousRepos(): Promise<RepoConfig[] | null> {
+    return (
+      (await this.state.storage.get<RepoConfig[] | null>('autonomousRepos')) ?? null
+    );
   }
 
   private async ensureSeeded(alert: FiringAlert, cribl: CriblClient): Promise<void> {
@@ -580,7 +601,9 @@ export class InvestigationDO {
       ...formatPreflightSignals(preflight),
     ];
 
-    const prompt = buildSeedPrompt(seed) + this.codeAddendum(this.effectiveRepos());
+    const prompt =
+      buildSeedPrompt(seed) +
+      this.codeAddendum(this.effectiveRepos(await this.autonomousRepos()));
     // The seed prompt is ~75 KB (the dataset-schema preamble). Keep it
     // OUT of the agent_messages SQLite table — history() reads that
     // whole table every turn, and a 75 KB constant row pushes the DO's
@@ -762,7 +785,7 @@ export class InvestigationDO {
         const payloadRepos = interactive
           ? (await this.state.storage.get<{ repos?: RepoConfig[] | null }>('interactivePayload'))
               ?.repos
-          : undefined;
+          : await this.autonomousRepos();
         const repos = this.effectiveRepos(payloadRepos);
         let executors: ApmToolExecutors = apmExecutors;
         let extraTools: AgentToolDefinition[] | undefined;

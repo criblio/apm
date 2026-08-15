@@ -16,6 +16,7 @@
   paths:
     allowlist:
       - /investigations
+      - /config
   headers:
     inject:
       Authorization: "'Bearer ' + kv.cellToken"

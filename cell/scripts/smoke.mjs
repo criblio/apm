@@ -266,5 +266,26 @@ async function waitForStatus(id, target, tries = 30) {
   check('recall respects limit', (limited.json?.investigations?.length ?? 0) <= 1);
 }
 
+// Config repos: the provisioned default for autonomous investigations.
+// Round-trips through the coordinator (POST replaces, GET returns).
+{
+  const noAuth = await api('/config/repos', { method: 'POST', bearer: 'wrong', body: { repos: [] } });
+  check('config/repos rejects a bad bearer', noAuth.status === 401);
+
+  const repos = [{ url: 'open-telemetry/opentelemetry-demo', service: '*', name: 'otel-demo' }];
+  const put = await api('/config/repos', { method: 'POST', bearer: UI_BEARER, body: { repos } });
+  check('config/repos POST accepts the list', put.status === 200 && put.json?.count === 1, JSON.stringify(put.json));
+
+  const get = await api('/config/repos', { bearer: UI_BEARER });
+  check('config/repos GET returns the stored list', get.json?.repos?.[0]?.url === repos[0].url, JSON.stringify(get.json));
+
+  // Non-repo junk is filtered on write (url required).
+  const bad = await api('/config/repos', { method: 'POST', bearer: UI_BEARER, body: { repos: [{ nope: 1 }] } });
+  check('config/repos drops entries without a url', bad.json?.count === 0);
+
+  // Restore the real list for any subsequent autonomous run.
+  await api('/config/repos', { method: 'POST', bearer: UI_BEARER, body: { repos } });
+}
+
 console.log(failures === 0 ? '\nSMOKE PASS' : `\nSMOKE FAIL (${failures})`);
 process.exit(failures === 0 ? 0 : 1);

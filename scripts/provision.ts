@@ -81,6 +81,10 @@ function actionLabel(a: PlanAction): string {
   return `  · noop`;
 }
 
+/** The Settings source-repos list, captured from KV so wireCellTrigger
+ *  can push it to the cell (the CLI half of UI == CLI parity). */
+let provisionedSourceRepos: Array<Record<string, unknown>> = [];
+
 async function loadAppSettingsFromKV(http: HttpClient): Promise<void> {
   // Default the dataset to 'otel' first so the in-memory store has
   // a value even when KV is unreachable. Without this, every saved
@@ -105,6 +109,9 @@ async function loadAppSettingsFromKV(http: HttpClient): Promise<void> {
       }
       if (typeof settings.serverInvestigations === 'boolean') {
         setServerInvestigations(settings.serverInvestigations);
+      }
+      if (Array.isArray(settings.sourceRepos)) {
+        provisionedSourceRepos = settings.sourceRepos as Array<Record<string, unknown>>;
       }
     }
   } catch {
@@ -149,6 +156,39 @@ async function wireCellTrigger(
   // it inline in the search body is silently dropped by the API).
   const n = await ensureAlertNotification(http);
   console.log(`▶ Alert notification: ${n === 'created' ? '+ create' : '~ update'} ${ALERT_NOTIFY_SEARCH_ID} → cell webhook`);
+
+  // Push the Settings source repos to the cell so alert-fired
+  // (autonomous) investigations get the same code tools an interactive
+  // one carries. The cell can't read the app-settings KV, so this is the
+  // CLI half of UI == CLI parity (the Settings page pushes the same list
+  // on Save). Runs direct — provisioning has no fetch proxy — so it needs
+  // the cell's UI bearer, distinct from the webhook bearer.
+  const uiBearer = process.env.CELL_UI_BEARER;
+  if (cellUrl && uiBearer) {
+    const repos = provisionedSourceRepos
+      .map((r) => ({
+        url: typeof r.url === 'string' ? r.url.trim() : '',
+        name: typeof r.name === 'string' && r.name.trim() ? r.name.trim() : undefined,
+        service: typeof r.service === 'string' && r.service.trim() ? r.service.trim() : undefined,
+        ref: typeof r.ref === 'string' && r.ref.trim() ? r.ref.trim() : undefined,
+      }))
+      .filter((r) => r.url);
+    const resp = await fetch(`${cellUrl.replace(/\/$/, '')}/config/repos`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${uiBearer}` },
+      body: JSON.stringify({ repos }),
+    });
+    if (resp.ok) {
+      console.log(`▶ Source repos → cell: ${repos.length} for alert-fired runs`);
+    } else {
+      console.error(`✗ Source repos → cell failed (${resp.status}): ${(await resp.text()).slice(0, 160)}`);
+    }
+  } else if (provisionedSourceRepos.length > 0) {
+    console.log(
+      '▶ Source repos: skipped push (set CELL_UI_BEARER to feed alert-fired investigations; ' +
+        'the Settings page pushes them on Save regardless).',
+    );
+  }
 }
 
 async function main(): Promise<void> {

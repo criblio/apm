@@ -142,6 +142,27 @@ export default {
       return Response.json(await res.json());
     }
 
+    // Provisioned default source repos for autonomous investigations.
+    // POST replaces the list; GET returns it. Written by the app on
+    // Settings Save and by scripts/provision.ts (both can read the
+    // app-settings repos; the cell can't).
+    if (url.pathname === '/config/repos') {
+      if (!bearerOk(request, env.UI_BEARER)) return unauthorized();
+      if (request.method === 'POST' || request.method === 'GET') {
+        const res = await coordinator().fetch(
+          'https://coordinator.internal/internal/config-repos',
+          request.method === 'POST'
+            ? {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: await request.text(),
+              }
+            : undefined,
+        );
+        return Response.json(await res.json(), { status: res.status });
+      }
+    }
+
     if (url.pathname === '/ws-ticket' && request.method === 'GET') {
       if (!bearerOk(request, env.UI_BEARER)) return unauthorized();
       const id = url.searchParams.get('investigation') ?? '';

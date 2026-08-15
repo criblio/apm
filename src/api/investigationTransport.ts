@@ -345,6 +345,30 @@ export async function sendInvestigationMessage(
   );
 }
 
+/**
+ * Push the provisioned default source repos to the cell. Autonomous
+ * (alert-fired) investigations read this list — the alert webhook
+ * carries no repos and the cell can't read the app-settings KV, so this
+ * is how the Settings repos reach an alert-fired run. Interactive
+ * investigations still thread their repos at create time; this only
+ * feeds the autonomous path. Called on Settings Save and by
+ * `scripts/provision.ts` (UI == CLI).
+ */
+export async function pushCellRepos(
+  repos: SourceRepo[],
+  signal?: AbortSignal,
+): Promise<{ count: number }> {
+  const base = getCellBaseUrl();
+  return postJson<{ count: number }>(`${base}/config/repos`, { repos }, signal);
+}
+
+/** Read the provisioned default repos currently stored on the cell. */
+export async function getCellRepos(signal?: AbortSignal): Promise<SourceRepo[]> {
+  const base = getCellBaseUrl();
+  const data = await getJson<{ repos: SourceRepo[] }>(`${base}/config/repos`, signal);
+  return data.repos ?? [];
+}
+
 export interface ListInvestigationsQuery {
   /** Substring match on title / incident key. */
   q?: string;
