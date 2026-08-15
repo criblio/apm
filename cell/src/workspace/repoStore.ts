@@ -13,14 +13,62 @@ import { stripTopDir } from './untar';
 /** Skip any single file larger than this (source files are far smaller;
  *  this keeps a lockfile/vendored blob from bloating the DO). */
 const MAX_FILE_BYTES = 256 * 1024;
-/** Stop storing after this many files / this much total. */
-const MAX_FILES = 6000;
-const MAX_TOTAL_BYTES = 48 * 1024 * 1024;
+/** Stop storing after this many files / this much total. Deliberately
+ *  modest: the store runs synchronously inside the DO's single thread,
+ *  and a giant polyglot repo (the OTel demo tarball is ~66 MB) will
+ *  wedge the DO — status/events start returning 502 — long before it
+ *  finishes. Source is what the agent reads; assets/generated/vendored
+ *  trees are filtered out below, so a few thousand files is plenty. */
+const MAX_FILES = 2500;
+const MAX_TOTAL_BYTES = 20 * 1024 * 1024;
+/** Yield to the DO's request queue every N inserts so a big checkout
+ *  can't monopolize the single thread — status/events stay answerable
+ *  mid-checkout, and the turn's abort signal gets a chance to fire. */
+const YIELD_EVERY = 200;
+
+/** Path segments whose whole subtree is noise for source investigation
+ *  (dependencies, build output, generated code, VCS metadata). Matched
+ *  case-insensitively against any path segment. */
+const SKIP_DIRS = new Set([
+  'node_modules', '.git', 'dist', 'build', 'out', 'bin', 'obj', 'target',
+  'vendor', '.next', '.nuxt', '.venv', 'venv', '__pycache__', '.pytest_cache',
+  'coverage', 'testdata', 'test-data', 'fixtures', '__snapshots__', '.gradle',
+  '.idea', '.vscode', 'gen', 'generated', '.terraform', 'Pods', 'DerivedData',
+]);
+
+/** File extensions that are assets/binaries/generated — never source the
+ *  agent needs to read. Skipped by name before the (costlier) decode +
+ *  NUL-scan. */
+const SKIP_EXT = new Set([
+  'png', 'jpg', 'jpeg', 'gif', 'bmp', 'ico', 'webp', 'svg', 'tif', 'tiff',
+  'woff', 'woff2', 'ttf', 'eot', 'otf', 'mp4', 'webm', 'mov', 'mp3', 'wav',
+  'ogg', 'pdf', 'zip', 'gz', 'tgz', 'tar', 'bz2', 'xz', '7z', 'rar', 'jar',
+  'war', 'class', 'so', 'dylib', 'dll', 'exe', 'wasm', 'o', 'a', 'lib',
+  'bin', 'dat', 'pyc', 'pyo', 'lock', 'map', 'min.js', 'min.css', 'ipynb',
+]);
+
+/** Skip a path before decoding it: noise subtrees + asset/binary
+ *  extensions. Keeps the store to actual source. */
+function shouldSkipPath(path: string): boolean {
+  const lower = path.toLowerCase();
+  const segments = lower.split('/');
+  for (const seg of segments.slice(0, -1)) {
+    if (SKIP_DIRS.has(seg)) return true;
+  }
+  const base = segments[segments.length - 1] ?? '';
+  if (base.endsWith('.min.js') || base.endsWith('.min.css')) return true;
+  const dot = base.lastIndexOf('.');
+  if (dot > 0 && SKIP_EXT.has(base.slice(dot + 1))) return true;
+  return false;
+}
 
 export interface CheckoutStats {
   stored: number;
   skippedLarge: number;
   skippedBinary: number;
+  /** Files in dependency/build/generated trees or asset extensions,
+   *  filtered before decode. */
+  skippedNoise: number;
   truncated: boolean;
 }
 
@@ -68,14 +116,17 @@ export class RepoStore {
   }
 
   /** Store a tarball's entries under `repo`, stripping GitHub's top dir
-   *  and skipping binary/oversized files. Idempotent-ish: clears any
-   *  prior copy of the same repo first. */
-  store(repo: string, entries: TarEntry[]): CheckoutStats {
+   *  and skipping noise (dependency/build/generated trees), binary, and
+   *  oversized files. Async: yields to the DO's request queue every few
+   *  hundred inserts and checks `signal` so a large repo can't wedge the
+   *  single-threaded DO. Idempotent-ish: clears any prior copy first. */
+  async store(repo: string, entries: TarEntry[], signal?: AbortSignal): Promise<CheckoutStats> {
     this.sql.exec(`DELETE FROM repo_files WHERE repo = ?`, repo);
     const stats: CheckoutStats = {
       stored: 0,
       skippedLarge: 0,
       skippedBinary: 0,
+      skippedNoise: 0,
       truncated: false,
     };
     let total = 0;
@@ -85,6 +136,12 @@ export class RepoStore {
         stats.truncated = true;
         break;
       }
+      const path = stripTopDir(entry.path);
+      if (!path) continue;
+      if (shouldSkipPath(path)) {
+        stats.skippedNoise++;
+        continue;
+      }
       if (entry.content.length > MAX_FILE_BYTES) {
         stats.skippedLarge++;
         continue;
@@ -93,8 +150,6 @@ export class RepoStore {
         stats.skippedBinary++;
         continue;
       }
-      const path = stripTopDir(entry.path);
-      if (!path) continue;
       this.sql.exec(
         `INSERT OR REPLACE INTO repo_files (repo, path, content) VALUES (?, ?, ?)`,
         repo,
@@ -103,6 +158,12 @@ export class RepoStore {
       );
       stats.stored++;
       total += entry.content.length;
+      if (stats.stored % YIELD_EVERY === 0) {
+        if (signal?.aborted) throw new Error('checkout aborted');
+        // Macrotask yield: lets queued status/events requests interleave
+        // between insert batches instead of 502-ing while we grind.
+        await new Promise((r) => setTimeout(r, 0));
+      }
     }
     this.sql.exec(
       `INSERT OR REPLACE INTO repo_meta (repo, checked_out_at, file_count) VALUES (?, ?, ?)`,

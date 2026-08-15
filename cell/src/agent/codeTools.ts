@@ -148,9 +148,10 @@ export function createCodeToolExecutors(deps: CodeToolDeps): {
         try {
           const stats = await checkoutRepo(deps.store, resolved, deps.token, signal);
           return done(
-            `Checked out "${resolved.name}" (${resolved.owner}/${resolved.repo}${resolved.ref ? `@${resolved.ref}` : ''}): ${stats.stored} files` +
-              `${stats.truncated ? ' (truncated at the file cap)' : ''}. Read RECENT_COMMITS.md for recent changes. ` +
-              `Use list_dir/read_file/grep_code with repo="${resolved.name}".`,
+            `Checked out "${resolved.name}" (${resolved.owner}/${resolved.repo}${resolved.ref ? `@${resolved.ref}` : ''}): ${stats.stored} source files stored` +
+              `${stats.truncated ? ` (truncated at the ${stats.stored}-file cap — narrow with grep_code/list_dir)` : ''}` +
+              ` (skipped ${stats.skippedNoise} dependency/build/asset, ${stats.skippedLarge} oversized, ${stats.skippedBinary} binary).` +
+              ` Read RECENT_COMMITS.md for recent changes. Use list_dir/read_file/grep_code with repo="${resolved.name}".`,
           );
         } catch (err) {
           return done(`checkout failed: ${err instanceof Error ? err.message : String(err)}`);

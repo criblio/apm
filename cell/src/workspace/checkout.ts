@@ -83,7 +83,7 @@ export async function checkoutRepo(
     throw new Error(`tarball fetch failed (${resp.status}): ${(await resp.text()).slice(0, 200)}`);
   }
   const entries = await gunzipUntar(await resp.arrayBuffer());
-  const stats = store.store(name, entries);
+  const stats = await store.store(name, entries, signal);
   store.writeFile(
     name,
     RECENT_COMMITS_PATH,
