@@ -221,15 +221,17 @@ export class CoordinatorDO {
     return new Response('not found', { status: 404 });
   }
 
-  /** Start queued investigations while below the concurrency cap. */
+  /**
+   * Start queued investigations. Interactive runs start immediately and
+   * in parallel — they're user-initiated, human-paced, and each caps its
+   * own searches, so several at once won't storm the search pool.
+   * Autonomous (alert-triggered) runs stay gated by MAX_CONCURRENT, which
+   * is the actual storm risk (a burst of firing alerts).
+   */
   private async pump(): Promise<void> {
-    // Reclaim orphaned slots: a node that dies mid-investigation
-    // leaves its row 'running' forever, and with MAX_CONCURRENT small
-    // that would wedge the queue permanently. An investigation that
-    // has been 'running' longer than any real run could take is
-    // treated as dead and marked failed, freeing the slot. (Normal
-    // runs conclude in well under this; the InvestigationDO's own
-    // MAX_TURNS cap bounds a live run far below it.)
+    // Reclaim orphaned slots: a node that dies mid-investigation leaves
+    // its row 'running' forever. An investigation 'running' longer than
+    // any real run could take is treated as dead and freed.
     this.state.storage.sql.exec(
       `UPDATE investigations SET status = 'failed', concluded_at = ?
        WHERE status = 'running' AND started_at IS NOT NULL AND started_at < ?`,
@@ -237,67 +239,83 @@ export class CoordinatorDO {
       Date.now() - ORPHAN_RECLAIM_MS,
     );
 
-    const running = Number(
+    // Interactive: start every queued one now (no global gate).
+    const interactive = this.state.storage.sql
+      .exec(
+        `SELECT id, alert_json, mode, title FROM investigations
+         WHERE status = 'queued' AND mode = 'interactive' ORDER BY created_at`,
+      )
+      .toArray();
+    for (const row of interactive) await this.dispatchQueued(row);
+
+    // Autonomous: gate on MAX_CONCURRENT (counting only autonomous runs).
+    const runningAutonomous = Number(
       this.state.storage.sql
-        .exec(`SELECT COUNT(*) AS n FROM investigations WHERE status = 'running'`)
+        .exec(
+          `SELECT COUNT(*) AS n FROM investigations WHERE status = 'running' AND mode = 'autonomous'`,
+        )
         .one().n,
     );
-    let slots = MAX_CONCURRENT - running;
-
+    let slots = MAX_CONCURRENT - runningAutonomous;
     while (slots > 0) {
       const next = this.state.storage.sql
         .exec(
           `SELECT id, alert_json, mode, title FROM investigations
-           WHERE status = 'queued' ORDER BY created_at LIMIT 1`,
+           WHERE status = 'queued' AND mode = 'autonomous' ORDER BY created_at LIMIT 1`,
         )
         .toArray()[0];
       if (!next) return;
+      if (await this.dispatchQueued(next)) slots--;
+    }
+  }
 
-      const id = String(next.id);
-      const mode = (next.mode as InvestigationMode) ?? 'autonomous';
-      this.state.storage.sql.exec(
-        `UPDATE investigations SET status = 'running', started_at = ? WHERE id = ?`,
-        Date.now(),
-        id,
-      );
-      const stub = this.env.INVESTIGATION.get(this.env.INVESTIGATION.idFromName(id));
-      // Autonomous → /start with the raw alert facts (the DO builds the
-      // seed via buildAlertSeed + preflight). Interactive → /create
-      // with the user's prompt + context, seeded from that prompt.
-      const res =
-        mode === 'interactive'
-          ? await (() => {
-              const payload = JSON.parse(String(next.alert_json)) as CreateInvestigationBody;
-              return stub.fetch('https://investigation.internal/create', {
-                method: 'POST',
-                headers: { 'content-type': 'application/json' },
-                body: JSON.stringify({
-                  id,
-                  prompt: payload.prompt,
-                  context: payload.context ?? null,
-                  title: String(next.title ?? ''),
-                  repos: payload.repos ?? null,
-                }),
-              });
-            })()
-          : await stub.fetch('https://investigation.internal/start', {
+  /** Mark a queued row running and dispatch it to its DO. Returns true
+   *  if it started, false if the DO refused (row marked failed). */
+  private async dispatchQueued(next: Record<string, unknown>): Promise<boolean> {
+    const id = String(next.id);
+    const mode = (next.mode as InvestigationMode) ?? 'autonomous';
+    this.state.storage.sql.exec(
+      `UPDATE investigations SET status = 'running', started_at = ? WHERE id = ?`,
+      Date.now(),
+      id,
+    );
+    const stub = this.env.INVESTIGATION.get(this.env.INVESTIGATION.idFromName(id));
+    // Autonomous → /start with the raw alert facts (the DO builds the
+    // seed via buildAlertSeed + preflight). Interactive → /create with
+    // the user's prompt + context + repos.
+    const res =
+      mode === 'interactive'
+        ? await (() => {
+            const payload = JSON.parse(String(next.alert_json)) as CreateInvestigationBody;
+            return stub.fetch('https://investigation.internal/create', {
               method: 'POST',
               headers: { 'content-type': 'application/json' },
               body: JSON.stringify({
                 id,
-                alert: JSON.parse(String(next.alert_json)) as FiringAlert,
-                seed: null,
+                prompt: payload.prompt,
+                context: payload.context ?? null,
+                title: String(next.title ?? ''),
+                repos: payload.repos ?? null,
               }),
             });
-      if (!res.ok) {
-        this.state.storage.sql.exec(
-          `UPDATE investigations SET status = 'failed', concluded_at = ? WHERE id = ?`,
-          Date.now(),
-          id,
-        );
-        continue; // slot stays free for the next queued item
-      }
-      slots--;
+          })()
+        : await stub.fetch('https://investigation.internal/start', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              id,
+              alert: JSON.parse(String(next.alert_json)) as FiringAlert,
+              seed: null,
+            }),
+          });
+    if (!res.ok) {
+      this.state.storage.sql.exec(
+        `UPDATE investigations SET status = 'failed', concluded_at = ? WHERE id = ?`,
+        Date.now(),
+        id,
+      );
+      return false;
     }
+    return true;
   }
 }
