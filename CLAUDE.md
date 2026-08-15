@@ -158,7 +158,14 @@ record; the pin makes framework bumps deliberate.
 1. Check out the framework repo locally and pull the SHA you
    want to ship.
 2. In this repo, replace the contents of `.framework-sha` with
-   that 40-char SHA (one line, trailing newline OK).
+   that 40-char SHA (one line, trailing newline OK). **That's the
+   only file to change for a bump** — `ci.yml` and `release.yml`
+   read `.framework-sha` at runtime and pass it to the
+   `release-build` action (which asserts the input equals the file).
+   You only touch the `release-build@<sha>` *action ref* in those
+   workflows if the action itself changes, which is rare.
+   (History: before 2026-08-14 the workflows hardcoded the SHA in
+   three places; they drifted and CI failed on the next bump.)
 3. Run `npm run lint && npm test && npx tsc --noEmit` to confirm
    the new framework still builds against APM master.
 4. Open a small PR titled `chore: bump framework SHA to <short>`
