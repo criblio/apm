@@ -1,7 +1,7 @@
 {
   "name": "apm",
   "private": true,
-  "version": "0.13.42",
+  "version": "0.13.43",
   "type": "module",
   "scripts": {
     "dev": "vite",

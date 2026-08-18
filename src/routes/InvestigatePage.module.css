@@ -107,6 +107,11 @@
   border-radius: var(--cds-radius-sm);
   background: var(--cds-color-bg-subtle);
   overflow: hidden;
+  /* The transcript is a flex column; `overflow: hidden` zeroes a flex
+   * item's auto min-height, so when the transcript overflows these cards
+   * collapse to their 2px border (clipping the header). Don't let them
+   * shrink below their content. */
+  flex-shrink: 0;
 }
 .codeCardHeader {
   display: flex;
