@@ -81,10 +81,6 @@ function actionLabel(a: PlanAction): string {
   return `  · noop`;
 }
 
-/** The Settings source-repos list, captured from KV so wireCellTrigger
- *  can push it to the cell (the CLI half of UI == CLI parity). */
-let provisionedSourceRepos: Array<Record<string, unknown>> = [];
-
 async function loadAppSettingsFromKV(http: HttpClient): Promise<void> {
   // Default the dataset to 'otel' first so the in-memory store has
   // a value even when KV is unreachable. Without this, every saved
@@ -109,9 +105,6 @@ async function loadAppSettingsFromKV(http: HttpClient): Promise<void> {
       }
       if (typeof settings.serverInvestigations === 'boolean') {
         setServerInvestigations(settings.serverInvestigations);
-      }
-      if (Array.isArray(settings.sourceRepos)) {
-        provisionedSourceRepos = settings.sourceRepos as Array<Record<string, unknown>>;
       }
     }
   } catch {
@@ -157,32 +150,44 @@ async function wireCellTrigger(
   const n = await ensureAlertNotification(http);
   console.log(`▶ Alert notification: ${n === 'created' ? '+ create' : '~ update'} ${ALERT_NOTIFY_SEARCH_ID} → cell webhook`);
 
-  // Push the Settings source repos to the cell so alert-fired
-  // (autonomous) investigations get the same code tools an interactive
-  // one carries. The cell can't read the app-settings KV, so this is the
-  // CLI half of UI == CLI parity (the Settings page pushes the same list
-  // on Save). Runs direct — provisioning has no fetch proxy — so it needs
-  // the cell's UI bearer, distinct from the webhook bearer.
+  // Push source repos to the cell so alert-fired (autonomous)
+  // investigations get the code tools an interactive one carries.
+  //
+  // The CLI CANNOT read the repos the UI stores: the app-settings KV is
+  // app-scoped and a machine token has no app context (GET
+  // /kvstore/settings/app → 400 "App context required"). So the Settings
+  // page is the source of truth (it pushes to the cell on Save), and the
+  // CLI manages repos ONLY from an explicit CELL_REPOS_JSON env — the same
+  // deterministic pattern as CELL_URL / the bearers. Absent that env, the
+  // CLI never touches the cell's repo config (so a deploy can't wipe it).
   const uiBearer = process.env.CELL_UI_BEARER;
-  const repos = provisionedSourceRepos
-    .map((r) => ({
-      url: typeof r.url === 'string' ? r.url.trim() : '',
-      name: typeof r.name === 'string' && r.name.trim() ? r.name.trim() : undefined,
-      service: typeof r.service === 'string' && r.service.trim() ? r.service.trim() : undefined,
-      ref: typeof r.ref === 'string' && r.ref.trim() ? r.ref.trim() : undefined,
-    }))
-    .filter((r) => r.url);
-  // NEVER push an empty list: provisioning reads the app-settings KV with a
-  // machine token, which resolves a different (often empty) namespace than
-  // the UI writes to — so "0 repos" here usually means "couldn't read them",
-  // not "the user cleared them". Pushing [] would clobber a config the
-  // Settings page set (the reliable, user-scoped source of truth). Only
-  // reinforce the cell when we actually read repos.
-  if (repos.length === 0) {
+  const reposEnv = process.env.CELL_REPOS_JSON;
+  if (!reposEnv) {
     console.log(
-      '▶ Source repos: none read from KV — leaving the cell config untouched ' +
-        '(Settings → Source repositories → Save is the source of truth).',
+      '▶ Source repos: left to the UI (Settings → Source repositories → Save). ' +
+        'Set CELL_REPOS_JSON to manage them from the CLI.',
     );
+    return;
+  }
+  let repos: Array<{ url: string; name?: string; service?: string; ref?: string }> = [];
+  try {
+    const parsed = JSON.parse(reposEnv) as Array<Record<string, unknown>>;
+    if (Array.isArray(parsed)) {
+      repos = parsed
+        .map((r) => ({
+          url: typeof r.url === 'string' ? r.url.trim() : '',
+          name: typeof r.name === 'string' && r.name.trim() ? r.name.trim() : undefined,
+          service: typeof r.service === 'string' && r.service.trim() ? r.service.trim() : undefined,
+          ref: typeof r.ref === 'string' && r.ref.trim() ? r.ref.trim() : undefined,
+        }))
+        .filter((r) => r.url);
+    }
+  } catch {
+    console.error('✗ Source repos: CELL_REPOS_JSON is not valid JSON — leaving the cell config untouched.');
+    return;
+  }
+  if (repos.length === 0) {
+    console.log('▶ Source repos: CELL_REPOS_JSON has no valid repos — leaving the cell config untouched.');
   } else if (cellUrl && uiBearer) {
     const resp = await fetch(`${cellUrl.replace(/\/$/, '')}/config/repos`, {
       method: 'POST',
@@ -190,15 +195,12 @@ async function wireCellTrigger(
       body: JSON.stringify({ repos }),
     });
     if (resp.ok) {
-      console.log(`▶ Source repos → cell: ${repos.length} for alert-fired runs`);
+      console.log(`▶ Source repos → cell: ${repos.length} from CELL_REPOS_JSON for alert-fired runs`);
     } else {
       console.error(`✗ Source repos → cell failed (${resp.status}): ${(await resp.text()).slice(0, 160)}`);
     }
   } else {
-    console.log(
-      '▶ Source repos: skipped push (set CELL_UI_BEARER to feed alert-fired investigations; ' +
-        'the Settings page pushes them on Save regardless).',
-    );
+    console.log('▶ Source repos: CELL_REPOS_JSON set but CELL_UI_BEARER missing — skipped push.');
   }
 }
 
