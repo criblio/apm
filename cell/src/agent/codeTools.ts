@@ -126,10 +126,21 @@ export function createCodeToolExecutors(deps: CodeToolDeps): {
         return {};
       }
     })();
+    // Attach a `code` UI payload so the transcript renders these as tool
+    // cards (like Claude Code shows tool use). The framework only invokes
+    // the app's renderToolCard when a result carries a `ui`; without this
+    // marker, code-tool calls render as nothing. Carries the raw args and a
+    // truncated body so the card is self-contained.
     const done = (content: string): ToolExecutionResult => ({
       id: call.id,
       name: call.name,
       content,
+      ui: {
+        kind: 'code',
+        tool: call.name,
+        args: call.arguments ?? '',
+        body: content.length > 4000 ? `${content.slice(0, 4000)}\n… (truncated)` : content,
+      } as unknown as ToolExecutionResult['ui'],
     });
 
     switch (call.name) {

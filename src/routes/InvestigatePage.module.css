@@ -101,6 +101,47 @@
   opacity: 0.6;
   cursor: default;
 }
+/* ── Source-code tool cards (checkout/grep/read/list) ─────────── */
+.codeCard {
+  border: 1px solid var(--cds-color-border-subtle);
+  border-radius: var(--cds-radius-sm);
+  background: var(--cds-color-bg-subtle);
+  overflow: hidden;
+}
+.codeCardHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--cds-space-xs);
+  padding: var(--cds-space-xs) var(--cds-space-sm);
+  border-bottom: 1px solid var(--cds-color-border-subtle);
+}
+.codeCardIcon {
+  flex: 0 0 auto;
+}
+.codeCardTool {
+  font-family: var(--cds-font-family-mono, monospace);
+  font-size: var(--cds-font-size-xs);
+  font-weight: var(--cds-font-weight-bold);
+}
+.codeCardArg {
+  font-family: var(--cds-font-family-mono, monospace);
+  font-size: var(--cds-font-size-xs);
+  color: var(--cds-color-text-subtle);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.codeCardBody {
+  margin: 0;
+  padding: var(--cds-space-sm);
+  font-family: var(--cds-font-family-mono, monospace);
+  font-size: var(--cds-font-size-xs);
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 22rem;
+  overflow: auto;
+}
 .replayEmpty {
   padding: var(--cds-space-lg);
   color: var(--cds-color-text-subtle);

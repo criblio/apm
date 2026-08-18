@@ -96,12 +96,70 @@ async function enrichSeed(seed: InvestigationSeed): Promise<InvestigationSeed> {
   return next;
 }
 
-/** Render APM's custom result cards: the trace waterfall for
- *  render_trace and the shared metrics chart card for run_metrics_query.
- *  Everything else falls through to the shell's built-in cards. */
+/** UI payload the cell attaches to server-only code-tool results
+ *  (checkout_repo / grep_code / read_file / list_dir) so they render as
+ *  transcript cards. Not part of the framework's ToolResultUi union. */
+interface CodeToolUi {
+  kind: 'code';
+  tool: string;
+  /** Raw JSON arguments string from the tool call. */
+  args: string;
+  /** Result text (already truncated by the cell). */
+  body: string;
+}
+
+function parseArgs(json: string): Record<string, string | undefined> {
+  try {
+    return JSON.parse(json || '{}') as Record<string, string | undefined>;
+  } catch {
+    return {};
+  }
+}
+
+/** Icon + one-line argument label for a code tool, so the card reads like
+ *  a Claude-Code tool-use block (`🔎 grep_code · [Ii]nvalid token`). */
+function codeToolHeader(tool: string, a: Record<string, string | undefined>): {
+  icon: string;
+  label: string;
+} {
+  switch (tool) {
+    case 'checkout_repo':
+      return { icon: '📦', label: a.service ?? a.repo ?? '' };
+    case 'grep_code':
+      return { icon: '🔎', label: [a.pattern, a.path].filter(Boolean).join('  ·  ') };
+    case 'read_file':
+      return { icon: '📄', label: a.path ?? '' };
+    case 'list_dir':
+      return { icon: '📁', label: a.path || '/' };
+    default:
+      return { icon: '🛠', label: '' };
+  }
+}
+
+function CodeToolCard({ ui }: { ui: CodeToolUi }) {
+  const { icon, label } = codeToolHeader(ui.tool, parseArgs(ui.args));
+  return (
+    <div className={s.codeCard}>
+      <div className={s.codeCardHeader}>
+        <span className={s.codeCardIcon}>{icon}</span>
+        <code className={s.codeCardTool}>{ui.tool}</code>
+        {label && <span className={s.codeCardArg}>{label}</span>}
+      </div>
+      {ui.body && <pre className={s.codeCardBody}>{ui.body}</pre>}
+    </div>
+  );
+}
+
+/** Render APM's custom result cards: the trace waterfall for render_trace,
+ *  the metrics chart for run_metrics_query, and the source-code tool cards
+ *  (checkout/grep/read/list). Everything else falls through to the shell's
+ *  built-in cards. */
 function renderApmToolCard(ui: ToolResultUi) {
   if (ui.kind === 'trace') return <TraceCard ui={ui as RenderTraceUi} />;
   if (ui.kind === 'metrics') return <MetricsToolCard ui={ui as MetricsQueryUi} />;
+  if ((ui as unknown as { kind?: string }).kind === 'code') {
+    return <CodeToolCard ui={ui as unknown as CodeToolUi} />;
+  }
   return null;
 }
 
