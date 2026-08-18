@@ -1,0 +1,105 @@
+/* Syntax-highlighted source viewer (inline card body + modal). Token
+ * colors come from the imported highlight.js github theme (global
+ * .hljs-* classes); this module owns layout, line numbers, and the
+ * grep-match line highlight. */
+
+.fileView {
+  border-top: 1px solid var(--cds-color-border-subtle);
+  max-height: 24rem;
+  overflow: auto;
+  background: var(--cds-color-bg-default, #fff);
+  font-family: var(--cds-font-family-mono, monospace);
+  font-size: var(--cds-font-size-xs);
+  line-height: 1.5;
+}
+.fileView.full {
+  max-height: none;
+  height: 100%;
+  border-top: none;
+}
+
+.row {
+  display: flex;
+  align-items: flex-start;
+  white-space: pre;
+}
+.rowHot {
+  /* the lines the agent grepped for */
+  background: var(--cds-color-bg-warning-subtle, rgba(255, 209, 0, 0.16));
+  box-shadow: inset 3px 0 0 var(--cds-color-border-warning, #e3b341);
+}
+
+.ln {
+  flex: 0 0 auto;
+  min-width: 3ch;
+  padding: 0 var(--cds-space-sm);
+  text-align: right;
+  color: var(--cds-color-text-subtle);
+  user-select: none;
+  white-space: pre;
+}
+
+.code {
+  flex: 1 1 auto;
+  padding-right: var(--cds-space-sm);
+  color: var(--cds-color-text-default, #24292e);
+  white-space: pre;
+  tab-size: 2;
+}
+
+/* ── Modal ─────────────────────────────────────────────────────── */
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--cds-space-lg);
+  background: rgba(0, 0, 0, 0.5);
+}
+.modal {
+  display: flex;
+  flex-direction: column;
+  width: min(1024px, 94vw);
+  max-height: 88vh;
+  background: var(--cds-color-bg-default, #fff);
+  border: 1px solid var(--cds-color-border-subtle);
+  border-radius: var(--cds-radius-md, 8px);
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+}
+.modalHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--cds-space-sm);
+  padding: var(--cds-space-sm) var(--cds-space-md);
+  border-bottom: 1px solid var(--cds-color-border-subtle);
+}
+.modalPath {
+  font-family: var(--cds-font-family-mono, monospace);
+  font-size: var(--cds-font-size-sm);
+  font-weight: var(--cds-font-weight-bold);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.modalClose {
+  flex: 0 0 auto;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: var(--cds-font-size-md);
+  color: var(--cds-color-text-subtle);
+  line-height: 1;
+  padding: var(--cds-space-xs);
+}
+.modalClose:hover {
+  color: var(--cds-color-text-default);
+}
+.modalBody {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}

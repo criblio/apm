@@ -16,9 +16,14 @@
  *   - the render_trace result card, drawn with APM's SpanTree
  *     waterfall.
  */
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { InvestigatorChat, InvestigatorTranscript } from '@cribl/app-utils/investigator';
+import {
+  InvestigatorChat,
+  InvestigatorTranscript,
+  type InvestigatorTranscriptEntry,
+} from '@cribl/app-utils/investigator';
+import { SourceFileView, SourceFileModal } from '../components/SourceFileView';
 import MetricsToolCard from '@cribl/app-utils/investigator/metrics-tool-card';
 import { getCurrentDataset } from '@cribl/app-utils/dataset';
 import { useInvestigationSession } from '../hooks/useInvestigationSession';
@@ -161,54 +166,99 @@ function codeToolSummary(tool: string, body: string): string {
   }
 }
 
-/** A read file shown with a line-number gutter, so cited line numbers line
- *  up (`src/payment/charge.js:37`). */
-function FileView({ content }: { content: string }) {
-  const lines = content.split('\n');
-  const gutter = lines.map((_, i) => i + 1).join('\n');
-  return (
-    <div className={s.fileView}>
-      <pre className={s.fileGutter} aria-hidden="true">
-        {gutter}
-      </pre>
-      <pre className={s.fileCode}>{content}</pre>
-    </div>
-  );
+/** Strip a leading `./` or `/` and any trailing slash so a grep result
+ *  path (`src/payment/charge.js`) matches a read_file arg. */
+function normalizePath(p: string): string {
+  return p.replace(/^\.?\//, '').replace(/\/+$/, '');
+}
+
+/** Collect grep_code matches across the transcript → file path ⇒ 1-based
+ *  line numbers, so a read_file view can emphasize the lines the agent was
+ *  looking for. */
+function grepLineMap(
+  entries: readonly InvestigatorTranscriptEntry[],
+): Map<string, Set<number>> {
+  const map = new Map<string, Set<number>>();
+  for (const e of entries) {
+    if (e.kind !== 'toolCall' || e.call?.function?.name !== 'grep_code') continue;
+    const content = e.result?.content ?? '';
+    for (const line of content.split('\n')) {
+      const m = /^(.+?):(\d+):/.exec(line);
+      if (!m) continue;
+      const path = normalizePath(m[1]);
+      const ln = Number(m[2]);
+      if (!map.has(path)) map.set(path, new Set());
+      map.get(path)!.add(ln);
+    }
+  }
+  return map;
 }
 
 /** A collapsible tool-use card for the server-only source-code tools —
  *  header shows what ran (icon, tool, target, result summary); expanding it
- *  reveals the full result: the file with line numbers for read_file, the
- *  match list for grep_code, the tree for list_dir. */
-function CodeToolCard({ entry }: { entry: CodeToolEntry }) {
+ *  reveals the full result: the syntax-highlighted file for read_file (with
+ *  grep-matched lines emphasized, and a button to pop the whole file into a
+ *  modal), the match list for grep_code, the tree for list_dir. */
+function CodeToolCard({
+  entry,
+  hotLines,
+}: {
+  entry: CodeToolEntry;
+  hotLines?: Map<string, Set<number>>;
+}) {
   const tool = entry?.call?.function?.name ?? 'code';
   const args = parseArgs(entry?.call?.function?.arguments ?? '');
   const body = entry?.result?.content ?? '';
   const { icon, label } = codeToolHeader(tool, args);
   const summary = codeToolSummary(tool, body);
   const [open, setOpen] = useState(false);
+  const [modal, setModal] = useState(false);
+  const isFile = tool === 'read_file';
+  const path = args.path ?? '';
+  const highlight = isFile ? hotLines?.get(normalizePath(path)) : undefined;
   return (
     <div className={s.codeCard}>
-      <button
-        type="button"
-        className={s.codeCardHeader}
-        onClick={() => setOpen((o) => !o)}
-        aria-expanded={open}
-        disabled={!body}
-      >
-        <span className={s.codeCardChevron}>{body ? (open ? '▾' : '▸') : ''}</span>
-        <span className={s.codeCardIcon}>{icon}</span>
-        <code className={s.codeCardTool}>{tool}</code>
-        {label && <span className={s.codeCardArg}>{label}</span>}
-        {summary && <span className={s.codeCardSummary}>{summary}</span>}
-      </button>
+      <div className={s.codeCardHeader}>
+        <button
+          type="button"
+          className={s.codeCardToggle}
+          onClick={() => setOpen((o) => !o)}
+          aria-expanded={open}
+          disabled={!body}
+        >
+          <span className={s.codeCardChevron}>{body ? (open ? '▾' : '▸') : ''}</span>
+          <span className={s.codeCardIcon}>{icon}</span>
+          <code className={s.codeCardTool}>{tool}</code>
+          {label && <span className={s.codeCardArg}>{label}</span>}
+          {summary && <span className={s.codeCardSummary}>{summary}</span>}
+        </button>
+        {isFile && body && (
+          <button
+            type="button"
+            className={s.codeCardOpen}
+            onClick={() => setModal(true)}
+            title="Open full file"
+            aria-label="Open full file"
+          >
+            ⤢
+          </button>
+        )}
+      </div>
       {open &&
         body &&
-        (tool === 'read_file' ? (
-          <FileView content={body} />
+        (isFile ? (
+          <SourceFileView content={body} path={path} highlight={highlight} />
         ) : (
           <pre className={s.codeCardBody}>{body}</pre>
         ))}
+      {modal && (
+        <SourceFileModal
+          content={body}
+          path={path}
+          highlight={highlight}
+          onClose={() => setModal(false)}
+        />
+      )}
     </div>
   );
 }
@@ -216,12 +266,17 @@ function CodeToolCard({ entry }: { entry: CodeToolEntry }) {
 /** Render APM's custom result cards: the trace waterfall for render_trace,
  *  the metrics chart for run_metrics_query, and the source-code tool cards
  *  (checkout/grep/read/list). Everything else falls through to the shell's
- *  built-in cards. */
-function renderApmToolCard(ui: ToolResultUi, ctx?: { entry: unknown }) {
+ *  built-in cards. `hotLines` (grep matches by file) is supplied by the
+ *  server view so read_file cards can emphasize the searched-for lines. */
+function renderApmToolCard(
+  ui: ToolResultUi,
+  ctx?: { entry: unknown },
+  hotLines?: Map<string, Set<number>>,
+) {
   if (ui.kind === 'trace') return <TraceCard ui={ui as RenderTraceUi} />;
   if (ui.kind === 'metrics') return <MetricsToolCard ui={ui as MetricsQueryUi} />;
   if ((ui as unknown as { kind?: string }).kind === 'code') {
-    return <CodeToolCard entry={ctx?.entry as CodeToolEntry} />;
+    return <CodeToolCard entry={ctx?.entry as CodeToolEntry} hotLines={hotLines} />;
   }
   return null;
 }
@@ -483,6 +538,14 @@ function ServerInvestigationView({
   } = useInvestigationSession(id, { openingPrompt });
   const [draft, setDraft] = useState('');
 
+  // Grep matches by file, so read_file cards can emphasize the lines the
+  // agent searched for. Recomputed as the transcript grows.
+  const hotLines = useMemo(() => grepLineMap(entries), [entries]);
+  const renderToolCard = useCallback(
+    (ui: ToolResultUi, ctx: { entry: unknown }) => renderApmToolCard(ui, ctx, hotLines),
+    [hotLines],
+  );
+
   const submit = () => {
     const text = draft.trim();
     if (!text || sending || !canSend) return;
@@ -543,7 +606,7 @@ function ServerInvestigationView({
         <InvestigatorTranscript
           entries={entries}
           running={running}
-          renderToolCard={renderApmToolCard}
+          renderToolCard={renderToolCard}
         />
       </div>
 

@@ -115,9 +115,14 @@
 }
 .codeCardHeader {
   display: flex;
+  align-items: stretch;
+}
+.codeCardToggle {
+  display: flex;
   align-items: center;
   gap: var(--cds-space-xs);
-  width: 100%;
+  flex: 1 1 auto;
+  min-width: 0;
   padding: var(--cds-space-xs) var(--cds-space-sm);
   background: none;
   border: none;
@@ -126,11 +131,25 @@
   color: inherit;
   cursor: pointer;
 }
-.codeCardHeader:hover:not(:disabled) {
+.codeCardToggle:hover:not(:disabled) {
   background: var(--cds-color-bg-hover, rgba(127, 127, 127, 0.08));
 }
-.codeCardHeader:disabled {
+.codeCardToggle:disabled {
   cursor: default;
+}
+.codeCardOpen {
+  flex: 0 0 auto;
+  padding: 0 var(--cds-space-sm);
+  background: none;
+  border: none;
+  border-left: 1px solid var(--cds-color-border-subtle);
+  color: var(--cds-color-text-subtle);
+  cursor: pointer;
+  font-size: var(--cds-font-size-sm);
+}
+.codeCardOpen:hover {
+  background: var(--cds-color-bg-hover, rgba(127, 127, 127, 0.08));
+  color: var(--cds-color-text-default);
 }
 .codeCardChevron {
   flex: 0 0 auto;
@@ -176,35 +195,6 @@
   word-break: break-word;
   max-height: 24rem;
   overflow: auto;
-}
-.fileView {
-  display: flex;
-  border-top: 1px solid var(--cds-color-border-subtle);
-  max-height: 28rem;
-  overflow: auto;
-}
-.fileGutter {
-  flex: 0 0 auto;
-  margin: 0;
-  padding: var(--cds-space-sm) var(--cds-space-xs);
-  border-right: 1px solid var(--cds-color-border-subtle);
-  font-family: var(--cds-font-family-mono, monospace);
-  font-size: var(--cds-font-size-xs);
-  line-height: 1.5;
-  text-align: right;
-  color: var(--cds-color-text-subtle);
-  user-select: none;
-  white-space: pre;
-}
-.fileCode {
-  flex: 1 1 auto;
-  margin: 0;
-  padding: var(--cds-space-sm);
-  font-family: var(--cds-font-family-mono, monospace);
-  font-size: var(--cds-font-size-xs);
-  line-height: 1.5;
-  white-space: pre;
-  overflow-x: auto;
 }
 .replayEmpty {
   padding: var(--cds-space-lg);
