@@ -112,18 +112,39 @@
   display: flex;
   align-items: center;
   gap: var(--cds-space-xs);
+  width: 100%;
   padding: var(--cds-space-xs) var(--cds-space-sm);
-  border-bottom: 1px solid var(--cds-color-border-subtle);
+  background: none;
+  border: none;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.codeCardHeader:hover:not(:disabled) {
+  background: var(--cds-color-bg-hover, rgba(127, 127, 127, 0.08));
+}
+.codeCardHeader:disabled {
+  cursor: default;
+}
+.codeCardChevron {
+  flex: 0 0 auto;
+  width: 0.9em;
+  color: var(--cds-color-text-subtle);
+  font-size: var(--cds-font-size-xs);
 }
 .codeCardIcon {
   flex: 0 0 auto;
 }
 .codeCardTool {
+  flex: 0 0 auto;
   font-family: var(--cds-font-family-mono, monospace);
   font-size: var(--cds-font-size-xs);
   font-weight: var(--cds-font-weight-bold);
 }
 .codeCardArg {
+  flex: 0 1 auto;
+  min-width: 0;
   font-family: var(--cds-font-family-mono, monospace);
   font-size: var(--cds-font-size-xs);
   color: var(--cds-color-text-subtle);
@@ -131,16 +152,54 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.codeCardSummary {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding-left: var(--cds-space-sm);
+  font-family: var(--cds-font-family-mono, monospace);
+  font-size: var(--cds-font-size-xs);
+  color: var(--cds-color-text-subtle);
+}
 .codeCardBody {
   margin: 0;
   padding: var(--cds-space-sm);
+  border-top: 1px solid var(--cds-color-border-subtle);
   font-family: var(--cds-font-family-mono, monospace);
   font-size: var(--cds-font-size-xs);
   line-height: 1.45;
   white-space: pre-wrap;
   word-break: break-word;
-  max-height: 22rem;
+  max-height: 24rem;
   overflow: auto;
+}
+.fileView {
+  display: flex;
+  border-top: 1px solid var(--cds-color-border-subtle);
+  max-height: 28rem;
+  overflow: auto;
+}
+.fileGutter {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: var(--cds-space-sm) var(--cds-space-xs);
+  border-right: 1px solid var(--cds-color-border-subtle);
+  font-family: var(--cds-font-family-mono, monospace);
+  font-size: var(--cds-font-size-xs);
+  line-height: 1.5;
+  text-align: right;
+  color: var(--cds-color-text-subtle);
+  user-select: none;
+  white-space: pre;
+}
+.fileCode {
+  flex: 1 1 auto;
+  margin: 0;
+  padding: var(--cds-space-sm);
+  font-family: var(--cds-font-family-mono, monospace);
+  font-size: var(--cds-font-size-xs);
+  line-height: 1.5;
+  white-space: pre;
+  overflow-x: auto;
 }
 .replayEmpty {
   padding: var(--cds-space-lg);

@@ -96,16 +96,13 @@ async function enrichSeed(seed: InvestigationSeed): Promise<InvestigationSeed> {
   return next;
 }
 
-/** UI payload the cell attaches to server-only code-tool results
- *  (checkout_repo / grep_code / read_file / list_dir) so they render as
- *  transcript cards. Not part of the framework's ToolResultUi union. */
-interface CodeToolUi {
-  kind: 'code';
-  tool: string;
-  /** Raw JSON arguments string from the tool call. */
-  args: string;
-  /** Result text (already truncated by the cell). */
-  body: string;
+/** The transcript entry shape the framework hands renderToolCard. The
+ *  code-tool card reads the tool name + args from the call and the FULL
+ *  result content (up to the cell's 60 KB read cap) from the result — not
+ *  the small preview in the ui payload. */
+interface CodeToolEntry {
+  call?: { function?: { name?: string; arguments?: string } };
+  result?: { content?: string };
 }
 
 function parseArgs(json: string): Record<string, string | undefined> {
@@ -117,7 +114,7 @@ function parseArgs(json: string): Record<string, string | undefined> {
 }
 
 /** Icon + one-line argument label for a code tool, so the card reads like
- *  a Claude-Code tool-use block (`🔎 grep_code · [Ii]nvalid token`). */
+ *  a Claude-Code tool-use block (`🔎 grep_code · Invalid token`). */
 function codeToolHeader(tool: string, a: Record<string, string | undefined>): {
   icon: string;
   label: string;
@@ -132,20 +129,86 @@ function codeToolHeader(tool: string, a: Record<string, string | undefined>): {
     case 'list_dir':
       return { icon: '📁', label: a.path || '/' };
     default:
-      return { icon: '🛠', label: '' };
+      return { icon: '🛠', label: tool };
   }
 }
 
-function CodeToolCard({ ui }: { ui: CodeToolUi }) {
-  const { icon, label } = codeToolHeader(ui.tool, parseArgs(ui.args));
+/** A compact right-aligned summary of the result (files, matches, lines). */
+function codeToolSummary(tool: string, body: string): string {
+  if (!body) return '';
+  switch (tool) {
+    case 'checkout_repo': {
+      const m = /(\d+)\s+source files/.exec(body);
+      return m ? `${m[1]} files` : '';
+    }
+    case 'grep_code': {
+      if (/^\(no matches\)/.test(body)) return 'no matches';
+      const n = body.split('\n').filter((l) => l.trim()).length;
+      return `${n} match${n === 1 ? '' : 'es'}`;
+    }
+    case 'read_file': {
+      if (/^File not found/.test(body)) return 'not found';
+      const n = body.split('\n').length;
+      return `${n} line${n === 1 ? '' : 's'}`;
+    }
+    case 'list_dir': {
+      if (body === '(empty)') return 'empty';
+      const n = body.split('\n').filter((l) => l.trim()).length;
+      return `${n} item${n === 1 ? '' : 's'}`;
+    }
+    default:
+      return '';
+  }
+}
+
+/** A read file shown with a line-number gutter, so cited line numbers line
+ *  up (`src/payment/charge.js:37`). */
+function FileView({ content }: { content: string }) {
+  const lines = content.split('\n');
+  const gutter = lines.map((_, i) => i + 1).join('\n');
+  return (
+    <div className={s.fileView}>
+      <pre className={s.fileGutter} aria-hidden="true">
+        {gutter}
+      </pre>
+      <pre className={s.fileCode}>{content}</pre>
+    </div>
+  );
+}
+
+/** A collapsible tool-use card for the server-only source-code tools —
+ *  header shows what ran (icon, tool, target, result summary); expanding it
+ *  reveals the full result: the file with line numbers for read_file, the
+ *  match list for grep_code, the tree for list_dir. */
+function CodeToolCard({ entry }: { entry: CodeToolEntry }) {
+  const tool = entry?.call?.function?.name ?? 'code';
+  const args = parseArgs(entry?.call?.function?.arguments ?? '');
+  const body = entry?.result?.content ?? '';
+  const { icon, label } = codeToolHeader(tool, args);
+  const summary = codeToolSummary(tool, body);
+  const [open, setOpen] = useState(false);
   return (
     <div className={s.codeCard}>
-      <div className={s.codeCardHeader}>
+      <button
+        type="button"
+        className={s.codeCardHeader}
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        disabled={!body}
+      >
+        <span className={s.codeCardChevron}>{body ? (open ? '▾' : '▸') : ''}</span>
         <span className={s.codeCardIcon}>{icon}</span>
-        <code className={s.codeCardTool}>{ui.tool}</code>
+        <code className={s.codeCardTool}>{tool}</code>
         {label && <span className={s.codeCardArg}>{label}</span>}
-      </div>
-      {ui.body && <pre className={s.codeCardBody}>{ui.body}</pre>}
+        {summary && <span className={s.codeCardSummary}>{summary}</span>}
+      </button>
+      {open &&
+        body &&
+        (tool === 'read_file' ? (
+          <FileView content={body} />
+        ) : (
+          <pre className={s.codeCardBody}>{body}</pre>
+        ))}
     </div>
   );
 }
@@ -154,11 +217,11 @@ function CodeToolCard({ ui }: { ui: CodeToolUi }) {
  *  the metrics chart for run_metrics_query, and the source-code tool cards
  *  (checkout/grep/read/list). Everything else falls through to the shell's
  *  built-in cards. */
-function renderApmToolCard(ui: ToolResultUi) {
+function renderApmToolCard(ui: ToolResultUi, ctx?: { entry: unknown }) {
   if (ui.kind === 'trace') return <TraceCard ui={ui as RenderTraceUi} />;
   if (ui.kind === 'metrics') return <MetricsToolCard ui={ui as MetricsQueryUi} />;
   if ((ui as unknown as { kind?: string }).kind === 'code') {
-    return <CodeToolCard ui={ui as unknown as CodeToolUi} />;
+    return <CodeToolCard entry={ctx?.entry as CodeToolEntry} />;
   }
   return null;
 }
