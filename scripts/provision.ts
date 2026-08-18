@@ -164,15 +164,26 @@ async function wireCellTrigger(
   // on Save). Runs direct — provisioning has no fetch proxy — so it needs
   // the cell's UI bearer, distinct from the webhook bearer.
   const uiBearer = process.env.CELL_UI_BEARER;
-  if (cellUrl && uiBearer) {
-    const repos = provisionedSourceRepos
-      .map((r) => ({
-        url: typeof r.url === 'string' ? r.url.trim() : '',
-        name: typeof r.name === 'string' && r.name.trim() ? r.name.trim() : undefined,
-        service: typeof r.service === 'string' && r.service.trim() ? r.service.trim() : undefined,
-        ref: typeof r.ref === 'string' && r.ref.trim() ? r.ref.trim() : undefined,
-      }))
-      .filter((r) => r.url);
+  const repos = provisionedSourceRepos
+    .map((r) => ({
+      url: typeof r.url === 'string' ? r.url.trim() : '',
+      name: typeof r.name === 'string' && r.name.trim() ? r.name.trim() : undefined,
+      service: typeof r.service === 'string' && r.service.trim() ? r.service.trim() : undefined,
+      ref: typeof r.ref === 'string' && r.ref.trim() ? r.ref.trim() : undefined,
+    }))
+    .filter((r) => r.url);
+  // NEVER push an empty list: provisioning reads the app-settings KV with a
+  // machine token, which resolves a different (often empty) namespace than
+  // the UI writes to — so "0 repos" here usually means "couldn't read them",
+  // not "the user cleared them". Pushing [] would clobber a config the
+  // Settings page set (the reliable, user-scoped source of truth). Only
+  // reinforce the cell when we actually read repos.
+  if (repos.length === 0) {
+    console.log(
+      '▶ Source repos: none read from KV — leaving the cell config untouched ' +
+        '(Settings → Source repositories → Save is the source of truth).',
+    );
+  } else if (cellUrl && uiBearer) {
     const resp = await fetch(`${cellUrl.replace(/\/$/, '')}/config/repos`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${uiBearer}` },
@@ -183,7 +194,7 @@ async function wireCellTrigger(
     } else {
       console.error(`✗ Source repos → cell failed (${resp.status}): ${(await resp.text()).slice(0, 160)}`);
     }
-  } else if (provisionedSourceRepos.length > 0) {
+  } else {
     console.log(
       '▶ Source repos: skipped push (set CELL_UI_BEARER to feed alert-fired investigations; ' +
         'the Settings page pushes them on Save regardless).',
