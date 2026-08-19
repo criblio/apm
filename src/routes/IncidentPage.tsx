@@ -11,9 +11,10 @@
  * svc + time-overlap based until Phase 4 stamps incident_id on
  * investigation events.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { Card, Tag, type TagColor } from '@capra/core';
+import { Button, Card, Menu, Tag, type TagColor } from '@capra/core';
+import { ChevronDown } from '@capra/icons';
 import StatusBanner from '../components/StatusBanner';
 import InvestigateButton from '../components/InvestigateButton';
 import { buildAlertSeed } from '../api/agentContext';
@@ -21,8 +22,10 @@ import { runQuery } from '../api/cribl';
 import * as Q from '../api/queries';
 import { serviceColor } from '../utils/spans';
 import { listCachedIncidents, readCachedAlertHistory } from '../api/panelCache';
+import { commitHumanIncidentAction, type HumanIncidentAction } from '../api/incidents';
 import { useServerInvestigations } from '../hooks/useServerInvestigations';
 import type { IncidentSummary, IncidentTimelineEntry } from '../api/types';
+import type { IncidentSeverity, IncidentStatus } from '../api/generatedEventContract';
 import s from './IncidentPage.module.css';
 
 const STATUS_TAG: Record<IncidentSummary['status'], { label: string; color: TagColor }> = {
@@ -78,6 +81,10 @@ function timelineLine(ev: IncidentTimelineEntry): string {
 const CORRELATE_BEFORE_MS = 15 * 60_000;
 const CORRELATE_AFTER_MS = 30 * 60_000;
 
+/** Statuses a human can set directly (closed goes through Close). */
+const HUMAN_STATUSES: IncidentStatus[] = ['open', 'investigating', 'identified', 'mitigated', 'resolved'];
+const HUMAN_SEVERITIES: IncidentSeverity[] = ['sev1', 'sev2', 'sev3', 'sev4'];
+
 export default function IncidentPage() {
   const { incidentId = '' } = useParams();
   const serverInvestigations = useServerInvestigations();
@@ -86,6 +93,12 @@ export default function IncidentPage() {
   const [investigations, setInvestigations] = useState<InvestigationRow[]>([]);
   const [episodes, setEpisodes] = useState<Map<string, MemberEpisode>>(new Map());
   const [error, setError] = useState<string | null>(null);
+  // Warroom write state: which action is in flight, the note draft,
+  // and a nudge counter that refetches the timeline after commits.
+  const [pendingAction, setPendingAction] = useState<string | null>(null);
+  const [noteDraft, setNoteDraft] = useState('');
+  const [writeNudge, setWriteNudge] = useState(0);
+  const [syncNote, setSyncNote] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -96,6 +109,23 @@ export default function IncidentPage() {
       })
       .catch((e) => { if (!cancelled) { setError(e instanceof Error ? e.message : String(e)); setIncident(null); } });
     return () => { cancelled = true; };
+  }, [incidentId]);
+
+  /** Commit a human action; optimistically reflect status/severity on
+   *  the header (the folded read model catches up within a cadence). */
+  const act = useCallback((label: string, action: HumanIncidentAction, optimistic?: Partial<IncidentSummary>) => {
+    setPendingAction(label);
+    commitHumanIncidentAction(incidentId, action)
+      .then(() => {
+        if (optimistic) {
+          setIncident((cur) => (cur ? { ...cur, ...optimistic } : cur));
+          setSyncNote(true);
+        }
+        if (action.kind === 'note') setNoteDraft('');
+        setWriteNudge((n) => n + 1);
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setPendingAction(null));
   }, [incidentId]);
 
   // Timeline + investigations + member episode stats, windowed from the
@@ -168,7 +198,7 @@ export default function IncidentPage() {
       .catch(() => { /* episode stats are best-effort */ });
 
     return () => { cancelled = true; };
-  }, [incident, serverInvestigations]);
+  }, [incident, serverInvestigations, writeNudge]);
 
   /** Interleaved warroom feed: incident events + investigation lifecycle. */
   const feed = useMemo(() => {
@@ -193,14 +223,39 @@ export default function IncidentPage() {
     [investigations],
   );
 
-  /** Latest lifecycle event per investigation id → its card row. */
+  /** Investigations explicitly linked to this incident by a human
+   *  launch (investigation_linked events) — shown even when no
+   *  lifecycle event correlates (e.g. interactive runs). */
+  const linkedIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const ev of events) {
+      if (ev.eventType === 'investigation_linked' && ev.investigationId) ids.add(ev.investigationId);
+    }
+    return ids;
+  }, [events]);
+
+  /** Latest lifecycle event per investigation id → its card row; then
+   *  linked-but-uncorrelated runs appended as bare rows. */
   const investigationCards = useMemo(() => {
     const byId = new Map<string, InvestigationRow>();
     for (const iv of [...investigations].sort((a, b) => a.timeMs - b.timeMs)) {
       byId.set(iv.investigationId, iv);
     }
+    for (const id of linkedIds) {
+      if (!byId.has(id)) {
+        const linkEv = events.find((e) => e.eventType === 'investigation_linked' && e.investigationId === id);
+        byId.set(id, {
+          timeMs: linkEv?.timeMs ?? 0,
+          eventType: 'linked',
+          investigationId: id,
+          svc: incident?.rootService ?? '',
+          signalType: '',
+          conclusion: '',
+        });
+      }
+    }
     return Array.from(byId.values()).sort((a, b) => b.timeMs - a.timeMs);
-  }, [investigations]);
+  }, [investigations, linkedIds, events, incident?.rootService]);
 
   if (incident === undefined) {
     return <div className={s.page}><div className={s.empty}>Loading incident…</div></div>;
@@ -241,15 +296,85 @@ export default function IncidentPage() {
             </span>
           </div>
         </div>
-        <InvestigateButton
-          seed={buildAlertSeed({
-            service: incident.rootService || incident.services[0]?.service || '',
-            signalType: episodes.get(incident.rootService)?.signalTypes.values().next().value ?? 'error_rate',
-            errorRate: episodes.get(incident.rootService)?.peakErrorRate ?? 0,
-          })}
-          title="Investigate this incident"
-        />
+        <div className={s.controls}>
+          <Menu
+            trigger={
+              <Button variant="secondary" size="sm" trailingIcon={ChevronDown} isDisabled={pendingAction !== null}>
+                {pendingAction === 'status' ? 'Saving…' : 'Set status'}
+              </Button>
+            }
+          >
+            {HUMAN_STATUSES.map((st2) => (
+              <Menu.Item
+                key={st2}
+                label={STATUS_TAG[st2].label}
+                onClick={() => act('status', { kind: 'status', status: st2 }, { status: st2 })}
+              />
+            ))}
+          </Menu>
+          <Menu
+            trigger={
+              <Button variant="secondary" size="sm" trailingIcon={ChevronDown} isDisabled={pendingAction !== null}>
+                {pendingAction === 'severity' ? 'Saving…' : 'Set severity'}
+              </Button>
+            }
+          >
+            {HUMAN_SEVERITIES.map((sv) => (
+              <Menu.Item
+                key={sv}
+                label={sv.toUpperCase()}
+                onClick={() => act('severity', { kind: 'severity', severity: sv }, { severity: sv })}
+              />
+            ))}
+          </Menu>
+          {incident.status === 'closed' ? (
+            <Button
+              variant="secondary" size="sm"
+              pending={pendingAction === 'reopen'}
+              isDisabled={pendingAction !== null}
+              onClick={() => act('reopen', { kind: 'reopen' }, { status: 'open' })}
+            >
+              Reopen
+            </Button>
+          ) : (
+            <Button
+              variant="secondary" size="sm"
+              pending={pendingAction === 'close'}
+              isDisabled={pendingAction !== null}
+              onClick={() => act('close', { kind: 'close' }, { status: 'closed' })}
+            >
+              Close incident
+            </Button>
+          )}
+          <InvestigateButton
+            seed={{
+              ...buildAlertSeed({
+                service: incident.rootService || incident.services[0]?.service || '',
+                signalType: episodes.get(incident.rootService)?.signalTypes.values().next().value ?? 'error_rate',
+                errorRate: episodes.get(incident.rootService)?.peakErrorRate ?? 0,
+                // eslint-disable-next-line react-hooks/purity -- live window from incident age
+                earliest: `-${Math.max(2, Math.ceil((Date.now() - incident.openedAtMs) / 3_600_000) + 1)}h`,
+              }),
+              incidentId: incident.incidentId,
+              knownSignals: [
+                `Incident ${incident.incidentId}: ${incident.title}`,
+                `Affected services (first-fired order): ${incident.services.map((m) => m.service).join(', ')}`,
+                `Derived root (first to fire): ${incident.rootService}`,
+              ],
+            }}
+            variant="primary"
+            title="Start an AI investigation seeded with this incident's context"
+          />
+        </div>
       </div>
+
+      {syncNote && (
+        <StatusBanner kind="info">
+          Recorded on the incident's event log. The list and status chips
+          re-fold from events within ~5 minutes; this page shows your
+          change immediately.
+        </StatusBanner>
+      )}
 
       {/* What happened — deterministic narrative; the supervisor agent
           overwrites this with a root-caused version in Phase 6. */}
@@ -316,6 +441,7 @@ export default function IncidentPage() {
                       {iv.eventType === 'investigated' && <Tag color="success">Concluded</Tag>}
                       {iv.eventType === 'started' && <Tag color="info">Running…</Tag>}
                       {iv.eventType === 'investigation_failed' && <Tag color="warning">Failed</Tag>}
+                      {iv.eventType === 'linked' && <Tag color="info">Linked</Tag>}
                     </td>
                     <td><span style={{ color: serviceColor(iv.svc) }}>{iv.svc}</span></td>
                     <td style={{ whiteSpace: 'nowrap' }}>{new Date(iv.timeMs).toLocaleString()}</td>
@@ -369,9 +495,33 @@ export default function IncidentPage() {
         </table>
       </Card>
 
-      {/* The warroom log */}
+      {/* The warroom log + note composer */}
       <Card className={s.card}>
         <h2 className={s.sectionTitle}>Timeline</h2>
+        <form
+          className={s.noteComposer}
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (noteDraft.trim()) act('note', { kind: 'note', note: noteDraft });
+          }}
+        >
+          <input
+            className={s.noteInput}
+            placeholder="Add a note to the warroom log — what you suspect, what you changed, what you ruled out…"
+            value={noteDraft}
+            onChange={(e) => setNoteDraft(e.target.value)}
+            disabled={pendingAction !== null}
+          />
+          <Button
+            type="submit"
+            variant="secondary"
+            size="sm"
+            pending={pendingAction === 'note'}
+            isDisabled={pendingAction !== null || !noteDraft.trim()}
+          >
+            Add note
+          </Button>
+        </form>
         {feed.length === 0 ? (
           <div className={s.empty}>No timeline events yet.</div>
         ) : (

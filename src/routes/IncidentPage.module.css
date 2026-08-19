@@ -40,6 +40,36 @@
   color: var(--cds-color-fg-muted);
 }
 
+.controls {
+  display: flex;
+  align-items: center;
+  gap: var(--cds-space-sm);
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.noteComposer {
+  display: flex;
+  gap: var(--cds-space-sm);
+  padding: var(--cds-space-md) var(--cds-space-lg);
+  border-bottom: 1px solid var(--cds-color-border-subtle);
+}
+
+.noteInput {
+  flex: 1;
+  min-width: 0;
+  padding: var(--cds-space-sm) var(--cds-space-md);
+  font-size: var(--cds-font-size-sm);
+  color: var(--cds-color-fg);
+  background: var(--cds-color-bg);
+  border: 1px solid var(--cds-color-border);
+  border-radius: var(--cds-radius-md);
+}
+.noteInput:focus {
+  outline: none;
+  border-color: var(--cds-color-border-emphasis, var(--cds-color-border));
+}
+
 .card {
   padding: 0;
   gap: 0;
