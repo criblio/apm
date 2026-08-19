@@ -332,6 +332,21 @@ export async function listCachedErrorClasses(
   };
 }
 
+/**
+ * Alert firing/resolved transitions from the `criblapm__alert_history`
+ * scheduled search — a wide (-7d) rollup materialized into $vt_results, so
+ * the Alerts page reads it here instead of firing a live 24h search on
+ * every load (P4.5). Transitions are sparse, so the wide window is cheap.
+ * Returns null when the cache hasn't populated yet (caller falls back to a
+ * live search). Rows are raw; the caller filters to the selected range and
+ * maps them (same shape as the live `Q.alertHistory` result).
+ */
+export async function readCachedAlertHistory(): Promise<Record<string, unknown>[] | null> {
+  const partitions = await readCachedPanelsRaw(['criblapm__alert_history']);
+  const rows = partitions.get('criblapm__alert_history');
+  return rows && rows.length > 0 ? rows : null;
+}
+
 // ── ServiceDetail panel cache ─────────────────────────────────
 
 export interface CachedSvcDetailPanels {
