@@ -155,6 +155,27 @@ recommendation, (2) whether the Cribl notification actually reaches
 the cell (the P4.3 delivery break), (3) a latency incident opening in
 the P4.4 pipeline. One flag flip validates all three.
 
+## Addendum 2: Incidents drill-in UI (P4.4 Phase 2A, same branch as #147)
+
+Per Clint's steer — incidents are not a new top-level concept; they sit
+above alerts as the drill-in unit. The Alerts page now leads with an
+Incidents section (status/severity/services/root/duration), rows expand
+inline into member table + warroom timeline, `?incident=` deep-links,
+closed hidden behind a toggle. The old client-paired "Alert Incidents"
+table is renamed **Alert Episodes**. App **0.13.50** deployed; validated
+via Playwright on staging (screenshots in
+`screenshots/2026-08-18-incidents-p4.4-phase1/`). The detail's timeline
+query windows from the incident's own age — a fixed -7d live scan took
+>60s on the pool (same lesson as the fold).
+
+Observed live in the screenshot: load-generator re-fired at 10:51 PM
+and **attached** to the existing incident (fires=2) instead of opening
+a duplicate; the incident later re-derived `resolved` after quiet.
+
+Next: **Phase 2B** — human warroom writes (notes, status/severity
+override, close/reopen) via `incidentEventCommitQuery` + `export to
+search` from the app.
+
 ## Follow-ups
 
 1. **P4.3: Cribl→cell notify delivery** — see above; highest priority
