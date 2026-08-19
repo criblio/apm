@@ -299,7 +299,7 @@ export default function IncidentPage() {
         <div className={s.controls}>
           <Menu
             trigger={
-              <Button variant="secondary" size="sm" trailingIcon={ChevronDown} isDisabled={pendingAction !== null}>
+              <Button variant="secondary" size="sm" trailingIcon={ChevronDown} disabled={pendingAction !== null}>
                 {pendingAction === 'status' ? 'Saving…' : 'Set status'}
               </Button>
             }
@@ -314,7 +314,7 @@ export default function IncidentPage() {
           </Menu>
           <Menu
             trigger={
-              <Button variant="secondary" size="sm" trailingIcon={ChevronDown} isDisabled={pendingAction !== null}>
+              <Button variant="secondary" size="sm" trailingIcon={ChevronDown} disabled={pendingAction !== null}>
                 {pendingAction === 'severity' ? 'Saving…' : 'Set severity'}
               </Button>
             }
@@ -331,7 +331,7 @@ export default function IncidentPage() {
             <Button
               variant="secondary" size="sm"
               pending={pendingAction === 'reopen'}
-              isDisabled={pendingAction !== null}
+              disabled={pendingAction !== null}
               onClick={() => act('reopen', { kind: 'reopen' }, { status: 'open' })}
             >
               Reopen
@@ -340,7 +340,7 @@ export default function IncidentPage() {
             <Button
               variant="secondary" size="sm"
               pending={pendingAction === 'close'}
-              isDisabled={pendingAction !== null}
+              disabled={pendingAction !== null}
               onClick={() => act('close', { kind: 'close' }, { status: 'closed' })}
             >
               Close incident
@@ -517,7 +517,7 @@ export default function IncidentPage() {
             variant="secondary"
             size="sm"
             pending={pendingAction === 'note'}
-            isDisabled={pendingAction !== null || !noteDraft.trim()}
+            disabled={pendingAction !== null || !noteDraft.trim()}
           >
             Add note
           </Button>
