@@ -1,0 +1,394 @@
+/**
+ * Incident detail — the rich drill-in page (P4.4 Phase 2B). One
+ * incident's full story: what happened (deterministic summary), who's
+ * affected (members with episode data), what the machines found
+ * (correlated server-side investigations with conclusions + transcript
+ * links), and the warroom timeline (incident events interleaved with
+ * investigation lifecycle events).
+ *
+ * Reached from the Incidents section on the Alerts page — a drill-in
+ * route, not a new nav concept. Correlation with investigations is
+ * svc + time-overlap based until Phase 4 stamps incident_id on
+ * investigation events.
+ */
+import { useEffect, useMemo, useState } from 'react';
+import { Link, useParams } from 'react-router-dom';
+import { Card, Tag, type TagColor } from '@capra/core';
+import StatusBanner from '../components/StatusBanner';
+import InvestigateButton from '../components/InvestigateButton';
+import { buildAlertSeed } from '../api/agentContext';
+import { runQuery } from '../api/cribl';
+import * as Q from '../api/queries';
+import { serviceColor } from '../utils/spans';
+import { listCachedIncidents, readCachedAlertHistory } from '../api/panelCache';
+import { useServerInvestigations } from '../hooks/useServerInvestigations';
+import type { IncidentSummary, IncidentTimelineEntry } from '../api/types';
+import s from './IncidentPage.module.css';
+
+const STATUS_TAG: Record<IncidentSummary['status'], { label: string; color: TagColor }> = {
+  open: { label: 'Open', color: 'danger' },
+  investigating: { label: 'Investigating', color: 'info' },
+  identified: { label: 'Identified', color: 'info' },
+  mitigated: { label: 'Mitigated', color: 'warning' },
+  resolved: { label: 'Resolved', color: 'success' },
+  closed: { label: 'Closed', color: 'info' },
+};
+
+const SEVERITY_TAG: Record<IncidentSummary['severity'], TagColor> = {
+  sev1: 'danger', sev2: 'danger', sev3: 'warning', sev4: 'info',
+};
+
+interface InvestigationRow {
+  timeMs: number;
+  eventType: string;   // started | investigated | investigation_failed
+  investigationId: string;
+  svc: string;
+  signalType: string;
+  conclusion: string;
+}
+
+interface MemberEpisode {
+  peakErrorRate: number;
+  signalTypes: Set<string>;
+}
+
+function fmtDurationMs(ms: number): string {
+  const min = Math.max(1, Math.round(ms / 60_000));
+  if (min < 60) return `${min}m`;
+  const hr = Math.floor(min / 60);
+  const rm = min % 60;
+  return rm > 0 ? `${hr}h ${rm}m` : `${hr}h`;
+}
+
+function timelineLine(ev: IncidentTimelineEntry): string {
+  switch (ev.eventType) {
+    case 'opened': return `Incident opened — first signal from ${ev.services || ev.rootService || 'unknown'}`;
+    case 'attached': return `${ev.services || 'a service'} attached — alert fired`;
+    case 'status_change': return `Status changed to ${ev.status ?? '?'}`;
+    case 'severity_change': return `Severity changed to ${ev.severity ?? '?'}`;
+    case 'note': return ev.note ?? '';
+    case 'investigation_linked': return `Investigation linked (${ev.investigationId ?? ''})`;
+    case 'resolved': return 'All alerts cleared — incident resolved';
+    case 'closed': return 'Incident closed';
+    default: return ev.eventType;
+  }
+}
+
+/** Window slack for correlating investigations to the incident. */
+const CORRELATE_BEFORE_MS = 15 * 60_000;
+const CORRELATE_AFTER_MS = 30 * 60_000;
+
+export default function IncidentPage() {
+  const { incidentId = '' } = useParams();
+  const serverInvestigations = useServerInvestigations();
+  const [incident, setIncident] = useState<IncidentSummary | null | undefined>(undefined);
+  const [events, setEvents] = useState<IncidentTimelineEntry[]>([]);
+  const [investigations, setInvestigations] = useState<InvestigationRow[]>([]);
+  const [episodes, setEpisodes] = useState<Map<string, MemberEpisode>>(new Map());
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    listCachedIncidents()
+      .then((incs) => {
+        if (cancelled) return;
+        setIncident(incs?.find((i) => i.incidentId === incidentId) ?? null);
+      })
+      .catch((e) => { if (!cancelled) { setError(e instanceof Error ? e.message : String(e)); setIncident(null); } });
+    return () => { cancelled = true; };
+  }, [incidentId]);
+
+  // Timeline + investigations + member episode stats, windowed from the
+  // incident's own age (never a fixed wide live scan — pool cost).
+  useEffect(() => {
+    if (!incident) return;
+    let cancelled = false;
+    const sinceHours = Math.max(2, Math.ceil((Date.now() - incident.openedAtMs) / 3_600_000) + 1);
+    const memberSvcs = new Set(incident.services.map((m) => m.service));
+    const windowStart = incident.openedAtMs - CORRELATE_BEFORE_MS;
+    const windowEnd = incident.lastFireMs + CORRELATE_AFTER_MS;
+
+    runQuery(Q.incidentEvents(incident.incidentId), `-${sinceHours}h`, 'now', 500)
+      .then((rows) => {
+        if (cancelled) return;
+        setEvents(rows.map((r) => ({
+          timeMs: Number(r._time) * 1000,
+          eventId: String(r.event_id ?? ''),
+          eventType: String(r.event_type ?? ''),
+          incidentId: String(r.incident_id ?? ''),
+          author: (String(r.author ?? 'system') as IncidentTimelineEntry['author']),
+          status: String(r.status ?? '') || undefined,
+          severity: String(r.severity ?? '') || undefined,
+          rootService: String(r.root_service ?? '') || undefined,
+          services: String(r.services ?? '') || undefined,
+          note: String(r.note ?? '') || undefined,
+          investigationId: String(r.investigation_id ?? '') || undefined,
+          alertEventId: String(r.alert_event_id ?? '') || undefined,
+          title: String(r.title ?? '') || undefined,
+          producer: String(r.producer ?? ''),
+        })));
+      })
+      .catch(() => { /* timeline is best-effort */ });
+
+    if (serverInvestigations) {
+      runQuery(Q.investigationEvents(500), `-${sinceHours}h`, 'now', 500)
+        .then((rows) => {
+          if (cancelled) return;
+          const mapped = rows.map((r) => ({
+            timeMs: Number(r._time) * 1000,
+            eventType: String(r.event_type ?? ''),
+            investigationId: String(r.investigation_id ?? ''),
+            svc: String(r.svc ?? ''),
+            signalType: String(r.signal_type ?? ''),
+            conclusion: String(r.conclusion ?? ''),
+          }));
+          setInvestigations(mapped.filter((iv) =>
+            memberSvcs.has(iv.svc) && iv.timeMs >= windowStart && iv.timeMs <= windowEnd,
+          ));
+        })
+        .catch(() => { /* investigations are best-effort */ });
+    }
+
+    readCachedAlertHistory()
+      .then((rows) => {
+        if (cancelled || !rows) return;
+        const byMember = new Map<string, MemberEpisode>();
+        for (const r of rows) {
+          const svc = String(r.svc ?? '');
+          const t = Number(r._time) * 1000;
+          if (!memberSvcs.has(svc) || t < windowStart || t > windowEnd) continue;
+          let ep = byMember.get(svc);
+          if (!ep) { ep = { peakErrorRate: 0, signalTypes: new Set() }; byMember.set(svc, ep); }
+          ep.peakErrorRate = Math.max(ep.peakErrorRate, Number(r.curr_error_rate ?? 0));
+          const sig = String(r.signal_type ?? '');
+          if (sig && sig !== 'none') ep.signalTypes.add(sig);
+        }
+        setEpisodes(byMember);
+      })
+      .catch(() => { /* episode stats are best-effort */ });
+
+    return () => { cancelled = true; };
+  }, [incident, serverInvestigations]);
+
+  /** Interleaved warroom feed: incident events + investigation lifecycle. */
+  const feed = useMemo(() => {
+    const rows: Array<{ timeMs: number; author: string; line: string; link?: string }> = [
+      ...events.map((ev) => ({ timeMs: ev.timeMs, author: ev.author, line: timelineLine(ev) })),
+      ...investigations.map((iv) => ({
+        timeMs: iv.timeMs,
+        author: 'agent',
+        line: iv.eventType === 'started'
+          ? `Auto-investigation started on ${iv.svc}`
+          : iv.eventType === 'investigated'
+            ? `Auto-investigation concluded on ${iv.svc}${iv.conclusion ? ` — ${iv.conclusion.slice(0, 160)}` : ''}`
+            : `Auto-investigation failed on ${iv.svc}`,
+        link: `/investigate?investigation=${encodeURIComponent(iv.investigationId)}`,
+      })),
+    ];
+    return rows.sort((a, b) => a.timeMs - b.timeMs);
+  }, [events, investigations]);
+
+  const concluded = useMemo(
+    () => investigations.filter((iv) => iv.eventType === 'investigated' && iv.conclusion),
+    [investigations],
+  );
+
+  /** Latest lifecycle event per investigation id → its card row. */
+  const investigationCards = useMemo(() => {
+    const byId = new Map<string, InvestigationRow>();
+    for (const iv of [...investigations].sort((a, b) => a.timeMs - b.timeMs)) {
+      byId.set(iv.investigationId, iv);
+    }
+    return Array.from(byId.values()).sort((a, b) => b.timeMs - a.timeMs);
+  }, [investigations]);
+
+  if (incident === undefined) {
+    return <div className={s.page}><div className={s.empty}>Loading incident…</div></div>;
+  }
+  if (incident === null) {
+    return (
+      <div className={s.page}>
+        {error && <StatusBanner kind="error">{error}</StatusBanner>}
+        <div className={s.empty}>
+          Incident not found — it may have aged out of the 7-day read model.
+          {' '}<Link to="/alerts">Back to Alerts</Link>
+        </div>
+      </div>
+    );
+  }
+
+  const st = STATUS_TAG[incident.status] ?? STATUS_TAG.open;
+  const isOngoing = incident.status !== 'resolved' && incident.status !== 'closed';
+  const durationMs = isOngoing
+    // eslint-disable-next-line react-hooks/purity -- live "so far" duration
+    ? Date.now() - incident.openedAtMs
+    : Math.max(incident.lastFireMs - incident.openedAtMs, 60_000);
+  const downstream = incident.services.filter((m) => m.service !== incident.rootService);
+
+  return (
+    <div className={s.page}>
+      <div className={s.header}>
+        <div>
+          <div className={s.breadcrumb}><Link to="/alerts">Alerts</Link> / Incident</div>
+          <h1 className={s.title}>{incident.title}</h1>
+          <div className={s.tags}>
+            <Tag color={st.color}>{st.label}</Tag>
+            <Tag color={SEVERITY_TAG[incident.severity] ?? 'info'}>{incident.severity.toUpperCase()}</Tag>
+            <span className={s.meta}>
+              Opened {new Date(incident.openedAtMs).toLocaleString()}
+              {' · '}{isOngoing ? `${fmtDurationMs(durationMs)} so far` : `lasted ${fmtDurationMs(durationMs)}`}
+              {' · '}{incident.services.length} service{incident.services.length === 1 ? '' : 's'}
+            </span>
+          </div>
+        </div>
+        <InvestigateButton
+          seed={buildAlertSeed({
+            service: incident.rootService || incident.services[0]?.service || '',
+            signalType: episodes.get(incident.rootService)?.signalTypes.values().next().value ?? 'error_rate',
+            errorRate: episodes.get(incident.rootService)?.peakErrorRate ?? 0,
+          })}
+          title="Investigate this incident"
+        />
+      </div>
+
+      {/* What happened — deterministic narrative; the supervisor agent
+          overwrites this with a root-caused version in Phase 6. */}
+      <Card className={s.card}>
+        <h2 className={s.sectionTitle}>Summary</h2>
+        <div className={s.summaryBody}>
+          <p>
+            Alerts fired on{' '}
+            <strong style={{ color: serviceColor(incident.rootService) }}>{incident.rootService}</strong>
+            {' '}first{downstream.length > 0 && (
+              <>
+                , followed by{' '}
+                {downstream.map((m, i) => (
+                  <span key={m.service}>
+                    {i > 0 && ', '}
+                    <strong style={{ color: serviceColor(m.service) }}>{m.service}</strong>
+                  </span>
+                ))}
+              </>
+            )}.
+            {' '}{isOngoing
+              ? 'The incident is still ongoing.'
+              : `All alerts cleared and the incident ${incident.status === 'closed' ? 'is closed' : 'resolved'} after ${fmtDurationMs(durationMs)}.`}
+          </p>
+          {concluded.length > 0 ? (
+            <div>
+              <p className={s.findingsLabel}>Auto-investigation findings:</p>
+              <ul className={s.findings}>
+                {concluded.map((iv) => (
+                  <li key={iv.investigationId}>
+                    <strong style={{ color: serviceColor(iv.svc) }}>{iv.svc}</strong>: {iv.conclusion}
+                    {' '}<Link to={`/investigate?investigation=${encodeURIComponent(iv.investigationId)}`}>transcript →</Link>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : (
+            <p className={s.muted}>
+              {serverInvestigations
+                ? 'No auto-investigation has concluded for this incident yet.'
+                : 'Server-side investigations are off — enable them to get automated root-cause findings here.'}
+            </p>
+          )}
+        </div>
+      </Card>
+
+      {/* The machines' work */}
+      {serverInvestigations && (
+        <Card className={s.card}>
+          <h2 className={s.sectionTitle}>Investigations ({investigationCards.length})</h2>
+          {investigationCards.length === 0 ? (
+            <div className={s.empty}>
+              No server-side investigations correlate with this incident window.
+            </div>
+          ) : (
+            <table className={s.table}>
+              <thead>
+                <tr><th>Status</th><th>Service</th><th>When</th><th>Conclusion</th><th /></tr>
+              </thead>
+              <tbody>
+                {investigationCards.map((iv) => (
+                  <tr key={iv.investigationId}>
+                    <td>
+                      {iv.eventType === 'investigated' && <Tag color="success">Concluded</Tag>}
+                      {iv.eventType === 'started' && <Tag color="info">Running…</Tag>}
+                      {iv.eventType === 'investigation_failed' && <Tag color="warning">Failed</Tag>}
+                    </td>
+                    <td><span style={{ color: serviceColor(iv.svc) }}>{iv.svc}</span></td>
+                    <td style={{ whiteSpace: 'nowrap' }}>{new Date(iv.timeMs).toLocaleString()}</td>
+                    <td className={s.conclusionCell}>{iv.conclusion || '—'}</td>
+                    <td>
+                      <Link to={`/investigate?investigation=${encodeURIComponent(iv.investigationId)}`}>
+                        Transcript →
+                      </Link>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </Card>
+      )}
+
+      {/* Who's affected */}
+      <Card className={s.card}>
+        <h2 className={s.sectionTitle}>Services ({incident.services.length})</h2>
+        <table className={s.table}>
+          <thead>
+            <tr><th>Service</th><th>Signals</th><th>Peak error rate</th><th>First fired</th><th>Last fired</th><th>Fires</th></tr>
+          </thead>
+          <tbody>
+            {incident.services.map((m) => {
+              const ep = episodes.get(m.service);
+              return (
+                <tr key={m.service}>
+                  <td>
+                    <Link
+                      to={`/service/${encodeURIComponent(m.service)}?range=-1h`}
+                      className={s.svcLink}
+                      style={{ color: serviceColor(m.service) }}
+                    >
+                      {m.service}
+                    </Link>
+                    {m.service === incident.rootService && (
+                      <span className={s.rootMark} title="First-firing service (derived root)"> · root</span>
+                    )}
+                  </td>
+                  <td>{ep && ep.signalTypes.size > 0 ? Array.from(ep.signalTypes).join(', ') : '—'}</td>
+                  <td>{ep && ep.peakErrorRate > 0 ? `${(ep.peakErrorRate * 100).toFixed(1)}%` : '—'}</td>
+                  <td style={{ whiteSpace: 'nowrap' }}>{new Date(m.firstSeenMs).toLocaleString()}</td>
+                  <td style={{ whiteSpace: 'nowrap' }}>{new Date(m.lastFireMs).toLocaleString()}</td>
+                  <td>{m.fireCount}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </Card>
+
+      {/* The warroom log */}
+      <Card className={s.card}>
+        <h2 className={s.sectionTitle}>Timeline</h2>
+        {feed.length === 0 ? (
+          <div className={s.empty}>No timeline events yet.</div>
+        ) : (
+          <ul className={s.timeline}>
+            {feed.map((row, i) => (
+              <li key={i} className={s.timelineRow}>
+                <span className={s.timelineTime}>{new Date(row.timeMs).toLocaleString()}</span>
+                <span className={s.timelineAuthor}>{row.author}</span>
+                <span className={s.timelineText}>
+                  {row.line}
+                  {row.link && <>{' '}<Link to={row.link}>view →</Link></>}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
+    </div>
+  );
+}

@@ -15,6 +15,7 @@ import InvestigatePage from './routes/InvestigatePage';
 import SettingsPage from './routes/SettingsPage';
 import ServicesListPage from './routes/ServicesListPage';
 import AlertsPage from './routes/AlertsPage';
+import IncidentPage from './routes/IncidentPage';
 import ErrorsPage from './routes/ErrorsPage';
 import NotFoundPage from './routes/NotFoundPage';
 import { CONFIGURATION_PATH } from './routes/paths';
@@ -54,6 +55,7 @@ export default function App() {
             <Route path="/logs" element={contained('Logs', <LogsPage />)} />
             <Route path="/metrics" element={contained('Metrics', <MetricsPage />)} />
             <Route path="/alerts" element={contained('Alerts', <AlertsPage />)} />
+            <Route path="/incident/:incidentId" element={contained('Incident', <IncidentPage />)} />
             <Route path="/errors" element={contained('Errors', <ErrorsPage />)} />
             <Route path="/investigate" element={contained('Investigator', <InvestigatePage />)} />
             <Route path={CONFIGURATION_PATH} element={contained('Configuration', <SettingsPage />)} />
