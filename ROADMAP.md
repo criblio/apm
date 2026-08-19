@@ -506,6 +506,34 @@ add user alerts, SLOs, and trace depth.
   Cross-refs P4.1 (Investigator v2), P4.3 (server-side investigations),
   P3.1 (alert notifications).
 
+- **P4.5 Materialized read models for hot pages** (M — design 2026-08-18)
+  — a perf/architecture principle the codebase is already halfway to
+  (panel-cache lookups, the metrics-store migration): **events stay the
+  write log / source of truth / audit; hot interactive pages read a
+  materialized projection (a lookup), not a live search over history.**
+  Classic CQRS read models. The split: *hot + bounded + current-state* →
+  lookup (maintained by a scheduled search); *unbounded history / audit*
+  → events, searched on demand; *ad-hoc exploration* (traces, logs) →
+  live search; *numeric time series* → metrics store (done). This also
+  **reduces search-pool load** — the saturation that flaked CI — by
+  replacing many unpredictable page-load searches with a few schedulable
+  maintainers.
+  - **Alerts page** (investigated 2026-08-18): the active table already
+    reads a cached scheduled result (`$vt_results`, `-1h`), but the
+    "Alert incidents" **history timeline** (`Q.alertHistory`) and the
+    investigation badges run **live over 24h of events** on every load.
+    The **incident read model (P4.4) subsumes this** — the firing→resolved
+    pairing becomes a lookup read. First payoff of P4.4.
+  - **Errors page**: only `-1h` + stream-filter is cached; **every longer
+    window runs `listErrorClasses` live over raw error spans** (heaviest
+    of the lot). Fix: a scheduled **error-class rollup lookup** for the
+    common windows (24h), live search only for custom ranges.
+  - Guardrails: each maintainer is itself an `export to lookup` search —
+    be selective (one lookup per genuinely-hot surface), mind the known
+    `export to lookup` KQL traps (`(?i)`/mv-expand corruption, see the
+    skill doc), and accept ~cadence staleness + lookup size limits (that's
+    why history stays events).
+
 ## P5 — Breadth
 
 - **Dashboards** via saved-search composition ("Save this view" on

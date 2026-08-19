@@ -80,3 +80,40 @@ many-erroring-services — are the same missing layer: a first-class
 Full design: `docs/research/server-investigations/incidents-and-lifecycle.md`.
 Roadmap: **P4.4**. Phases 1–3 ship the cell-independent core; 4–6 are
 flag-on enrichment.
+
+## Materialized read models for hot pages (P4.5)
+
+Clint's observation: the Alerts page "takes forever" running searches over
+24h of events. It generalized into a principle — **events are the write
+log / source of truth; hot pages read a materialized lookup, not a live
+search over history** (CQRS read models). The codebase is already halfway
+there (panel-cache lookups, the metrics-store migration). It also *reduces*
+search-pool load (the saturation that flaked #141's CI) by replacing
+many page-load searches with a few schedulable maintainers.
+
+**Investigated the two pages (2026-08-18):**
+
+- **AlertsPage.tsx** — active table already reads a cached scheduled
+  result (`dataset="$vt_results" | where jobName="criblapm__home_alerts"`,
+  `-1h`), fast. The slow parts are the **secondary/tertiary live 24h event
+  searches**: `Q.alertHistory` (the "Alert incidents" firing→resolved
+  timeline) and `Q.investigationEvents` (badges). The history section *is*
+  incident pairing → **the P4.4 incident lookup subsumes it** (first
+  payoff of incidents).
+- **ErrorsPage.tsx** — caches only `-1h` + stream-filter
+  (`listCachedErrorClasses`); **every other window runs `listErrorClasses`
+  live over raw error spans** (`src/api/search.ts:720`) — heaviest of the
+  lot. Fix: a scheduled **error-class rollup lookup** for common windows
+  (24h), live search only for custom ranges.
+
+**Store decision (from the KV discussion):** current state → a Cribl
+lookup row (group-scoped, writable by the scheduled-search engine,
+readable fast, works flag-off); **not** app-platform KV (UI-only writer,
+not continuous, cell/CLI can't reach it — "App context required"); **not**
+refold-events-on-read. Timeline/history stays append-only events.
+
+**Plan / sequencing:** Alerts history → folds into P4.4 Phase 1 (the
+incident lookup). Errors rollup → a standalone read-model lookup, same
+machinery, can land independently. Guardrails: selective maintainers (one
+lookup per hot surface), the `export to lookup` KQL traps, cadence
+staleness + lookup size limits. Roadmap: **P4.5**.

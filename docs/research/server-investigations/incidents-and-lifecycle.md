@@ -438,7 +438,9 @@ investigator off), then the flag-on enrichment:
 1. **Incident model, Cribl-Search-native** (app + dataset): the
    `record_kind:'incident'` event contract; the alerts→incidents grouping
    saved search (window + graph lookup + deterministic `incident_id`); the
-   materialized incidents lookup; the state fold. *No cell.*
+   materialized incidents lookup; the state fold. *No cell.* **Payoff
+   (P4.5):** the incidents lookup replaces the Alerts page's slow live 24h
+   `Q.alertHistory` firing→resolved search with a lookup read.
 2. **Incident UI + human warroom** (app): incidents recall list, detail,
    timeline, human notes / status / severity / close-reopen, deterministic
    `summary_md`. "Archived" hidden-by-default with search across all. *No
