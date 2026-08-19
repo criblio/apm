@@ -524,10 +524,22 @@ add user alerts, SLOs, and trace depth.
     $vt_results self-read + -1h delta + high-water dedup; derived
     status with debounce/close/reopen), `criblapm__incidents_export`
     (→ `criblapm_incidents` lookup). Read path:
-    `listCachedIncidents()` + `Q.incidentEvents()`. **Next: Phase 2**
-    — Incidents list/detail UI + human warroom writes (notes,
-    status/severity, close/reopen via `incidentEventCommitQuery`);
-    then Phase 3 archival polish, Phases 4–6 (cell enrichment).
+    `listCachedIncidents()` + `Q.incidentEvents()`.
+  - **Progress (2026-08-19 overnight): Phases 2A+2B COMPLETE, Phase
+    4-lite + poll trigger (#147)** — Incidents section atop the Alerts
+    page (no new nav concept; old table renamed Alert Episodes); rich
+    `/incident/:id` page (summary narrative, correlated investigations
+    with conclusions/transcripts, member episode stats, interleaved
+    warroom timeline); human warroom writes (notes, status/severity,
+    close/reopen — Playwright-validated round-trip); Investigate-from-
+    incident seeds the agent with incident context and commits
+    `investigation_linked`. Cell-side: coordinator now POLLS firing
+    alerts via a durable alarm (Cribl's notify webhook delivery broke
+    silently ~08-15 — target/binding verified healthy; no log surface).
+    **Next: Phase 3** (archival polish + daily reconciliation fold),
+    **Phase 4 proper** (cell stamps incident_id, attach-vs-spawn
+    coalescing, /config/graph), Phases 5–6 (resolved notify,
+    supervisor summary_md).
 
 - **P4.5 Materialized read models for hot pages** (M — design 2026-08-18)
   — a perf/architecture principle the codebase is already halfway to
