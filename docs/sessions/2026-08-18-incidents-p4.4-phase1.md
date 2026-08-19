@@ -176,6 +176,41 @@ Next: **Phase 2B** — human warroom writes (notes, status/severity
 override, close/reopen) via `incidentEventCommitQuery` + `export to
 search` from the app.
 
+## Addendum 3: overnight build-out — the full loop (Clint's mandate)
+
+Overnight goal set by Clint: "We collapse alerts, we create incidents,
+then we investigate them, we annotate them, we make the human prepared
+to deal with them. We allow the human to intervene and guide the
+agent." What landed (apps 0.13.51–0.13.52):
+
+1. **Rich incident page** (`/incident/:id`): deterministic summary
+   narrative (root-first, downstream, outcome), correlated
+   investigations with conclusions + transcript links, member table
+   with signals/peak error rates, interleaved warroom timeline
+   (incident events + investigation lifecycle).
+2. **Warroom writes**: notes, status/severity overrides, close/reopen
+   via `commitHumanIncidentAction()` — the pinned commit KQL through
+   `export tee=true to search`, no cell required. Status-bearing
+   events drive the state fold, so human overrides genuinely change
+   incident state. Optimistic UI + honest ~5m re-fold banner.
+   **Validated live via Playwright: a real note round-tripped through
+   the dataset into the timeline; a status change committed.**
+3. **Human-guides-agent**: the incident's Investigate button seeds the
+   agent with the incident context (members in first-fired order,
+   derived root, age-scoped window) and the create flow commits a
+   deterministic `investigation_linked` event, so launched runs appear
+   on the incident — interactive ones included ("Linked").
+4. **Cell poll-trigger** (`f1be7c9`, cell/src/coordinatorDO.ts):
+   replaces the broken Cribl notify webhook with a durable
+   self-re-arming coordinator alarm that polls the firing-alert query
+   every 5m through the same admission/dedup path. Handed to Clint for
+   the cell agent to deploy (this box has no cell deploy path); the
+   /alerts/fire webhook stays wired as a fallback.
+5. Temp delivery-test resources (search/notification/target) removed
+   from staging after confirming the notify break is in Cribl's
+   dispatch layer, not our config (target/binding verified
+   field-perfect; json_array and custom formats both undelivered).
+
 ## Follow-ups
 
 1. **P4.3: Cribl→cell notify delivery** — see above; highest priority
