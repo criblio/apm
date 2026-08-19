@@ -52,9 +52,25 @@ wiring (snapshots + provision-guard).
    on subquery-branch rows.** Main-branch rows keep it. A sort barrier
    between the union and the assignment fixes it. Constant
    `_time=now()` is unaffected. (Cost ~40 min to isolate.)
-2. **Fold searches must be incremental** — see above.
-3. Multi-key `join ... on a, b` and `join kind=leftanti` both work
-   (verified before betting the dedup design on them).
+2. **A trailing `| sort` after a deep join pipeline silently drops
+   every row** — 3 in, 0 out, single- and multi-key alike. This is why
+   the first deployed fold materialized nothing; found by bisecting
+   the live query stage by stage. Distinct from the sort-as-barrier
+   usage in (1), which works. Folds/exports now don't sort; readers
+   order client-side.
+3. **Fold searches must be incremental** — see above.
+4. Multi-key `join ... on a, b` and `join kind=leftanti` both work,
+   including against empty right sides (verified before betting the
+   dedup design on them).
+
+## Fold liveness fix (second live bug)
+
+The first fold of a brand-new incident derived `resolved` while its
+services were at 25% errors: incident-level liveness joins
+PREVIOUS-run members, which don't exist yet on the first fold. Fixed
+with a per-member-row join against the evaluator's panel cache
+(`own_bad`), and `listCachedIncidents()` reduces member rows to the
+most-open status while the incident rollup lags one cycle.
 
 ## Validation
 
@@ -62,10 +78,38 @@ wiring (snapshots + provision-guard).
 - Live (pre-provision): grouper body over -24h produced exactly one
   `opened` + one `attached` for yesterday's load-generator fire with
   deterministic ids; fold + reader parse clean on empty state.
-- Deployed **0.13.46**; provisioner created all three searches + seed.
-- End-to-end: flipped `paymentFailure 50%` (recommendationCacheFailure
-  left on) and watched the live pipeline — results in the PR test
-  plan section.
+- Deployed **0.13.46** (searches + seed), then **0.13.47** with the
+  two live-found fixes (trailing sort; per-member liveness).
+- End-to-end on `paymentFailure 50%` (recommendationCacheFailure
+  left on):
+  - Evaluator: payment 17→25% errors; payment + checkout +
+    load-generator committed `firing` transitions in one cycle.
+  - Grouper: **one** incident `inc:1787112900` opened, all three
+    services attached, deterministic event ids; three later grouper
+    cycles emitted zero duplicates (leftanti dedup proven).
+  - Fold: 3 member rows, status `open` while firing.
+  - Export: lookup maps all three services → the incident (follow-on
+    fires would attach, not duplicate). `frontend` correctly absent —
+    its firing transition predates the pipeline (see limitations).
+  - Resolution: flag off → watched for derived `resolved` (results in
+    the PR comment).
+
+## Found along the way: Cribl→cell notify delivery is broken (P4.3)
+
+Today's firing alerts started **no** autonomous investigation. Every
+piece was individually healthy — notify search enabled + notification
+bound, webhook target auth valid (direct POST accepted), cell up — and
+replaying the exact payment firing event to `/alerts/fire` immediately
+spawned an autonomous investigation that **concluded** and committed
+`started`/`investigated` events to the dataset. Since the coordinator
+dedupes on `event_id` and the replay spawned fresh, **Cribl never
+delivered the webhook** during the three notify runs that had the
+firing row in-window. Last successful webhook-triggered run: Aug 14–15,
+i.e. likely broken since the cell's code-investigation redeploy and
+masked by the recommendationCacheFailure detection gap (no alerts
+fired since). Follow-up: catch a natural fire with fresh eyes on the
+Cribl notification side (target delivery has no visible log surface —
+that opacity is itself the problem to solve).
 
 ## Known limitations (Phase 1)
 
@@ -85,7 +129,22 @@ wiring (snapshots + provision-guard).
 
 - flagd: `paymentFailure` flipped to 50% for validation, then **off**;
   `recommendationCacheFailure` remains ON (unchanged from checkpoint).
-- App: **0.13.46** deployed to staging.
-- Branch: `feat/incidents-p4.4-phase1` (PR pending).
+- App: **0.13.47** deployed to staging.
+- Branch: `feat/incidents-p4.4-phase1` (PR #146).
+- One autonomous investigation (payment) ran on the cell from the
+  manual replay; its lifecycle events are in the dataset, so the
+  Alerts page badge has real data.
 - Dev box: `scripts/cribl-mcp.sh` now auto-detects the PVE AppArmor
   quirk (was: every `docker run` failed).
+
+## Follow-ups
+
+1. **P4.3: Cribl→cell notify delivery** — see above; highest priority
+   because it silently disables the whole autonomous loop.
+2. Long-firing alerts whose transition predates the grouper's -30m
+   window never join incidents (observed: `frontend-proxy`, firing for
+   ~4 days). Phase 2/4 could backfill via current `alert_status`.
+3. Fold `n_svcs`/severity lag one cycle behind membership (prev-run
+   rollup) — cosmetic, self-heals; note for the Phase 2 UI.
+4. Same-bin root pick is alphabetical (`checkout` chosen over
+   `payment` in the validation incident) — Phase 4's graph root fixes.
