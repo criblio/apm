@@ -10,7 +10,9 @@ import { runQuery } from '../api/cribl';
 import { newQueryGeneration, captureQueryGeneration } from '../api/queryGeneration';
 import * as Q from '../api/queries';
 import { serviceColor } from '../utils/spans';
-import { readCachedAlertHistory, type CachedAlertRow } from '../api/panelCache';
+import { listCachedIncidents, readCachedAlertHistory, type CachedAlertRow } from '../api/panelCache';
+import IncidentsSection from '../components/IncidentsSection';
+import type { IncidentSummary } from '../api/types';
 import { useServerInvestigations } from '../hooks/useServerInvestigations';
 import {
   indexInvestigations,
@@ -90,7 +92,7 @@ function mapHistoryRow(r: Record<string, unknown>): AlertEvent {
   };
 }
 
-interface AlertIncident {
+interface AlertEpisode {
   service: string;
   signalType: string;
   startTime: number;
@@ -99,10 +101,10 @@ interface AlertIncident {
   errorRate: number;
 }
 
-function buildIncidents(events: AlertEvent[]): AlertIncident[] {
+function buildEpisodes(events: AlertEvent[]): AlertEpisode[] {
   const sorted = [...events].sort((a, b) => a.time - b.time);
   const openByKey = new Map<string, { startTime: number; errorRate: number }>();
-  const incidents: AlertIncident[] = [];
+  const episodes: AlertEpisode[] = [];
 
   for (const ev of sorted) {
     const key = `${ev.service}:${ev.signalType}`;
@@ -113,7 +115,7 @@ function buildIncidents(events: AlertEvent[]): AlertIncident[] {
     } else if (ev.eventType === 'resolved') {
       const open = openByKey.get(key);
       if (open) {
-        incidents.push({
+        episodes.push({
           service: ev.service,
           signalType: ev.signalType,
           startTime: open.startTime,
@@ -126,10 +128,10 @@ function buildIncidents(events: AlertEvent[]): AlertIncident[] {
     }
   }
 
-  // Still-open incidents
+  // Still-open episodes
   for (const [key, open] of openByKey) {
     const [service, signalType] = key.split(':');
-    incidents.push({
+    episodes.push({
       service,
       signalType,
       startTime: open.startTime,
@@ -139,7 +141,7 @@ function buildIncidents(events: AlertEvent[]): AlertIncident[] {
     });
   }
 
-  return incidents.sort((a, b) => b.startTime - a.startTime);
+  return episodes.sort((a, b) => b.startTime - a.startTime);
 }
 
 function fmtDuration(ms: number): string {
@@ -163,6 +165,7 @@ const HISTORY_RANGES = [
 
 export default function AlertsPage() {
   const [alerts, setAlerts] = useState<CachedAlertRow[]>([]);
+  const [incidents, setIncidents] = useState<IncidentSummary[] | null>(null);
   const [history, setHistory] = useState<AlertEvent[]>([]);
   const [historyRange, setHistoryRange] = useState('-24h');
   const [timelineSelection, setTimelineSelection] = useState<[number, number] | null>(null);
@@ -186,6 +189,12 @@ export default function AlertsPage() {
       setAlerts(parseAlertRows(alertRows));
       hasData.current = true;
       if (!silent) setLoading(false);
+
+      // Incidents — the drill-in layer above alerts (P4.4). One cached
+      // $vt_results read; best-effort, never blocks the alert tables.
+      listCachedIncidents()
+        .then((incs) => { if (isCurrent()) setIncidents(incs ?? []); })
+        .catch(() => { /* incidents are best-effort */ });
 
       // SECONDARY: alert history (timeline + incidents). Read the panel
       // cache (`criblapm__alert_history`, -7d) for windows it covers — no
@@ -250,29 +259,29 @@ export default function AlertsPage() {
 
   const nonOk = alerts.filter((a) => a.alertStatus !== 'ok' || a.isBad);
 
-  const incidents = useMemo(() => buildIncidents(history), [history]);
+  const episodes = useMemo(() => buildEpisodes(history), [history]);
 
   const investigationsByAlert = useMemo(
     () => indexInvestigations(investigations),
     [investigations],
   );
 
-  const filteredIncidents = useMemo(() => {
-    if (!timelineSelection) return incidents;
-    return incidents.filter((inc) => {
+  const filteredEpisodes = useMemo(() => {
+    if (!timelineSelection) return episodes;
+    return episodes.filter((inc) => {
       // eslint-disable-next-line react-hooks/purity -- live "now" for open incidents
       const end = inc.endTime ?? Date.now();
       return inc.startTime <= timelineSelection[1] && end >= timelineSelection[0];
     });
-  }, [incidents, timelineSelection]);
+  }, [episodes, timelineSelection]);
 
   const timelineIntervals = useMemo(() =>
-    incidents.map((inc) => ({
+    episodes.map((inc) => ({
       service: inc.service,
       startTime: inc.startTime,
       endTime: inc.endTime,
     })),
-  [incidents]);
+  [episodes]);
 
   return (
     <div className={s.page}>
@@ -280,8 +289,13 @@ export default function AlertsPage() {
         <div>
           <h1 className={s.title}>Alerts</h1>
           <p className={s.subtitle}>
-            {nonOk.length > 0 ? `${nonOk.length} active` : 'No active alerts'}
-            {' · '}{incidents.length} incidents in the selected range
+            {(() => {
+              const openIncidents = incidents?.filter((i) => i.status !== 'closed' && i.status !== 'resolved').length ?? 0;
+              return openIncidents > 0 ? `${openIncidents} open incidents` : 'No open incidents';
+            })()}
+            {' · '}
+            {nonOk.length > 0 ? `${nonOk.length} active alerts` : 'no active alerts'}
+            {' · '}{episodes.length} episodes in the selected range
           </p>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -305,7 +319,11 @@ export default function AlertsPage() {
 
       {error && <StatusBanner kind="error">{error}</StatusBanner>}
 
-      {/* Timeline + Incidents (primary content) */}
+      {/* Incidents — the drill-in layer ABOVE alerts (P4.4 Phase 2).
+          Alerts stay the signal layer below (timeline + episodes). */}
+      <IncidentsSection incidents={incidents} />
+
+      {/* Alert signal layer: episode timeline + tables */}
       <AlertTimeline
         intervals={timelineIntervals}
         onRangeSelect={(start, end) => setTimelineSelection([start, end])}
@@ -316,11 +334,11 @@ export default function AlertsPage() {
       <Card className={s.card}>
         <h2 className={s.sectionTitle}>
           {timelineSelection
-            ? `Incidents in selection (${filteredIncidents.length})`
-            : `Alert Incidents (${incidents.length})`}
+            ? `Episodes in selection (${filteredEpisodes.length})`
+            : `Alert Episodes (${episodes.length})`}
         </h2>
-        {filteredIncidents.length === 0 ? (
-          <div className={s.empty}>No alert incidents in this time range.</div>
+        {filteredEpisodes.length === 0 ? (
+          <div className={s.empty}>No alert episodes (firing→resolved pairs) in this time range.</div>
         ) : (
           <table className={s.table}>
             <thead>
@@ -334,7 +352,7 @@ export default function AlertsPage() {
               </tr>
             </thead>
             <tbody>
-              {filteredIncidents.map((inc, i) => (
+              {filteredEpisodes.map((inc, i) => (
                 <tr key={i}>
                   <td>
                     <Link
