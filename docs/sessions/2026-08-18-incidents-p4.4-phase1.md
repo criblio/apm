@@ -137,6 +137,24 @@ that opacity is itself the problem to solve).
 - Dev box: `scripts/cribl-mcp.sh` now auto-detects the PVE AppArmor
   quirk (was: every `docker run` failed).
 
+## Addendum: latency arm shipped same session (PR #147)
+
+After the incident validation completed, priority 3 from the
+checkpoint landed as a stacked PR: the service-level p95-regression
+arm (`3x AND >=100ms`, volume-gated, stream-filter parity with the
+baseline). Live probe showed why nothing ever fired: recommendation's
+regression is ~45→~140ms — a 3.5x that sits UNDER the per-op arm's
+250ms floor. Deployed as **0.13.48**; zero false latency fires across
+17 services at deploy time.
+
+**Natural-fire test protocol (pending):** all flags were turned OFF at
+05:45Z to flush the polluted baseline. After ≥2h15m (the -2h..-1h prev
+window must be fully clean), flip `recommendationCacheFailure on` and
+watch, in order: (1) `signal_type="latency"` firing transition for
+recommendation, (2) whether the Cribl notification actually reaches
+the cell (the P4.3 delivery break), (3) a latency incident opening in
+the P4.4 pipeline. One flag flip validates all three.
+
 ## Follow-ups
 
 1. **P4.3: Cribl→cell notify delivery** — see above; highest priority
