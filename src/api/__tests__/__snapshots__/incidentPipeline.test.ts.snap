@@ -290,9 +290,19 @@ exports[`incidentStateFold > matches the pinned shape 1`] = `
           ) on svc
         | extend bad=iff(isnotnull(live_bad) and live_bad > 0, 1, 0)
         | summarize prev_inc_last=max(last_fire_at), n_svcs_prev=dcount(svc),
-                    inc_bad=sum(bad)
+                    inc_bad=sum(bad), prev_title=max(title),
+                    prev_root=max(root_service)
           by incident_id
       ) on incident_id
+    // Members attached after the opened event left the delta window
+    // would otherwise carry the "Incident <id>" fallback title and
+    // their own svc as root (observed live 2026-08-19). The carried
+    // rows are authoritative for incident-level fields: prev wins.
+    | extend title=iff(isnotnull(prev_title) and isnotempty(tostring(prev_title))
+                       and not(tostring(prev_title) == strcat("Incident ", incident_id)),
+                       tostring(prev_title), title),
+             root_service=iff(isnotnull(prev_root) and isnotempty(tostring(prev_root)),
+                              tostring(prev_root), root_service)
     | extend inc_last_fire=iff(isnotnull(prev_inc_last) and prev_inc_last > last_fire_at,
                                toreal(prev_inc_last), last_fire_at),
              inc_bad_n=iff(isnotnull(inc_bad), tolong(inc_bad), tolong(0)),
