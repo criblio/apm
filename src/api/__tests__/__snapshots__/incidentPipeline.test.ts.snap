@@ -1,0 +1,288 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`incidentGrouper > matches the pinned shape 1`] = `
+"dataset="otel"
+    | where coalesce(tostring(data_datatype), tostring(datatype)) == "criblapm_alert"
+    | where record_kind == "evaluation" and event_type == "firing"
+    | where isnull(is_canary) or tostring(is_canary) != "true"
+    | extend svc=tostring(svc)
+    | summarize fire_time=max(_time)
+      by trigger_event_id=tostring(event_id), svc
+    | lookup criblapm_incidents on svc
+    | extend direct_incident_id=iff(isnotempty(incident_id) and tostring(incident_id) != "__init__",
+                                    tostring(incident_id), "")
+    | project fire_time, trigger_event_id, svc, direct_incident_id
+    | join kind=leftouter (
+        dataset="$vt_results"
+        | where jobName == "criblapm__sysarch_dependencies"
+        | project fire_svc=tostring(child), svc=tostring(parent)
+        | union (
+            dataset="$vt_results"
+            | where jobName == "criblapm__sysarch_dependencies"
+            | project fire_svc=tostring(parent), svc=tostring(child)
+          )
+        | lookup criblapm_incidents on svc
+        | where isnotempty(incident_id) and tostring(incident_id) != "__init__"
+        | summarize adj_incident_id=max(tostring(incident_id)) by fire_svc
+        | project svc=fire_svc, adj_incident_id
+      ) on svc
+    | extend attach_incident_id=iff(isnotempty(direct_incident_id), direct_incident_id,
+                                    iff(isnotnull(adj_incident_id), tostring(adj_incident_id), ""))
+    | extend incident_id=iff(isnotempty(attach_incident_id), attach_incident_id,
+                             strcat("inc:", tostring(bin(fire_time, 15m)))),
+             is_new=isempty(attach_incident_id)
+    | where is_new
+    // opened — collapse same-bin fires into the one new incident. min(svc)
+    // is a deterministic placeholder root; the fold recomputes root as the
+    // first-firing member.
+    | summarize fire_time=min(fire_time), root_service=min(svc),
+                services=min(svc), alert_event_id=min(trigger_event_id)
+      by incident_id
+    | extend event_type="opened", status="open",
+             title=strcat("Service health incident: ", root_service),
+             event_id=strcat(incident_id, ":opened")
+    | project fire_time, incident_id, event_id, event_type, status,
+              root_service, services, alert_event_id, title
+    | union (
+        dataset="otel"
+    | where coalesce(tostring(data_datatype), tostring(datatype)) == "criblapm_alert"
+    | where record_kind == "evaluation" and event_type == "firing"
+    | where isnull(is_canary) or tostring(is_canary) != "true"
+    | extend svc=tostring(svc)
+    | summarize fire_time=max(_time)
+      by trigger_event_id=tostring(event_id), svc
+    | lookup criblapm_incidents on svc
+    | extend direct_incident_id=iff(isnotempty(incident_id) and tostring(incident_id) != "__init__",
+                                    tostring(incident_id), "")
+    | project fire_time, trigger_event_id, svc, direct_incident_id
+    | join kind=leftouter (
+        dataset="$vt_results"
+        | where jobName == "criblapm__sysarch_dependencies"
+        | project fire_svc=tostring(child), svc=tostring(parent)
+        | union (
+            dataset="$vt_results"
+            | where jobName == "criblapm__sysarch_dependencies"
+            | project fire_svc=tostring(parent), svc=tostring(child)
+          )
+        | lookup criblapm_incidents on svc
+        | where isnotempty(incident_id) and tostring(incident_id) != "__init__"
+        | summarize adj_incident_id=max(tostring(incident_id)) by fire_svc
+        | project svc=fire_svc, adj_incident_id
+      ) on svc
+    | extend attach_incident_id=iff(isnotempty(direct_incident_id), direct_incident_id,
+                                    iff(isnotnull(adj_incident_id), tostring(adj_incident_id), ""))
+    | extend incident_id=iff(isnotempty(attach_incident_id), attach_incident_id,
+                             strcat("inc:", tostring(bin(fire_time, 15m)))),
+             is_new=isempty(attach_incident_id)
+        | extend event_type="attached", status="", root_service="",
+                 services=svc, alert_event_id=trigger_event_id, title="",
+                 event_id=strcat(incident_id, ":attach:", trigger_event_id)
+        | project fire_time, incident_id, event_id, event_type, status,
+                  root_service, services, alert_event_id, title
+      )
+    | join kind=leftanti (
+        dataset="otel"
+        | where coalesce(tostring(data_datatype), tostring(datatype)) == "criblapm_alert"
+        | where record_kind == "incident"
+        | project event_id=tostring(event_id)
+      ) on event_id
+    // Sort barrier — assigning _time from a column after a union
+    // silently nulls it on rows from the union's subquery branch
+    // unless a materializing operator sits in between (verified on
+    // staging 2026-08-18; see the KQL caveats in
+    // docs/cribl-app-skill/skill.md).
+    | sort by fire_time asc, event_id asc
+    | project _time=fire_time, dataset="otel",
+              datatype="criblapm_alert",
+              schema_version=tolong(1),
+              event_id, producer="criblapm_incident_grouper",
+              record_kind="incident", event_type, incident_id,
+              author="system", status, severity="", root_service, services,
+              note="", investigation_id="", alert_event_id, title
+    | export tee=true to search "otel""
+`;
+
+exports[`incidentStateFold > matches the pinned shape 1`] = `
+"dataset="$vt_results"
+        | where jobName == "criblapm__incidents_state"
+        | join kind=inner (
+            dataset="$vt_results"
+            | where jobName == "criblapm__incidents_state"
+            | summarize jobId=max(tostring(jobId))
+          ) on jobId
+        | project incident_id=tostring(incident_id), svc=tostring(svc),
+                  first_seen=toreal(first_seen), last_fire_at=toreal(last_fire_at),
+                  fire_n=tolong(fire_n), opened_at=toreal(opened_at),
+                  title=tostring(title), root_service=tostring(root_service),
+                  o_status=tostring(o_status), o_status_time=toreal(o_status_time),
+                  o_severity=tostring(o_severity)
+    | join kind=leftouter (
+        dataset="otel"
+    | where coalesce(tostring(data_datatype), tostring(datatype)) == "criblapm_alert"
+    | where record_kind == "incident"
+    | where isnull(is_canary) or tostring(is_canary) != "true"
+    | extend incident_id=tostring(incident_id)
+        | where event_type == "attached"
+        | extend svc=tostring(services)
+        | summarize _time=max(_time) by event_id=tostring(event_id), incident_id, svc
+        | join kind=leftouter (
+            dataset="$vt_results"
+        | where jobName == "criblapm__incidents_state"
+        | join kind=inner (
+            dataset="$vt_results"
+            | where jobName == "criblapm__incidents_state"
+            | summarize jobId=max(tostring(jobId))
+          ) on jobId
+        | project incident_id=tostring(incident_id), svc=tostring(svc),
+                  first_seen=toreal(first_seen), last_fire_at=toreal(last_fire_at),
+                  fire_n=tolong(fire_n), opened_at=toreal(opened_at),
+                  title=tostring(title), root_service=tostring(root_service),
+                  o_status=tostring(o_status), o_status_time=toreal(o_status_time),
+                  o_severity=tostring(o_severity)
+            | project incident_id, svc, prev_last=last_fire_at
+          ) on incident_id, svc
+        | where _time > iff(isnotnull(prev_last), prev_last, toreal(0))
+        | summarize d_first=min(_time), d_last=max(_time), d_n=count()
+          by incident_id, svc
+      ) on incident_id, svc
+    | extend first_seen=iff(first_seen > 0, first_seen, iff(isnotnull(d_first), toreal(d_first), toreal(0))),
+             last_fire_at=iff(isnotnull(d_last) and d_last > last_fire_at, toreal(d_last), last_fire_at),
+             fire_n=fire_n + iff(isnotnull(d_n), tolong(d_n), tolong(0))
+    | project incident_id, svc, first_seen, last_fire_at, fire_n,
+              opened_at, title, root_service, o_status, o_status_time, o_severity
+    | union (
+        dataset="otel"
+    | where coalesce(tostring(data_datatype), tostring(datatype)) == "criblapm_alert"
+    | where record_kind == "incident"
+    | where isnull(is_canary) or tostring(is_canary) != "true"
+    | extend incident_id=tostring(incident_id)
+        | where event_type == "attached"
+        | extend svc=tostring(services)
+        | summarize _time=max(_time) by event_id=tostring(event_id), incident_id, svc
+        | join kind=leftouter (
+            dataset="$vt_results"
+        | where jobName == "criblapm__incidents_state"
+        | join kind=inner (
+            dataset="$vt_results"
+            | where jobName == "criblapm__incidents_state"
+            | summarize jobId=max(tostring(jobId))
+          ) on jobId
+        | project incident_id=tostring(incident_id), svc=tostring(svc),
+                  first_seen=toreal(first_seen), last_fire_at=toreal(last_fire_at),
+                  fire_n=tolong(fire_n), opened_at=toreal(opened_at),
+                  title=tostring(title), root_service=tostring(root_service),
+                  o_status=tostring(o_status), o_status_time=toreal(o_status_time),
+                  o_severity=tostring(o_severity)
+            | project incident_id, svc, prev_last=last_fire_at
+          ) on incident_id, svc
+        | where _time > iff(isnotnull(prev_last), prev_last, toreal(0))
+        | summarize d_first=min(_time), d_last=max(_time), d_n=count()
+          by incident_id, svc
+        | join kind=leftanti (
+            dataset="$vt_results"
+        | where jobName == "criblapm__incidents_state"
+        | join kind=inner (
+            dataset="$vt_results"
+            | where jobName == "criblapm__incidents_state"
+            | summarize jobId=max(tostring(jobId))
+          ) on jobId
+        | project incident_id=tostring(incident_id), svc=tostring(svc),
+                  first_seen=toreal(first_seen), last_fire_at=toreal(last_fire_at),
+                  fire_n=tolong(fire_n), opened_at=toreal(opened_at),
+                  title=tostring(title), root_service=tostring(root_service),
+                  o_status=tostring(o_status), o_status_time=toreal(o_status_time),
+                  o_severity=tostring(o_severity)
+          ) on incident_id, svc
+        | project incident_id, svc, first_seen=toreal(d_first),
+                  last_fire_at=toreal(d_last), fire_n=tolong(d_n),
+                  opened_at=toreal(0), title="", root_service="",
+                  o_status="", o_status_time=toreal(0), o_severity=""
+      )
+    | join kind=leftouter (
+        dataset="otel"
+    | where coalesce(tostring(data_datatype), tostring(datatype)) == "criblapm_alert"
+    | where record_kind == "incident"
+    | where isnull(is_canary) or tostring(is_canary) != "true"
+    | extend incident_id=tostring(incident_id)
+        | where event_type == "opened"
+        | summarize n_opened_at=min(_time), n_title=max(tostring(title)),
+                    n_root=max(tostring(root_service))
+          by incident_id
+      ) on incident_id
+    | extend opened_at=iff(opened_at > 0, opened_at,
+                           iff(isnotnull(n_opened_at), toreal(n_opened_at), first_seen)),
+             title=iff(isnotempty(title), title,
+                       iff(isnotnull(n_title) and isnotempty(tostring(n_title)),
+                           tostring(n_title), strcat("Incident ", incident_id))),
+             root_service=iff(isnotempty(root_service), root_service,
+                              iff(isnotnull(n_root) and isnotempty(tostring(n_root)),
+                                  tostring(n_root), svc))
+    | join kind=leftouter (
+        dataset="otel"
+    | where coalesce(tostring(data_datatype), tostring(datatype)) == "criblapm_alert"
+    | where record_kind == "incident"
+    | where isnull(is_canary) or tostring(is_canary) != "true"
+    | extend incident_id=tostring(incident_id)
+        | where event_type in ("status_change", "closed") and isnotempty(status)
+        | summarize d_status=max(tostring(status)), d_status_time=max(_time)
+          by incident_id
+      ) on incident_id
+    | extend o_status=iff(isnotnull(d_status) and d_status_time > o_status_time,
+                          tostring(d_status), o_status),
+             o_status_time=iff(isnotnull(d_status_time) and d_status_time > o_status_time,
+                               toreal(d_status_time), o_status_time)
+    | join kind=leftouter (
+        dataset="otel"
+    | where coalesce(tostring(data_datatype), tostring(datatype)) == "criblapm_alert"
+    | where record_kind == "incident"
+    | where isnull(is_canary) or tostring(is_canary) != "true"
+    | extend incident_id=tostring(incident_id)
+        | where event_type == "severity_change" and isnotempty(severity)
+        | summarize d_severity=max(tostring(severity)) by incident_id
+      ) on incident_id
+    | extend o_severity=iff(isnotnull(d_severity) and isnotempty(tostring(d_severity)),
+                            tostring(d_severity), o_severity)
+    | join kind=leftouter (
+        dataset="$vt_results"
+        | where jobName == "criblapm__incidents_state"
+        | join kind=inner (
+            dataset="$vt_results"
+            | where jobName == "criblapm__incidents_state"
+            | summarize jobId=max(tostring(jobId))
+          ) on jobId
+        | project incident_id=tostring(incident_id), svc=tostring(svc),
+                  first_seen=toreal(first_seen), last_fire_at=toreal(last_fire_at),
+                  fire_n=tolong(fire_n), opened_at=toreal(opened_at),
+                  title=tostring(title), root_service=tostring(root_service),
+                  o_status=tostring(o_status), o_status_time=toreal(o_status_time),
+                  o_severity=tostring(o_severity)
+        | join kind=leftouter (
+            dataset="$vt_results"
+        | where jobName == "criblapm__home_alerts"
+        | extend svc=tostring(svc)
+        | summarize live_bad=countif(tostring(alert_status) in ("pending", "firing", "resolving")) by svc
+          ) on svc
+        | extend bad=iff(isnotnull(live_bad) and live_bad > 0, 1, 0)
+        | summarize prev_inc_last=max(last_fire_at), n_svcs_prev=dcount(svc),
+                    inc_bad=sum(bad)
+          by incident_id
+      ) on incident_id
+    | extend inc_last_fire=iff(isnotnull(prev_inc_last) and prev_inc_last > last_fire_at,
+                               toreal(prev_inc_last), last_fire_at),
+             inc_bad_n=iff(isnotnull(inc_bad), tolong(inc_bad), tolong(0)),
+             n_svcs=iff(isnotnull(n_svcs_prev) and n_svcs_prev > 0, tolong(n_svcs_prev), tolong(1))
+    | extend derived_status=case(
+               inc_bad_n > 0, "open",
+               inc_last_fire >= toreal(now()) - 600, "open",
+               inc_last_fire >= toreal(now()) - 86400, "resolved",
+               "closed"),
+             derived_severity=case(n_svcs >= 3, "sev2", n_svcs == 2, "sev3", "sev4")
+    | extend status=iff(isnotempty(o_status) and o_status_time >= inc_last_fire,
+                        o_status, derived_status),
+             severity=iff(isnotempty(o_severity), o_severity, derived_severity)
+    | where not(status == "closed" and inc_last_fire < toreal(now()) - 604800)
+    | project incident_id, svc, status, severity, opened_at, first_seen,
+              last_fire_at, fire_n, n_svcs, inc_last_fire, root_service, title,
+              o_status, o_status_time, o_severity
+    | sort by inc_last_fire desc, incident_id asc, first_seen asc"
+`;

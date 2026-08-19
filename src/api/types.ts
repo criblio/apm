@@ -394,6 +394,51 @@ export interface DetectedIssue {
   isPersistent?: boolean;
 }
 
+/** One service's membership in an incident, as read from the incident
+ *  state fold (one $vt_results row per (incident, service)). */
+export interface IncidentMember {
+  service: string;
+  /** Epoch ms of this service's first firing transition in the incident. */
+  firstSeenMs: number;
+  /** Epoch ms of this service's latest firing transition. */
+  lastFireMs: number;
+  fireCount: number;
+}
+
+/** An incident — the warroom record above alerts/investigations
+ *  (P4.4). Assembled client-side by grouping the state fold's
+ *  per-(incident, service) rows on incidentId. */
+export interface IncidentSummary {
+  incidentId: string;
+  title: string;
+  status: 'open' | 'investigating' | 'identified' | 'mitigated' | 'resolved' | 'closed';
+  severity: 'sev1' | 'sev2' | 'sev3' | 'sev4';
+  /** Members sorted by firstSeenMs — the first entry is the derived
+   *  root (first-firing service). */
+  services: IncidentMember[];
+  /** First-firing service (graph-aware root lands with P4.4 Phase 4). */
+  rootService: string;
+  openedAtMs: number;
+  lastFireMs: number;
+}
+
+/** One row of an incident's append-only timeline (warroom log). */
+export interface IncidentTimelineEntry {
+  timeMs: number;
+  eventId: string;
+  eventType: string;
+  incidentId: string;
+  author: 'agent' | 'human' | 'system';
+  status?: string;
+  severity?: string;
+  services?: string;
+  note?: string;
+  investigationId?: string;
+  alertEventId?: string;
+  title?: string;
+  producer: string;
+}
+
 /** OTel span kind numeric values. */
 export const SpanKind: Record<number, string> = {
   0: 'UNSPECIFIED',

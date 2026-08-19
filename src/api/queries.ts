@@ -28,6 +28,7 @@ import {
   ALERT_EVENT_DATATYPE,
   DEPLOY_EVENT_DATATYPE,
   GENERATED_EVENT_SCHEMA_VERSION,
+  INCIDENT_GROUPER_PRODUCER,
   eventIdExpr,
   generatedDatatypePredicate,
 } from './generatedEventContract';
@@ -832,6 +833,338 @@ export function alertNotify(): string {
     | project event_id, alert_id, svc, signal_type, curr_error_rate, fire_count, _time
     | sort by _time desc
     | limit 50`;
+}
+
+// ── Incidents (P4.4 Phase 1) ─────────────────────────────────
+//
+// Alerts→incidents grouping + state fold, entirely Cribl-Search-
+// native (no cell). Three cooperating scheduled searches (see
+// provisionedSearches.ts):
+//
+//   1. incidentGrouper()   — appends opened/attached incident events
+//   2. incidentStateFold() — folds events → one row per (incident, svc)
+//                            in $vt_results (the app's list read)
+//   3. incidents export    — copies the fold's non-closed rows into
+//                            the criblapm_incidents lookup (the
+//                            grouper's join surface)
+//
+// Design: docs/research/server-investigations/incidents-and-lifecycle.md.
+
+/** An incident resolves when no member alert is bad and the last firing
+ * transition is at least this old (guards flapping). */
+export const INCIDENT_RESOLVE_DEBOUNCE_MIN = 10;
+/** A resolved incident closes (archives) after this quiet period. Only a
+ * closed incident lets a new fire open a fresh incident. */
+export const INCIDENT_CLOSE_AFTER_HOURS = 24;
+/** Fires with no live incident to attach to are grouped by this time
+ * bin — one new incident per bin. Deliberately coarse: a cascade whose
+ * services first fire within the same bin collapses to one incident
+ * even before the grouping lookup has caught up. */
+export const INCIDENT_OPEN_BIN = '15m';
+
+/**
+ * Shared grouper base: one row per firing transition in the window,
+ * annotated with the incident it should attach to (direct membership
+ * first, then single-hop graph adjacency) or, failing both, the
+ * deterministic id of a new incident. Used by both event arms of
+ * incidentGrouper() — same KQL-duplication pattern as the alert
+ * evaluator's two arms.
+ *
+ * Attach path 2 (adjacency) resolves *neighbor → live incident* in a
+ * subquery so the neighbor value can sit in a column literally named
+ * `svc` for the `| lookup criblapm_incidents on svc` join, then
+ * renames back to join against the fire row's own svc.
+ */
+function incidentGrouperBase(): string {
+  return `${datasetClause()}
+    | where ${generatedDatatypePredicate(ALERT_EVENT_DATATYPE)}
+    | where record_kind == "evaluation" and event_type == "firing"
+    | where isnull(is_canary) or tostring(is_canary) != "true"
+    | extend svc=tostring(svc)
+    | summarize fire_time=max(_time)
+      by trigger_event_id=tostring(event_id), svc
+    | lookup criblapm_incidents on svc
+    | extend direct_incident_id=iff(isnotempty(incident_id) and tostring(incident_id) != "__init__",
+                                    tostring(incident_id), "")
+    | project fire_time, trigger_event_id, svc, direct_incident_id
+    | join kind=leftouter (
+        dataset="$vt_results"
+        | where jobName == "criblapm__sysarch_dependencies"
+        | project fire_svc=tostring(child), svc=tostring(parent)
+        | union (
+            dataset="$vt_results"
+            | where jobName == "criblapm__sysarch_dependencies"
+            | project fire_svc=tostring(parent), svc=tostring(child)
+          )
+        | lookup criblapm_incidents on svc
+        | where isnotempty(incident_id) and tostring(incident_id) != "__init__"
+        | summarize adj_incident_id=max(tostring(incident_id)) by fire_svc
+        | project svc=fire_svc, adj_incident_id
+      ) on svc
+    | extend attach_incident_id=iff(isnotempty(direct_incident_id), direct_incident_id,
+                                    iff(isnotnull(adj_incident_id), tostring(adj_incident_id), ""))
+    | extend incident_id=iff(isnotempty(attach_incident_id), attach_incident_id,
+                             strcat("inc:", tostring(bin(fire_time, ${INCIDENT_OPEN_BIN})))),
+             is_new=isempty(attach_incident_id)`;
+}
+
+/**
+ * Alerts→incidents grouping search. Appends `record_kind:'incident'`
+ * events — `opened` (one per new incident) and `attached` (one per
+ * firing transition) — through the same `export tee=true to search`
+ * boundary as the evaluator. Every emitted event_id is deterministic
+ * (derived from incident_id + the firing evaluation's event_id) and
+ * the final leftanti join drops rows already committed, so re-runs
+ * and platform retries over the same window are no-ops.
+ *
+ * Incident *resolution* is deliberately NOT an event here — the state
+ * fold derives it from live alert state (all-clear + debounce). A
+ * `resolved` notify event lands with P4.4 Phase 5.
+ *
+ * Runs a few minutes after the evaluator so firing transitions are
+ * committed; earliest=-30m so a reprocessed fire always sees its own
+ * prior emission inside the dedup subquery's window.
+ */
+export function incidentGrouper(): string {
+  const ds = quoteDataset();
+  return `${incidentGrouperBase()}
+    | where is_new
+    // opened — collapse same-bin fires into the one new incident. min(svc)
+    // is a deterministic placeholder root; the fold recomputes root as the
+    // first-firing member.
+    | summarize fire_time=min(fire_time), root_service=min(svc),
+                services=min(svc), alert_event_id=min(trigger_event_id)
+      by incident_id
+    | extend event_type="opened", status="open",
+             title=strcat("Service health incident: ", root_service),
+             event_id=strcat(incident_id, ":opened")
+    | project fire_time, incident_id, event_id, event_type, status,
+              root_service, services, alert_event_id, title
+    | union (
+        ${incidentGrouperBase()}
+        | extend event_type="attached", status="", root_service="",
+                 services=svc, alert_event_id=trigger_event_id, title="",
+                 event_id=strcat(incident_id, ":attach:", trigger_event_id)
+        | project fire_time, incident_id, event_id, event_type, status,
+                  root_service, services, alert_event_id, title
+      )
+    | join kind=leftanti (
+        ${datasetClause()}
+        | where ${generatedDatatypePredicate(ALERT_EVENT_DATATYPE)}
+        | where record_kind == "incident"
+        | project event_id=tostring(event_id)
+      ) on event_id
+    // Sort barrier — assigning _time from a column after a union
+    // silently nulls it on rows from the union's subquery branch
+    // unless a materializing operator sits in between (verified on
+    // staging 2026-08-18; see the KQL caveats in
+    // docs/cribl-app-skill/skill.md).
+    | sort by fire_time asc, event_id asc
+    | project _time=fire_time, dataset="${ds}",
+              datatype="${ALERT_EVENT_DATATYPE}",
+              schema_version=tolong(${GENERATED_EVENT_SCHEMA_VERSION}),
+              event_id, producer="${INCIDENT_GROUPER_PRODUCER}",
+              record_kind="incident", event_type, incident_id,
+              author="system", status, severity="", root_service, services,
+              note="", investigation_id="", alert_event_id, title
+    | export tee=true to search "${ds}"`;
+}
+
+/** Incident-event base for the fold's subqueries. */
+function incidentEventsBase(): string {
+  return `${datasetClause()}
+    | where ${generatedDatatypePredicate(ALERT_EVENT_DATATYPE)}
+    | where record_kind == "incident"
+    | where isnull(is_canary) or tostring(is_canary) != "true"
+    | extend incident_id=tostring(incident_id)`;
+}
+
+/** How long a closed incident's rows stay in the fold output (and so
+ * in the Incidents list) before being pruned. The append-only events
+ * in the dataset remain the durable history beyond this. */
+export const INCIDENT_FOLD_RETENTION_DAYS = 7;
+
+/**
+ * Incident state fold — INCREMENTAL, evaluator-style: each run merges
+ * its own previous output (read back from $vt_results, latest jobId)
+ * with a short window of new incident events, instead of replaying
+ * -7d of history. A full-history recompute needed ~8 wide dataset
+ * scans every cadence — measured >60s per scan on staging — which
+ * would have saturated the worker pool P4.5 just relieved.
+ *
+ * Output: one row per (incident_id, svc) membership, denormalized
+ * with the incident-level state. Lands in $vt_results (the app's
+ * incident list read); the companion export search copies non-closed
+ * rows into the criblapm_incidents lookup for the grouper's join.
+ *
+ * Merge discipline:
+ *   - New attach events are deduped by event_id (export retries can
+ *     double-commit rows) and gated on a per-member high-water mark
+ *     (_time strictly newer than the carried last_fire_at), so window
+ *     overlap across runs never double-counts fire_n.
+ *   - Human/agent status & severity override events are folded with a
+ *     plain max() over the delta window — exact ordering of multiple
+ *     overrides inside one window is a Phase 2 (warroom UI) concern;
+ *     no writer emits them yet.
+ *   - Incident-level rollups (n_svcs, all-clear) come from the
+ *     PREVIOUS run's members — ≤1 cadence stale, which only delays a
+ *     severity bump; liveness is fresh via criblapm__home_alerts.
+ *
+ * Status derivation (recomputed every run, so reopen-on-refire is
+ * automatic):
+ *   - any member service currently bad, or a firing transition newer
+ *     than the debounce window            → open
+ *   - all clear, quiet ≥ debounce         → resolved
+ *   - resolved and quiet ≥ close age      → closed (archived)
+ *   - a human/agent status_change or closed event newer than the last
+ *     fire wins over the derived status; severity overrides always win.
+ *
+ * Known limitation: state carried through $vt_results survives only
+ * within the search window (-1h) — if the fold is paused longer, the
+ * list rebuilds from ongoing fires only (the event log in the dataset
+ * stays complete). A slow daily reconciliation search can land with
+ * P4.4 Phase 3 if this bites.
+ */
+export function incidentStateFold(): string {
+  const debounceSec = INCIDENT_RESOLVE_DEBOUNCE_MIN * 60;
+  const closeSec = INCIDENT_CLOSE_AFTER_HOURS * 3600;
+  const pruneSec = INCIDENT_FOLD_RETENTION_DAYS * 86400;
+  // Previous run's member rows, read back from $vt_results. The
+  // latest-jobId self-join keeps a keepLastN=2 retention from mixing
+  // two runs (jobId's fixed-width epoch-millis prefix makes the
+  // string max the newest run).
+  const prevMembers = `dataset="$vt_results"
+        | where jobName == "criblapm__incidents_state"
+        | join kind=inner (
+            dataset="$vt_results"
+            | where jobName == "criblapm__incidents_state"
+            | summarize jobId=max(tostring(jobId))
+          ) on jobId
+        | project incident_id=tostring(incident_id), svc=tostring(svc),
+                  first_seen=toreal(first_seen), last_fire_at=toreal(last_fire_at),
+                  fire_n=tolong(fire_n), opened_at=toreal(opened_at),
+                  title=tostring(title), root_service=tostring(root_service),
+                  o_status=tostring(o_status), o_status_time=toreal(o_status_time),
+                  o_severity=tostring(o_severity)`;
+  // Strictly-newer attach events per (incident, svc): event_id dedup
+  // first, then the high-water gate against the carried state.
+  const attachDelta = `${incidentEventsBase()}
+        | where event_type == "attached"
+        | extend svc=tostring(services)
+        | summarize _time=max(_time) by event_id=tostring(event_id), incident_id, svc
+        | join kind=leftouter (
+            ${prevMembers}
+            | project incident_id, svc, prev_last=last_fire_at
+          ) on incident_id, svc
+        | where _time > iff(isnotnull(prev_last), prev_last, toreal(0))
+        | summarize d_first=min(_time), d_last=max(_time), d_n=count()
+          by incident_id, svc`;
+  const liveBadBySvc = `dataset="$vt_results"
+        | where jobName == "criblapm__home_alerts"
+        | extend svc=tostring(svc)
+        | summarize live_bad=countif(tostring(alert_status) in ("pending", "firing", "resolving")) by svc`;
+  return `${prevMembers}
+    | join kind=leftouter (
+        ${attachDelta}
+      ) on incident_id, svc
+    | extend first_seen=iff(first_seen > 0, first_seen, iff(isnotnull(d_first), toreal(d_first), toreal(0))),
+             last_fire_at=iff(isnotnull(d_last) and d_last > last_fire_at, toreal(d_last), last_fire_at),
+             fire_n=fire_n + iff(isnotnull(d_n), tolong(d_n), tolong(0))
+    | project incident_id, svc, first_seen, last_fire_at, fire_n,
+              opened_at, title, root_service, o_status, o_status_time, o_severity
+    | union (
+        ${attachDelta}
+        | join kind=leftanti (
+            ${prevMembers}
+          ) on incident_id, svc
+        | project incident_id, svc, first_seen=toreal(d_first),
+                  last_fire_at=toreal(d_last), fire_n=tolong(d_n),
+                  opened_at=toreal(0), title="", root_service="",
+                  o_status="", o_status_time=toreal(0), o_severity=""
+      )
+    | join kind=leftouter (
+        ${incidentEventsBase()}
+        | where event_type == "opened"
+        | summarize n_opened_at=min(_time), n_title=max(tostring(title)),
+                    n_root=max(tostring(root_service))
+          by incident_id
+      ) on incident_id
+    | extend opened_at=iff(opened_at > 0, opened_at,
+                           iff(isnotnull(n_opened_at), toreal(n_opened_at), first_seen)),
+             title=iff(isnotempty(title), title,
+                       iff(isnotnull(n_title) and isnotempty(tostring(n_title)),
+                           tostring(n_title), strcat("Incident ", incident_id))),
+             root_service=iff(isnotempty(root_service), root_service,
+                              iff(isnotnull(n_root) and isnotempty(tostring(n_root)),
+                                  tostring(n_root), svc))
+    | join kind=leftouter (
+        ${incidentEventsBase()}
+        | where event_type in ("status_change", "closed") and isnotempty(status)
+        | summarize d_status=max(tostring(status)), d_status_time=max(_time)
+          by incident_id
+      ) on incident_id
+    | extend o_status=iff(isnotnull(d_status) and d_status_time > o_status_time,
+                          tostring(d_status), o_status),
+             o_status_time=iff(isnotnull(d_status_time) and d_status_time > o_status_time,
+                               toreal(d_status_time), o_status_time)
+    | join kind=leftouter (
+        ${incidentEventsBase()}
+        | where event_type == "severity_change" and isnotempty(severity)
+        | summarize d_severity=max(tostring(severity)) by incident_id
+      ) on incident_id
+    | extend o_severity=iff(isnotnull(d_severity) and isnotempty(tostring(d_severity)),
+                            tostring(d_severity), o_severity)
+    | join kind=leftouter (
+        ${prevMembers}
+        | join kind=leftouter (
+            ${liveBadBySvc}
+          ) on svc
+        | extend bad=iff(isnotnull(live_bad) and live_bad > 0, 1, 0)
+        | summarize prev_inc_last=max(last_fire_at), n_svcs_prev=dcount(svc),
+                    inc_bad=sum(bad)
+          by incident_id
+      ) on incident_id
+    | extend inc_last_fire=iff(isnotnull(prev_inc_last) and prev_inc_last > last_fire_at,
+                               toreal(prev_inc_last), last_fire_at),
+             inc_bad_n=iff(isnotnull(inc_bad), tolong(inc_bad), tolong(0)),
+             n_svcs=iff(isnotnull(n_svcs_prev) and n_svcs_prev > 0, tolong(n_svcs_prev), tolong(1))
+    | extend derived_status=case(
+               inc_bad_n > 0, "open",
+               inc_last_fire >= toreal(now()) - ${debounceSec}, "open",
+               inc_last_fire >= toreal(now()) - ${closeSec}, "resolved",
+               "closed"),
+             derived_severity=case(n_svcs >= 3, "sev2", n_svcs == 2, "sev3", "sev4")
+    | extend status=iff(isnotempty(o_status) and o_status_time >= inc_last_fire,
+                        o_status, derived_status),
+             severity=iff(isnotempty(o_severity), o_severity, derived_severity)
+    | where not(status == "closed" and inc_last_fire < toreal(now()) - ${pruneSec})
+    | project incident_id, svc, status, severity, opened_at, first_seen,
+              last_fire_at, fire_n, n_svcs, inc_last_fire, root_service, title,
+              o_status, o_status_time, o_severity
+    | sort by inc_last_fire desc, incident_id asc, first_seen asc`;
+}
+
+/**
+ * Incident timeline read — the append-only warroom log for one
+ * incident (or the most recent events across all of them). Same
+ * dedup-by-event_id discipline as the other generated-event readers.
+ */
+export function incidentEvents(incidentId?: string, limit = 500): string {
+  const safeLimit = Math.max(1, Math.min(2_000, Math.trunc(limit)));
+  const idFilter = incidentId
+    ? `| where incident_id == ${kqlStringLiteral(incidentId)}`
+    : '';
+  return `${incidentEventsBase()}
+    ${idFilter}
+    | summarize _time=max(_time)
+      by event_id, event_type, incident_id, author, status, severity,
+         root_service, services, note, investigation_id, alert_event_id,
+         title, producer
+    | project _time, event_id, event_type, incident_id, author, status,
+              severity, root_service, services, note, investigation_id,
+              alert_event_id, title, producer
+    | sort by _time asc
+    | limit ${safeLimit}`;
 }
 
 /**

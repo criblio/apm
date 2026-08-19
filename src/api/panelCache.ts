@@ -347,6 +347,67 @@ export async function readCachedAlertHistory(): Promise<Record<string, unknown>[
   return rows && rows.length > 0 ? rows : null;
 }
 
+// ── Incidents cache (P4.4) ───────────────────────────────────
+
+/**
+ * Read the incident state fold (`criblapm__incidents_state`) from
+ * $vt_results and assemble one IncidentSummary per incident from its
+ * per-(incident, service) rows. Returns null when the fold hasn't run
+ * yet. keepLastN retains two runs, so rows are first narrowed to the
+ * newest jobId (fixed-width epoch-millis prefix makes the string max
+ * the latest run).
+ */
+export async function listCachedIncidents(): Promise<
+  import('./types').IncidentSummary[] | null
+> {
+  const partitions = await readCachedPanelsRaw(['criblapm__incidents_state']);
+  const rows = partitions.get('criblapm__incidents_state');
+  if (!rows || rows.length === 0) return null;
+
+  let latestJob = '';
+  for (const r of rows) {
+    const id = String(r.jobId ?? '');
+    if (id > latestJob) latestJob = id;
+  }
+  const latest = rows.filter((r) => String(r.jobId ?? '') === latestJob);
+
+  const byIncident = new Map<string, import('./types').IncidentSummary>();
+  for (const r of latest) {
+    const incidentId = String(r.incident_id ?? '');
+    const service = String(r.svc ?? '');
+    if (!incidentId || !service || incidentId === '__init__') continue;
+    const member = {
+      service,
+      firstSeenMs: toNum(r.first_seen) * 1000,
+      lastFireMs: toNum(r.last_fire_at) * 1000,
+      fireCount: toNum(r.fire_n),
+    };
+    let inc = byIncident.get(incidentId);
+    if (!inc) {
+      inc = {
+        incidentId,
+        title: String(r.title ?? incidentId),
+        status: String(r.status ?? 'open') as import('./types').IncidentSummary['status'],
+        severity: String(r.severity ?? 'sev4') as import('./types').IncidentSummary['severity'],
+        services: [],
+        rootService: '',
+        openedAtMs: toNum(r.opened_at) * 1000,
+        lastFireMs: toNum(r.inc_last_fire) * 1000,
+      };
+      byIncident.set(incidentId, inc);
+    }
+    inc.services.push(member);
+  }
+
+  const incidents = Array.from(byIncident.values());
+  for (const inc of incidents) {
+    inc.services.sort((a, b) => a.firstSeenMs - b.firstSeenMs);
+    inc.rootService = inc.services[0]?.service ?? '';
+  }
+  incidents.sort((a, b) => b.lastFireMs - a.lastFireMs);
+  return incidents;
+}
+
 // ── ServiceDetail panel cache ─────────────────────────────────
 
 export interface CachedSvcDetailPanels {

@@ -98,6 +98,14 @@ export const ATTR_CATALOG_LOOKUP = 'criblapm_attr_catalog';
  * matching row, so a per-day-row schema would be unreadable. */
 export const ERROR_RATE_HISTORY_LOOKUP = 'criblapm_error_rate_history';
 
+/** Live (non-closed) incident membership, one row per (incident_id,
+ * svc) — the incident grouper's attach-join surface (P4.4). Written
+ * by criblapm__incidents_export from the state fold's $vt_results;
+ * closed incidents are excluded so a fire on their services opens a
+ * fresh incident. Rows are sorted newest-incident-first before export
+ * because `lookup ... on svc` returns the first matching row. */
+export const INCIDENTS_LOOKUP = 'criblapm_incidents';
+
 /** Lookup tables that must exist before scheduled searches that
  * `lookup` against them can be created. The framework provisioner
  * probes each by name and runs the seed query if absent.
@@ -127,6 +135,10 @@ export const SEED_LOOKUPS: SeedLookup[] = [
   {
     name: ERROR_RATE_HISTORY_LOOKUP,
     seedQuery: `print svc="__init__", d1_pct=todouble(0.0), d2_pct=todouble(0.0), d3_pct=todouble(0.0), d4_pct=todouble(0.0), d5_pct=todouble(0.0), d6_pct=todouble(0.0), d1_total=tolong(0), d2_total=tolong(0), d3_total=tolong(0), d4_total=tolong(0), d5_total=tolong(0), d6_total=tolong(0) | export mode=overwrite description="Cribl APM - error rate history init" to lookup ${ERROR_RATE_HISTORY_LOOKUP}`,
+  },
+  {
+    name: INCIDENTS_LOOKUP,
+    seedQuery: `print incident_id="__init__", svc="__init__", status="closed", severity="sev4", root_service="__init__", opened_at=tolong(0), last_fire_at=tolong(0), title="__init__" | export mode=overwrite description="Cribl APM - incidents init" to lookup ${INCIDENTS_LOOKUP}`,
   },
   {
     // Was missing from the seed list until v0.10.2 — traceable via
@@ -251,6 +263,48 @@ function errorRateHistoryExportQuery(): string {
 }
 
 /**
+ * Incidents lookup export — copies the latest incident-state fold run
+ * from $vt_results into the criblapm_incidents lookup (P4.4). Split
+ * from the fold for the same reason as the attr catalog: one search
+ * can either leave rows in $vt_results (the app's list read) or
+ * consume them with an export, not both.
+ *
+ * The latest-jobId self-join keeps a slow or skipped fold run from
+ * mixing two runs' rows into the lookup: $vt_results retains
+ * keepLastN=2 runs, and jobId's fixed-width epoch-millis prefix makes
+ * max(jobId) the newest. Closed incidents are dropped so a new fire on
+ * their services opens a fresh incident (the state machine's "only a
+ * closed incident lets a new fire open fresh" rule); newest-first sort
+ * makes the grouper's first-match `lookup on svc` prefer the most
+ * recent incident when a service somehow appears in two.
+ */
+function incidentsExportQuery(): string {
+  // Sentinel-first union — see prevWindowSummary() for the planner
+  // quirk. The sentinel row is also what the grouper's lookup join
+  // sees on a fresh install (svc="__init__" never matches).
+  return `print incident_id="__init__", svc="__init__", status="closed", severity="sev4", root_service="__init__", opened_at=tolong(0), last_fire_at=tolong(0), title="__init__"
+    | union (
+        dataset="$vt_results"
+        | where jobName == "criblapm__incidents_state"
+        | join kind=inner (
+            dataset="$vt_results"
+            | where jobName == "criblapm__incidents_state"
+            | summarize jobId=max(tostring(jobId))
+          ) on jobId
+        | where tostring(status) != "closed"
+        | project incident_id=tostring(incident_id), svc=tostring(svc),
+                  status=tostring(status), severity=tostring(severity),
+                  root_service=tostring(root_service),
+                  opened_at=tolong(opened_at), last_fire_at=tolong(last_fire_at),
+                  title=tostring(title)
+        | sort by opened_at desc
+      )
+    | export mode=overwrite
+             description="Cribl APM - live incident membership (grouper join surface)"
+             to lookup ${INCIDENTS_LOOKUP}`;
+}
+
+/**
  * Declarative list of every scheduled search the app needs. Order
  * doesn't matter functionally but matches the ROADMAP §2b.2 table
  * for easy cross-referencing.
@@ -284,6 +338,12 @@ export function getProvisioningPlan(): ProvisionedSearch[] {
   // Alert-notify runs 2 minutes after the panels (1 after the
   // evaluator) so the firing events it selects are already committed.
   const notifyCronSchedule = cronSchedule.replace(/^\*\/(\d+)/, (_m: string, n: string) => `2-59/${n}`).replace(/^\* /, '2 ');
+  // Incident pipeline (P4.4): grouper 3 min after the panels (2 after
+  // the evaluator, so firing transitions are committed); the state
+  // fold 1 min after the grouper; the lookup export rides the base
+  // panel cadence, which fires 1 min after the fold.
+  const incidentGrouperCron = cronSchedule.replace(/^\*\/(\d+)/, (_m: string, n: string) => `3-59/${n}`).replace(/^\* /, '3 ');
+  const incidentFoldCron = cronSchedule.replace(/^\*\/(\d+)/, (_m: string, n: string) => `4-59/${n}`).replace(/^\* /, '4 ');
   const hourly = {
     enabled: true,
     cronSchedule: '0 * * * *',
@@ -396,6 +456,55 @@ export function getProvisioningPlan(): ProvisionedSearch[] {
         'Cribl APM: -7d rollup of alert firing/resolved transitions (the "Alert incidents" timeline). Read via $vt_results by the Alerts page instead of a live 24h search on every load; transitions are sparse curated events, so the wide window is cheap. See ROADMAP P4.5.',
       query: Q.alertHistory(2000, undefined, 'asc'),
       earliest: '-7d',
+      latest: 'now',
+      sampleRate: 1,
+      schedule: { ...panelCadence },
+    },
+    // ── Incident pipeline (P4.4 Phase 1) ────────────────────
+    //
+    // Alerts→incidents grouping + state fold, Cribl-Search-native
+    // (works with the investigator off). See the builder docstrings
+    // in queries.ts and docs/research/server-investigations/
+    // incidents-and-lifecycle.md.
+    {
+      id: 'criblapm__incident_grouper',
+      name: 'Cribl APM - incident grouper',
+      description:
+        'Cribl APM: groups firing alert transitions into incidents (attach via the criblapm_incidents lookup + dependency-graph adjacency, else open a new time-binned incident) and appends opened/attached incident events to the dataset. Deterministic event ids + leftanti dedup make re-runs no-ops. Runs 3 min after the panels so the evaluator commit is visible.',
+      query: Q.incidentGrouper(),
+      earliest: '-30m',
+      latest: 'now',
+      sampleRate: 1,
+      schedule: {
+        enabled: true,
+        cronSchedule: incidentGrouperCron,
+        tz: 'UTC',
+        keepLastN: 2,
+      },
+    },
+    {
+      id: 'criblapm__incidents_state',
+      name: 'Cribl APM - incidents state fold',
+      description:
+        'Cribl APM: incrementally folds incident events into the current read model — one row per (incident_id, svc) with derived status/severity (human events win). Merges its own previous $vt_results output with a -1h event delta (high-water dedup) instead of replaying history, keeping every dataset scan short. Read via $vt_results by the Incidents list; the companion export search copies non-closed rows into the criblapm_incidents lookup.',
+      query: Q.incidentStateFold(),
+      earliest: '-1h',
+      latest: 'now',
+      sampleRate: 1,
+      schedule: {
+        enabled: true,
+        cronSchedule: incidentFoldCron,
+        tz: 'UTC',
+        keepLastN: 2,
+      },
+    },
+    {
+      id: 'criblapm__incidents_export',
+      name: 'Cribl APM - incidents lookup export',
+      description:
+        'Cribl APM: copies the latest incidents state-fold run from $vt_results into the criblapm_incidents lookup (non-closed rows only) so the grouper can attach follow-on fires. Split from the fold because a search cannot both leave rows in $vt_results and export them.',
+      query: incidentsExportQuery(),
+      earliest: '-1h',
       latest: 'now',
       sampleRate: 1,
       schedule: { ...panelCadence },
