@@ -516,9 +516,18 @@ add user alerts, SLOs, and trace depth.
   P3.1 (alert notifications).
   - **Progress (2026-08-19): Phase 1 started** — the incident event
     contract (`record_kind:'incident'`, `incidentEventCommitQuery`) landed
-    in #143. **Next:** `criblapm_incidents` lookup (current-state row) +
-    the alerts→incidents grouping saved search + incident list/detail read
-    path. Then Phases 4–6 (cell enrichment).
+    in #143.
+  - **Progress (2026-08-18 pm): Phase 1 COMPLETE (#146)** — the
+    three-search pipeline is live: `criblapm__incident_grouper`
+    (attach via lookup + graph adjacency, else open; deterministic
+    event ids), `criblapm__incidents_state` (INCREMENTAL fold —
+    $vt_results self-read + -1h delta + high-water dedup; derived
+    status with debounce/close/reopen), `criblapm__incidents_export`
+    (→ `criblapm_incidents` lookup). Read path:
+    `listCachedIncidents()` + `Q.incidentEvents()`. **Next: Phase 2**
+    — Incidents list/detail UI + human warroom writes (notes,
+    status/severity, close/reopen via `incidentEventCommitQuery`);
+    then Phase 3 archival polish, Phases 4–6 (cell enrichment).
 
 - **P4.5 Materialized read models for hot pages** (M — design 2026-08-18)
   — a perf/architecture principle the codebase is already halfway to
