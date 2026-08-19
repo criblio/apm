@@ -94,6 +94,18 @@ most-open status while the incident rollup lags one cycle.
   - Resolution: flag off → watched for derived `resolved` (results in
     the PR comment).
 
+## RESOLVED DIAGNOSIS (2026-08-19 evening): platform-wide, not ours
+
+Clint confirmed his own pre-existing, UI-created `tailscale_offline` →
+ntfy notification ALSO stopped delivering, and the UI no longer renders
+bound targets even for records whose API reads (and
+`schedule.notifications` joins) are intact. **ALL scheduled-search
+notification dispatch on the staging workspace broke ~Aug 15** — our
+target/binding shapes were never the problem (field-identical to the
+known-good ntfy one). Escalated to the Search team as a platform bug.
+The coordinator poll (below) makes the cell immune to this class
+regardless of the platform fix.
+
 ## Found along the way: Cribl→cell notify delivery is broken (P4.3)
 
 Today's firing alerts started **no** autonomous investigation. Every
