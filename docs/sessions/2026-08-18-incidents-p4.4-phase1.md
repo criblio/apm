@@ -251,6 +251,23 @@ End state: app **0.13.55**; `recommendationCacheFailure` ON (matches
 checkpoint; live latency incident visible for review); cell poll
 deploy pending (`f1be7c9`, handoff message delivered).
 
+## Addendum 5: cartFailure fresh-scenario verification (18:05–19:50Z)
+
+Clint's ask: new scenario, verify everything. All stages green (table
+in the PR #147 comment). Three more live-observed fixes shipped during
+the run (0.13.57–0.13.59): derived resolution supersedes active-state
+human overrides (an `identified` incident now auto-resolves on
+all-clear); the fold's liveness join and every current-state
+$vt_results reader (`latestRunRows()`) keep only the newest evaluator
+run — keepLastN=2 was mixing a stale run in, holding all-clear
+incidents open and double-rendering flapping services.
+
+The cart incident correctly REOPENED at the end when frontend
+genuinely re-fired (new fire supersedes stale human status — by
+design). Notification break confirmed platform-wide (Clint filed the
+Search bug); once fixed, webhook resumes as primary with the poll as
+dedup-free backstop.
+
 ## Follow-ups
 
 1. **P4.3: Cribl→cell notify delivery** — see above; highest priority
@@ -262,3 +279,11 @@ deploy pending (`f1be7c9`, handoff message delivered).
    rollup) — cosmetic, self-heals; note for the Phase 2 UI.
 4. Same-bin root pick is alphabetical (`checkout` chosen over
    `payment` in the validation incident) — Phase 4's graph root fixes.
+5. `frontend` rides the 5% error threshold and flaps (fired/resolved
+   repeatedly all day on background noise) — P1.1 noise-budget tuning;
+   its flapping also holds any incident it joins open.
+6. Latency arm baseline-absorption: a sustained degradation stops
+   alerting after ~2h as the rolling -2h..-1h baseline absorbs it (the
+   recommendation alert self-resolved mid-degradation). A "sticky
+   baseline" (freeze prev while firing) would fix it — deliberate
+   evaluator-semantics change, needs its own PR.
