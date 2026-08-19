@@ -95,6 +95,7 @@ function IncidentDetail({ incident }: { incident: IncidentSummary }) {
           author: (String(r.author ?? 'system') as IncidentTimelineEntry['author']),
           status: String(r.status ?? '') || undefined,
           severity: String(r.severity ?? '') || undefined,
+          rootService: String(r.root_service ?? '') || undefined,
           services: String(r.services ?? '') || undefined,
           note: String(r.note ?? '') || undefined,
           investigationId: String(r.investigation_id ?? '') || undefined,
