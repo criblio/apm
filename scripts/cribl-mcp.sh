@@ -67,10 +67,21 @@ cmd_start() {
         env_args+=(-e "MCP_API_KEY=$CRIBL_MCP_API_KEY")
     fi
 
+    # On PVE guests the AppArmor profiles file is unreadable, which makes
+    # dockerd fail every `docker run` with "Could not check if
+    # docker-default AppArmor profile was loaded". Opt the container out
+    # of AppArmor only when that exact condition is present.
+    local -a security_args=()
+    if [ -e /sys/kernel/security/apparmor/profiles ] \
+       && ! cat /sys/kernel/security/apparmor/profiles >/dev/null 2>&1; then
+        security_args+=(--security-opt apparmor=unconfined)
+    fi
+
     docker run -d \
         --name "$CONTAINER_NAME" \
         --restart unless-stopped \
         -p "127.0.0.1:$HOST_PORT:3030" \
+        "${security_args[@]}" \
         "${env_args[@]}" \
         "$IMAGE" >/dev/null
 
