@@ -476,6 +476,36 @@ add user alerts, SLOs, and trace depth.
     dies — the only write-offs on a failed spike are `cell/` and
     the UI transport shim.
 
+- **P4.4 Incidents & investigation lifecycle** (XL — design complete,
+  2026-08-18) — introduce a first-class **Incident** above investigations
+  to solve two problems: old investigations never close (need an
+  "Archived" shelf — hidden by default, still searchable), and one root
+  cause trips alerts across many services (today would spawn N redundant
+  investigations against the `MAX_CONCURRENT=1` search pool). An Incident
+  is a lightweight **warroom**: a state machine (`open → investigating →
+  identified → mitigated → resolved → closed`), a severity, a
+  timestamped timeline that agent + humans append to, and an
+  auto-generated markdown summary. **Cribl-Search-native and
+  cell-independent** — incidents are event-sourced in the dataset
+  (`record_kind:'incident'`), grouped by a saved search (window + service
+  graph → deterministic `incident_id`), and managed entirely by the app,
+  so they work with the server investigator **off**. The investigator,
+  when on, is pure enrichment: automated investigations become incident
+  children and a supervisor agent authors the root cause. Alerts→incidents
+  is standard aggregation (many alerts, one stateful incident;
+  all-cleared → resolved; re-fire-while-open → reopen). Archival is lazy
+  (a derived `WHERE`, zero background work) with a self-re-arming
+  coordinator sweep alarm as "cron" until celld 0.3.0 lands; cron's real
+  job is retention (drop transcripts, keep summaries). Coalescing is
+  layered: (A) admission-time attach-vs-spawn using the dependency graph
+  (`/config/graph`, mirror of `/config/repos`), then (B) an
+  agent-of-agents supervisor that correlates concluded investigations into
+  an incident-level root cause. Full design + 6-phase sequence (phases 1–3
+  ship the cell-independent core; 4–6 are flag-on enrichment):
+  `docs/research/server-investigations/incidents-and-lifecycle.md`.
+  Cross-refs P4.1 (Investigator v2), P4.3 (server-side investigations),
+  P3.1 (alert notifications).
+
 ## P5 — Breadth
 
 - **Dashboards** via saved-search composition ("Save this view" on
