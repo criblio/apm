@@ -527,6 +527,10 @@ exports[`queries.ts — golden snapshots + invariants > incidentGrouper > snapsh
         // 2026-08-19: a background frontend flap reopened the prior
         // night's resolved payment incident through adjacency.
         | where tostring(status) == "open"
+        // ...and only while the incident is young (window W): cascades
+        // propagate in minutes. A later fault that is merely
+        // graph-adjacent to a long-open incident is its own incident.
+        | where toreal(opened_at) >= toreal(now()) - 3600
         | summarize adj_incident_id=max(tostring(incident_id)) by fire_svc
         | project svc=fire_svc, adj_incident_id
       ) on svc
@@ -577,6 +581,10 @@ exports[`queries.ts — golden snapshots + invariants > incidentGrouper > snapsh
         // 2026-08-19: a background frontend flap reopened the prior
         // night's resolved payment incident through adjacency.
         | where tostring(status) == "open"
+        // ...and only while the incident is young (window W): cascades
+        // propagate in minutes. A later fault that is merely
+        // graph-adjacent to a long-open incident is its own incident.
+        | where toreal(opened_at) >= toreal(now()) - 3600
         | summarize adj_incident_id=max(tostring(incident_id)) by fire_svc
         | project svc=fire_svc, adj_incident_id
       ) on svc

@@ -892,6 +892,14 @@ export const INCIDENT_CLOSE_AFTER_HOURS = 24;
  * services first fire within the same bin collapses to one incident
  * even before the grouping lookup has caught up. */
 export const INCIDENT_OPEN_BIN = '15m';
+/** Graph-adjacency attach window W: a fire may join an open incident
+ * through a dependency edge only while the incident is YOUNG — cascades
+ * propagate in minutes. Without W, one long-open incident with a
+ * well-connected member (frontend) absorbs every later, unrelated
+ * fault: observed live 2026-08-19 when recommendationCacheFailure's
+ * latency fire attached to the 4-hour-old paymentFailure incident.
+ * Direct member refires are NOT window-limited (reopen semantics). */
+export const INCIDENT_ADJACENCY_WINDOW_MIN = 60;
 
 /**
  * Shared grouper base: one row per firing transition in the window,
@@ -936,6 +944,10 @@ function incidentGrouperBase(): string {
         // 2026-08-19: a background frontend flap reopened the prior
         // night's resolved payment incident through adjacency.
         | where tostring(status) == "open"
+        // ...and only while the incident is young (window W): cascades
+        // propagate in minutes. A later fault that is merely
+        // graph-adjacent to a long-open incident is its own incident.
+        | where toreal(opened_at) >= toreal(now()) - ${INCIDENT_ADJACENCY_WINDOW_MIN * 60}
         | summarize adj_incident_id=max(tostring(incident_id)) by fire_svc
         | project svc=fire_svc, adj_incident_id
       ) on svc

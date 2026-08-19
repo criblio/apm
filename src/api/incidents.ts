@@ -30,11 +30,14 @@ export type HumanIncidentAction =
   | { kind: 'close' }
   | { kind: 'reopen' };
 
-/** Commit one human warroom action. Resolves when the commit search
- *  job has completed (the event is durably in the dataset). */
+/** Commit one warroom action. Resolves when the commit search job has
+ *  completed (the event is durably in the dataset). `author` defaults
+ *  to 'human' (the UI); pass 'agent' when an assistant acts on the
+ *  warroom so the timeline attributes it honestly. */
 export async function commitHumanIncidentAction(
   incidentId: string,
   action: HumanIncidentAction,
+  author: 'human' | 'agent' = 'human',
 ): Promise<void> {
   if (!incidentId) throw new Error('incidentId required');
   // Human events need uniqueness, not idempotent determinism — a
@@ -44,7 +47,7 @@ export async function commitHumanIncidentAction(
   const base = {
     producer: INCIDENT_APP_PRODUCER,
     incident_id: incidentId,
-    author: 'human' as const,
+    author,
   };
 
   let kql: string;

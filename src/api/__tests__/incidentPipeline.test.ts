@@ -42,6 +42,11 @@ describe('incidentGrouper', () => {
     expect(adj).toContain('tostring(status) == "open"');
   });
 
+  it('adjacency attaches only within the onset window W', () => {
+    const adj = q.slice(q.indexOf('criblapm__sysarch_dependencies'), q.indexOf('adj_incident_id=max'));
+    expect(adj).toContain(`toreal(opened_at) >= toreal(now()) - ${60 * 60}`);
+  });
+
   it('is idempotent: leftanti dedup on already-committed event ids', () => {
     expect(q).toContain('join kind=leftanti');
     expect(q).toContain('record_kind == "incident"');
