@@ -402,8 +402,19 @@ export async function listCachedIncidents(): Promise<
         lastFireMs: toNum(r.inc_last_fire) * 1000,
       };
       byIncident.set(incidentId, inc);
-    } else if ((statusRank[rowStatus] ?? 9) < (statusRank[inc.status] ?? 9)) {
-      inc.status = rowStatus;
+    } else {
+      if ((statusRank[rowStatus] ?? 9) < (statusRank[inc.status] ?? 9)) {
+        inc.status = rowStatus;
+      }
+      // Incident-level fields defensively reduce across member rows —
+      // the fold inherits carried state, but a freshly-attached row can
+      // briefly carry its own first fire / fallback title.
+      const rowOpened = toNum(r.opened_at) * 1000;
+      if (rowOpened > 0 && rowOpened < inc.openedAtMs) inc.openedAtMs = rowOpened;
+      const rowTitle = String(r.title ?? '');
+      if (inc.title === `Incident ${incidentId}` && rowTitle && rowTitle !== inc.title) {
+        inc.title = rowTitle;
+      }
     }
     inc.services.push(member);
   }
