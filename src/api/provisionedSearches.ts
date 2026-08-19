@@ -389,6 +389,17 @@ export function getProvisioningPlan(): ProvisionedSearch[] {
       sampleRate: 1,
       schedule: { ...evalCadence },
     },
+    {
+      id: 'criblapm__alert_history',
+      name: 'Cribl APM - alert history rollup',
+      description:
+        'Cribl APM: -7d rollup of alert firing/resolved transitions (the "Alert incidents" timeline). Read via $vt_results by the Alerts page instead of a live 24h search on every load; transitions are sparse curated events, so the wide window is cheap. See ROADMAP P4.5.',
+      query: Q.alertHistory(2000, undefined, 'asc'),
+      earliest: '-7d',
+      latest: 'now',
+      sampleRate: 1,
+      schedule: { ...panelCadence },
+    },
     // ── System Architecture panel caches ────────────────────
     {
       id: 'criblapm__sysarch_dependencies',

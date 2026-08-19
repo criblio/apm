@@ -10,7 +10,7 @@ import { runQuery } from '../api/cribl';
 import { newQueryGeneration, captureQueryGeneration } from '../api/queryGeneration';
 import * as Q from '../api/queries';
 import { serviceColor } from '../utils/spans';
-import type { CachedAlertRow } from '../api/panelCache';
+import { readCachedAlertHistory, type CachedAlertRow } from '../api/panelCache';
 import { useServerInvestigations } from '../hooks/useServerInvestigations';
 import {
   indexInvestigations,
@@ -67,6 +67,27 @@ interface AlertEvent {
   signalType: string;
   errorRate: number;
   prevErrorRate: number;
+}
+
+/** The `criblapm__alert_history` scheduled search materializes -7d; windows
+ *  within that read the cache, wider ones (-30d) go live. */
+const CACHED_HISTORY_WINDOW_MS = 7 * 86_400_000;
+
+function historyCutoffMs(range: string): number {
+  const m = /^-(\d+)([hd])$/.exec(range);
+  if (!m) return 0;
+  return Date.now() - Number(m[1]) * (m[2] === 'h' ? 3_600_000 : 86_400_000);
+}
+
+function mapHistoryRow(r: Record<string, unknown>): AlertEvent {
+  return {
+    time: Number(r._time) * 1000,
+    eventType: String(r.event_type ?? ''),
+    service: String(r.svc ?? ''),
+    signalType: String(r.signal_type ?? ''),
+    errorRate: Number(r.curr_error_rate ?? 0),
+    prevErrorRate: Number(r.prev_error_rate ?? 0),
+  };
 }
 
 interface AlertIncident {
@@ -166,21 +187,31 @@ export default function AlertsPage() {
       hasData.current = true;
       if (!silent) setLoading(false);
 
-      // SECONDARY: alert history (timeline + incidents). Fire AFTER the
-      // primary table so its search job doesn't contend on first paint.
-      runQuery(Q.alertHistory(500, undefined, 'asc'), historyRange, 'now', 500)
-        .then((historyRows) => {
-          if (!isCurrent()) return;
-          setHistory(historyRows.map((r) => ({
-            time: Number(r._time) * 1000,
-            eventType: String(r.event_type ?? ''),
-            service: String(r.svc ?? ''),
-            signalType: String(r.signal_type ?? ''),
-            errorRate: Number(r.curr_error_rate ?? 0),
-            prevErrorRate: Number(r.prev_error_rate ?? 0),
-          })));
-        })
-        .catch(() => { /* history is best-effort; primary already shown */ });
+      // SECONDARY: alert history (timeline + incidents). Read the panel
+      // cache (`criblapm__alert_history`, -7d) for windows it covers — no
+      // live search job on every load (P4.5) — and go live only for -30d
+      // or before the cache first populates.
+      const cutoff = historyCutoffMs(historyRange);
+      const cacheable = cutoff > 0 && Date.now() - cutoff <= CACHED_HISTORY_WINDOW_MS;
+      const applyHistory = (rows: Record<string, unknown>[]) => {
+        if (!isCurrent()) return;
+        setHistory(rows.map(mapHistoryRow).filter((e) => e.time >= cutoff));
+      };
+      const liveHistory = () =>
+        runQuery(Q.alertHistory(500, undefined, 'asc'), historyRange, 'now', 500)
+          .then(applyHistory)
+          .catch(() => { /* history is best-effort; primary already shown */ });
+      if (cacheable) {
+        readCachedAlertHistory()
+          .then((cached) => {
+            if (!isCurrent()) return;
+            if (cached) applyHistory(cached);
+            else void liveHistory();
+          })
+          .catch(() => void liveHistory());
+      } else {
+        void liveHistory();
+      }
 
       // TERTIARY (flag-gated): server-side investigation lifecycle
       // events for the "Investigating…"/"Investigated" badges. Purely
