@@ -1109,8 +1109,17 @@ export function incidentStateFold(): string {
         | where _time > iff(isnotnull(prev_last), prev_last, toreal(0))
         | summarize d_first=min(_time), d_last=max(_time), d_n=count()
           by incident_id, svc`;
+  // Latest evaluator run only: $vt_results retains keepLastN=2 runs,
+  // and a service that flapped between them would count as live-bad
+  // from the STALE run (observed 2026-08-19: frontend ok in the newest
+  // run, firing in the prior one — held an all-clear incident open).
   const liveBadBySvc = `dataset="$vt_results"
         | where jobName == "criblapm__home_alerts"
+        | join kind=inner (
+            dataset="$vt_results"
+            | where jobName == "criblapm__home_alerts"
+            | summarize jobId=max(tostring(jobId))
+          ) on jobId
         | extend svc=tostring(svc)
         | summarize live_bad=countif(tostring(alert_status) in ("pending", "firing", "resolving")) by svc`;
   return `${prevMembers}
