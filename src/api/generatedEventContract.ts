@@ -124,6 +124,107 @@ export function investigationEventCommitQuery(
     | export tee=true to search ${kqlStr(dataset)}`;
 }
 
+/**
+ * Incident lifecycle — a warroom record above investigations (P4.4).
+ * Written through the same `| export tee=true to search` boundary by the
+ * app (human actions: notes, status, severity, close/reopen) and the
+ * grouping search (opened / attached / resolved). `record_kind: 'incident'`
+ * with event_types disjoint from every other set, so existing readers are
+ * blind to these rows by construction. These events are the append-only
+ * log; current state is materialized into the `criblapm_incidents` lookup.
+ *
+ * Design: docs/research/server-investigations/incidents-and-lifecycle.md.
+ */
+export const INCIDENT_GROUPER_PRODUCER = 'criblapm_incident_grouper';
+export const INCIDENT_APP_PRODUCER = 'criblapm_app_incidents';
+
+export type IncidentStatus =
+  | 'open'
+  | 'investigating'
+  | 'identified'
+  | 'mitigated'
+  | 'resolved'
+  | 'closed';
+
+export type IncidentSeverity = 'sev1' | 'sev2' | 'sev3' | 'sev4';
+
+export type IncidentEventType =
+  | 'opened'
+  | 'attached'
+  | 'status_change'
+  | 'severity_change'
+  | 'note'
+  | 'investigation_linked'
+  | 'resolved'
+  | 'closed';
+
+export interface IncidentEvent extends GeneratedEventBase {
+  datatype: typeof ALERT_EVENT_DATATYPE;
+  record_kind: 'incident';
+  event_type: IncidentEventType;
+  incident_id: string;
+  /** Who produced the event — drives the timeline's author tag. */
+  author: 'agent' | 'human' | 'system';
+  /** Incident status after this event (opened/attached/status_change/resolved/closed). */
+  status?: IncidentStatus;
+  severity?: IncidentSeverity;
+  /** Root/primary service; the downstream-most erroring node. */
+  root_service?: string;
+  /** Comma-separated affected services (opened/attached). */
+  services?: string;
+  /** Markdown note body (on `note`); capped at INCIDENT_NOTE_MAX. */
+  note?: string;
+  /** Linked investigation (on `investigation_linked`). */
+  investigation_id?: string;
+  /** Alert evaluation event_id rolled in (on `attached`). */
+  alert_event_id?: string;
+  title?: string;
+}
+
+/** Max stored note length — the warroom timeline body. */
+export const INCIDENT_NOTE_MAX = 4096;
+
+/**
+ * KQL that commits one incident lifecycle event. Shared by the app (human
+ * actions) and the grouping search, so the write shape can't drift from
+ * the interface above. `producer` distinguishes grouper vs app writes.
+ */
+export function incidentEventCommitQuery(
+  ev: Omit<IncidentEvent, 'datatype' | 'record_kind' | 'schema_version'>,
+  dataset: string,
+): string {
+  for (const [field, value] of Object.entries({
+    event_id: ev.event_id,
+    producer: ev.producer,
+    incident_id: ev.incident_id,
+    event_type: ev.event_type,
+    author: ev.author,
+  })) {
+    if (!value || typeof value !== 'string') {
+      throw new Error(`incident event ${field} must be a non-empty string`);
+    }
+  }
+  const note = (ev.note ?? '').slice(0, INCIDENT_NOTE_MAX);
+  const canary = ev.is_canary ? `, is_canary=true` : '';
+  return `print datatype="${ALERT_EVENT_DATATYPE}",
+      schema_version=tolong(${GENERATED_EVENT_SCHEMA_VERSION}),
+      event_id=${kqlStr(ev.event_id)},
+      producer=${kqlStr(ev.producer)},
+      record_kind="incident",
+      event_type=${kqlStr(ev.event_type)},
+      incident_id=${kqlStr(ev.incident_id)},
+      author=${kqlStr(ev.author)},
+      status=${kqlStr(ev.status ?? '')},
+      severity=${kqlStr(ev.severity ?? '')},
+      root_service=${kqlStr(ev.root_service ?? '')},
+      services=${kqlStr(ev.services ?? '')},
+      note=${kqlStr(note)},
+      investigation_id=${kqlStr(ev.investigation_id ?? '')},
+      alert_event_id=${kqlStr(ev.alert_event_id ?? '')},
+      title=${kqlStr(ev.title ?? '')}${canary}
+    | export tee=true to search ${kqlStr(dataset)}`;
+}
+
 export function generatedDatatypePredicate(datatype: string): string {
   if (datatype !== ALERT_EVENT_DATATYPE && datatype !== DEPLOY_EVENT_DATATYPE) {
     throw new Error(`unsupported generated-event datatype: ${datatype}`);

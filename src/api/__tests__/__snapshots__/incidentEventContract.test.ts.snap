@@ -1,0 +1,21 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`incidentEventCommitQuery > produces the pinned commit shape 1`] = `
+"print datatype="criblapm_alert",
+      schema_version=tolong(1),
+      event_id="incident-abc:note:1",
+      producer="criblapm_app_incidents",
+      record_kind="incident",
+      event_type="note",
+      incident_id="incident-abc",
+      author="human",
+      status="",
+      severity="",
+      root_service="",
+      services="",
+      note="payment looks like the root; checkout is downstream.",
+      investigation_id="",
+      alert_event_id="",
+      title=""
+    | export tee=true to search "otel""
+`;
