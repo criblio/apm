@@ -149,6 +149,59 @@ async function wireCellTrigger(
   // it inline in the search body is silently dropped by the API).
   const n = await ensureAlertNotification(http);
   console.log(`▶ Alert notification: ${n === 'created' ? '+ create' : '~ update'} ${ALERT_NOTIFY_SEARCH_ID} → cell webhook`);
+
+  // Push source repos to the cell so alert-fired (autonomous)
+  // investigations get the code tools an interactive one carries.
+  //
+  // The CLI CANNOT read the repos the UI stores: the app-settings KV is
+  // app-scoped and a machine token has no app context (GET
+  // /kvstore/settings/app → 400 "App context required"). So the Settings
+  // page is the source of truth (it pushes to the cell on Save), and the
+  // CLI manages repos ONLY from an explicit CELL_REPOS_JSON env — the same
+  // deterministic pattern as CELL_URL / the bearers. Absent that env, the
+  // CLI never touches the cell's repo config (so a deploy can't wipe it).
+  const uiBearer = process.env.CELL_UI_BEARER;
+  const reposEnv = process.env.CELL_REPOS_JSON;
+  if (!reposEnv) {
+    console.log(
+      '▶ Source repos: left to the UI (Settings → Source repositories → Save). ' +
+        'Set CELL_REPOS_JSON to manage them from the CLI.',
+    );
+    return;
+  }
+  let repos: Array<{ url: string; name?: string; service?: string; ref?: string }> = [];
+  try {
+    const parsed = JSON.parse(reposEnv) as Array<Record<string, unknown>>;
+    if (Array.isArray(parsed)) {
+      repos = parsed
+        .map((r) => ({
+          url: typeof r.url === 'string' ? r.url.trim() : '',
+          name: typeof r.name === 'string' && r.name.trim() ? r.name.trim() : undefined,
+          service: typeof r.service === 'string' && r.service.trim() ? r.service.trim() : undefined,
+          ref: typeof r.ref === 'string' && r.ref.trim() ? r.ref.trim() : undefined,
+        }))
+        .filter((r) => r.url);
+    }
+  } catch {
+    console.error('✗ Source repos: CELL_REPOS_JSON is not valid JSON — leaving the cell config untouched.');
+    return;
+  }
+  if (repos.length === 0) {
+    console.log('▶ Source repos: CELL_REPOS_JSON has no valid repos — leaving the cell config untouched.');
+  } else if (cellUrl && uiBearer) {
+    const resp = await fetch(`${cellUrl.replace(/\/$/, '')}/config/repos`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${uiBearer}` },
+      body: JSON.stringify({ repos }),
+    });
+    if (resp.ok) {
+      console.log(`▶ Source repos → cell: ${repos.length} from CELL_REPOS_JSON for alert-fired runs`);
+    } else {
+      console.error(`✗ Source repos → cell failed (${resp.status}): ${(await resp.text()).slice(0, 160)}`);
+    }
+  } else {
+    console.log('▶ Source repos: CELL_REPOS_JSON set but CELL_UI_BEARER missing — skipped push.');
+  }
 }
 
 async function main(): Promise<void> {

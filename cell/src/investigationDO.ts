@@ -40,6 +40,7 @@ import { createCellSearchClient, createCellMetricsTransport } from './cellSearch
 import {
   PROTOCOL_VERSION,
   incidentKey,
+  isTerminalStatus,
   titleFromPrompt,
   type CreateInvestigationBody,
   type FiringAlert,
@@ -142,6 +143,12 @@ interface StartBody {
   id: string;
   alert: FiringAlert;
   seed: unknown;
+  /** Default source repos for this autonomous run, threaded from the
+   *  coordinator's provisioned default (Settings → provisioning →
+   *  /config/repos). The alert webhook carries no repos itself, and the
+   *  cell can't read the app-settings KV, so this is how Settings repos
+   *  reach an alert-fired investigation. */
+  repos?: RepoConfig[] | null;
 }
 
 export class InvestigationDO {
@@ -155,6 +162,16 @@ export class InvestigationDO {
    *  counter, and flooding the transcript. Set synchronously at the
    *  top of alarm() before any await so a later invocation bails. */
   private turnInFlight = false;
+
+  /** Aborts the in-flight turn when the user cancels. celld serializes
+   *  fetch + alarm on the DO's single thread, but a fetch can interleave
+   *  at the turn's await points — so POST /cancel can abort the LLM
+   *  stream (and the checkout store loop) mid-turn. Null when no turn is
+   *  running. */
+  private turnAbort: AbortController | null = null;
+  /** Set by POST /cancel so the interleaving turn, when it unwinds, does
+   *  NOT overwrite the terminal 'cancelled' status with idle/failed. */
+  private cancelRequested = false;
 
   /**
    * Next transcript seq to hand out. Seeded lazily from the table on
@@ -344,6 +361,10 @@ export class InvestigationDO {
         SCHEMA_VERSION,
       );
       await this.state.storage.put('alert', body.alert);
+      // The coordinator's provisioned default repos (may be null). Read
+      // by ensureSeeded() and every turn so an alert-fired investigation
+      // gets the same code tools an interactive one carries from Settings.
+      await this.state.storage.put('autonomousRepos', body.repos ?? null);
       this.setStatus('running', { started_at: Date.now() });
       // The 'started' commit powers the Alerts page's "Investigating…"
       // badge. Fire-and-forget: commitLifecycle never throws, and the
@@ -428,6 +449,31 @@ export class InvestigationDO {
       await this.notifyCoordinator('resumed');
       await this.state.storage.setAlarm(Date.now() + TURN_DELAY_MS);
       return Response.json({ ok: true });
+    }
+
+    if (url.pathname.endsWith('/cancel') && request.method === 'POST') {
+      const row = this.row();
+      if (!row) return Response.json({ error: 'not found' }, { status: 404 });
+      // Idempotent: cancelling an already-terminal run is a no-op success.
+      if (isTerminalStatus(row.status as InvestigationStatus)) {
+        return Response.json({ ok: true, status: row.status });
+      }
+      // Own the terminal state before aborting the turn: the guard flag
+      // stops the interleaving turn from reparking/failing as it unwinds.
+      this.cancelRequested = true;
+      this.turnAbort?.abort();
+      // Drop the watchdog/next-turn alarm so nothing re-fires the loop.
+      await this.state.storage.deleteAlarm();
+      this.append({ kind: 'notification', turnId: 'system', content: 'Investigation cancelled by the user.' });
+      this.append({ kind: 'done', reason: 'aborted' });
+      this.setStatus('cancelled', { concluded_at: Date.now() });
+      // An autonomous run records the outcome for the Alerts page; an
+      // interactive one has no badge, so skip the lifecycle commit.
+      if ((row.mode as InvestigationMode) !== 'interactive') {
+        await this.commitLifecycle('investigation_failed');
+      }
+      await this.notifyCoordinator('cancelled');
+      return Response.json({ ok: true, status: 'cancelled' });
     }
 
     if (url.pathname.endsWith('/events')) {
@@ -551,11 +597,22 @@ export class InvestigationDO {
   }
 
   /** The repos the agent may check out: the investigation's own (from
-   *  app Settings, interactive) if present, else the cell's REPOS_JSON. */
+   *  app Settings — interactive payload, or an autonomous run's
+   *  coordinator-provisioned default) if present, else the cell's
+   *  REPOS_JSON env fallback. */
   private effectiveRepos(payloadRepos?: RepoConfig[] | null): RepoConfig[] {
     return payloadRepos && payloadRepos.length
       ? payloadRepos
       : parseReposConfig(this.env.REPOS_JSON);
+  }
+
+  /** Autonomous run's default repos, stored at /start from the
+   *  coordinator's provisioned default. Null for older runs / when
+   *  provisioning never pushed a list. */
+  private async autonomousRepos(): Promise<RepoConfig[] | null> {
+    return (
+      (await this.state.storage.get<RepoConfig[] | null>('autonomousRepos')) ?? null
+    );
   }
 
   private async ensureSeeded(alert: FiringAlert, cribl: CriblClient): Promise<void> {
@@ -580,7 +637,9 @@ export class InvestigationDO {
       ...formatPreflightSignals(preflight),
     ];
 
-    const prompt = buildSeedPrompt(seed) + this.codeAddendum(this.effectiveRepos());
+    const prompt =
+      buildSeedPrompt(seed) +
+      this.codeAddendum(this.effectiveRepos(await this.autonomousRepos()));
     // The seed prompt is ~75 KB (the dataset-schema preamble). Keep it
     // OUT of the agent_messages SQLite table — history() reads that
     // whole table every turn, and a 75 KB constant row pushes the DO's
@@ -762,7 +821,7 @@ export class InvestigationDO {
         const payloadRepos = interactive
           ? (await this.state.storage.get<{ repos?: RepoConfig[] | null }>('interactivePayload'))
               ?.repos
-          : undefined;
+          : await this.autonomousRepos();
         const repos = this.effectiveRepos(payloadRepos);
         let executors: ApmToolExecutors = apmExecutors;
         let extraTools: AgentToolDefinition[] | undefined;
@@ -781,6 +840,7 @@ export class InvestigationDO {
           };
           extraTools = CODE_TOOL_DEFINITIONS;
         }
+        this.turnAbort = new AbortController();
         const result = await runRealTurn({
           llm,
           history: await this.history(),
@@ -788,7 +848,11 @@ export class InvestigationDO {
           executors,
           extraTools,
           emit: (ev) => this.append(ev),
+          signal: this.turnAbort.signal,
         });
+        // A concurrent POST /cancel aborted this turn and already set the
+        // terminal state; don't reschedule or override it.
+        if (this.cancelRequested) return;
         for (const m of result.newMessages) {
           this.state.storage.sql.exec(
             `INSERT INTO agent_messages (message_json) VALUES (?)`,
@@ -850,12 +914,17 @@ export class InvestigationDO {
         await this.state.storage.setAlarm(Date.now() + TURN_DELAY_MS);
       }
     } catch (err) {
+      // A cancel aborted the turn — the /cancel handler owns the
+      // terminal state; swallow the abort without reparking/failing.
+      if (this.cancelRequested) return;
       const message = err instanceof Error ? err.message : String(err);
       this.append({ kind: 'error', message });
       // Interactive: park so the conversation survives a transient
       // error; autonomous: fail the run.
       if (interactive) await this.parkIdle();
       else await this.failRun(message);
+    } finally {
+      this.turnAbort = null;
     }
   }
 
@@ -874,7 +943,7 @@ export class InvestigationDO {
   }
 
   private async notifyCoordinator(
-    outcome: 'concluded' | 'failed' | 'idle' | 'resumed',
+    outcome: 'concluded' | 'failed' | 'idle' | 'resumed' | 'cancelled',
   ): Promise<void> {
     // The coordinator enforces global concurrency; it must hear about
     // completions to start the next queued investigation. Reached via

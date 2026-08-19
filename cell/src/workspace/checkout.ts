@@ -3,8 +3,8 @@
  * DO's outbound fetch) plus a RECENT_COMMITS.md written into the tree so
  * the agent can see what changed lately without git history.
  */
-import { gunzipUntar } from './untar';
-import type { RepoStore, CheckoutStats } from './repoStore';
+import { gunzipUntarEach } from './untar';
+import { emptyStats, type RepoStore, type CheckoutStats } from './repoStore';
 import type { SourceRepo } from '../protocol';
 
 /** One configured source repo (from Settings / cell env). `url` is a
@@ -22,6 +22,10 @@ export interface ResolvedRepo {
 const RECENT_COMMITS_PATH = 'RECENT_COMMITS.md';
 const GITHUB_API = 'https://api.github.com';
 const COMMIT_COUNT = 20;
+/** Reject a gzipped tarball larger than this before streaming it (only
+ *  when GitHub declares Content-Length; it usually doesn't, and the
+ *  streaming untar + store caps bound the rest). */
+const MAX_TARBALL_BYTES = 128 * 1024 * 1024;
 
 /** Parse `owner/repo` from a GitHub URL or shorthand. */
 export function parseRepo(url: string): { owner: string; repo: string } | null {
@@ -82,8 +86,22 @@ export async function checkoutRepo(
   if (!resp.ok) {
     throw new Error(`tarball fetch failed (${resp.status}): ${(await resp.text()).slice(0, 200)}`);
   }
-  const entries = await gunzipUntar(await resp.arrayBuffer());
-  const stats = store.store(name, entries);
+  if (!resp.body) throw new Error('tarball response has no body');
+  // Content-Length guard (GitHub usually omits it for tarballs, in which
+  // case the streaming untar + caps still bound the work): reject an
+  // absurdly large gzip before streaming it.
+  const declared = Number(resp.headers.get('content-length') ?? 0);
+  if (declared && declared > MAX_TARBALL_BYTES) {
+    throw new Error(`tarball too large (${declared} bytes > ${MAX_TARBALL_BYTES})`);
+  }
+  // Stream: decompress + parse + store one file at a time so peak memory is
+  // a single file plus a rolling buffer — never the whole decompressed tree
+  // (which OOM'd celld). addFile returns false once a cap is hit, stopping
+  // extraction of the rest of the archive.
+  const stats = emptyStats();
+  store.beginRepo(name);
+  await gunzipUntarEach(resp.body, (entry) => store.addFile(name, entry, stats, signal));
+  store.finalizeRepo(name, stats);
   store.writeFile(
     name,
     RECENT_COMMITS_PATH,

@@ -18,6 +18,7 @@ import {
   type FiringAlert,
   type InvestigationMode,
   type InvestigationSummaryRow,
+  type SourceRepo,
 } from './protocol';
 
 const MAX_CONCURRENT = 1;
@@ -136,7 +137,7 @@ export class CoordinatorDO {
     if (url.pathname === '/internal/complete' && request.method === 'POST') {
       const { id, outcome } = (await request.json()) as {
         id: string;
-        outcome: 'concluded' | 'failed' | 'idle' | 'resumed';
+        outcome: 'concluded' | 'failed' | 'idle' | 'resumed' | 'cancelled';
       };
       if (outcome === 'idle') {
         // Interactive turn finished; the run is parked awaiting the
@@ -218,7 +219,35 @@ export class CoordinatorDO {
       return Response.json({ investigations: rows });
     }
 
+    // The provisioned default source repos for autonomous (alert-fired)
+    // investigations. Written by the app (Settings Save) and by
+    // `scripts/provision.ts` — the two places that can read the
+    // app-settings repos list; the cell itself can't (empty KV
+    // namespace under a machine token). Threaded into each autonomous
+    // /start so an alert-fired run gets the same code tools an
+    // interactive one carries.
+    if (url.pathname === '/internal/config-repos') {
+      if (request.method === 'POST') {
+        const body = (await request.json()) as { repos?: unknown };
+        const repos = Array.isArray(body?.repos)
+          ? (body.repos as SourceRepo[]).filter(
+              (r) => r && typeof (r as SourceRepo).url === 'string',
+            )
+          : [];
+        await this.state.storage.put('defaultRepos', repos);
+        return Response.json({ ok: true, count: repos.length });
+      }
+      const repos = await this.defaultRepos();
+      return Response.json({ repos });
+    }
+
     return new Response('not found', { status: 404 });
+  }
+
+  /** The provisioned default repos for autonomous runs (empty if never
+   *  set). */
+  private async defaultRepos(): Promise<SourceRepo[]> {
+    return (await this.state.storage.get<SourceRepo[]>('defaultRepos')) ?? [];
   }
 
   /**
@@ -306,6 +335,10 @@ export class CoordinatorDO {
               id,
               alert: JSON.parse(String(next.alert_json)) as FiringAlert,
               seed: null,
+              // Provisioned default repos so this alert-fired run can
+              // check out the implicated service's source (empty → the
+              // DO falls back to the cell's REPOS_JSON env).
+              repos: await this.defaultRepos(),
             }),
           });
     if (!res.ok) {

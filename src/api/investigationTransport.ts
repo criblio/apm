@@ -345,6 +345,45 @@ export async function sendInvestigationMessage(
   );
 }
 
+/**
+ * Push the provisioned default source repos to the cell. Autonomous
+ * (alert-fired) investigations read this list — the alert webhook
+ * carries no repos and the cell can't read the app-settings KV, so this
+ * is how the Settings repos reach an alert-fired run. Interactive
+ * investigations still thread their repos at create time; this only
+ * feeds the autonomous path. Called on Settings Save and by
+ * `scripts/provision.ts` (UI == CLI).
+ */
+export async function pushCellRepos(
+  repos: SourceRepo[],
+  signal?: AbortSignal,
+): Promise<{ count: number }> {
+  const base = getCellBaseUrl();
+  return postJson<{ count: number }>(`${base}/config/repos`, { repos }, signal);
+}
+
+/** Read the provisioned default repos currently stored on the cell. */
+export async function getCellRepos(signal?: AbortSignal): Promise<SourceRepo[]> {
+  const base = getCellBaseUrl();
+  const data = await getJson<{ repos: SourceRepo[] }>(`${base}/config/repos`, signal);
+  return data.repos ?? [];
+}
+
+/** Stop an in-progress investigation. The cell aborts the running turn
+ *  (LLM stream + any tool/checkout) and marks it `cancelled`. Idempotent
+ *  — cancelling an already-terminal run is a no-op success. */
+export async function cancelInvestigation(
+  id: string,
+  signal?: AbortSignal,
+): Promise<{ status: InvestigationStatus }> {
+  const base = getCellBaseUrl();
+  return postJson<{ status: InvestigationStatus }>(
+    `${base}/investigations/${encodeURIComponent(id)}/cancel`,
+    {},
+    signal,
+  );
+}
+
 export interface ListInvestigationsQuery {
   /** Substring match on title / incident key. */
   q?: string;

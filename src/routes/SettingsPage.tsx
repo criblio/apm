@@ -21,7 +21,7 @@ import { useStreamFilterEnabled } from '../hooks/useStreamFilter';
 import { useLowVolumeMode } from '../hooks/useLowVolumeMode';
 import { useServerInvestigations } from '../hooks/useServerInvestigations';
 import { setServerInvestigations, getServerInvestigations } from '../api/serverInvestigations';
-import { setCellBaseUrl, getCellBaseUrl } from '../api/investigationTransport';
+import { setCellBaseUrl, getCellBaseUrl, pushCellRepos } from '../api/investigationTransport';
 import { kvGet, kvPut } from '../api/kvstore';
 import {
   ensureCellWebhookTarget,
@@ -317,18 +317,33 @@ export default function SettingsPage() {
     setSourceReposSaving(true);
     setError(null);
     try {
-      // Drop empty rows and trim; `service` empty ⇒ omit (monorepo catch-all).
+      // Drop empty rows and trim; `service` empty ⇒ omit (monorepo
+      // catch-all); `ref` empty ⇒ omit (checkout uses the default branch).
       const cleaned = sourceRepos
         .map((r) => ({
           url: r.url.trim(),
           name: r.name?.trim() || undefined,
           service: r.service?.trim() || undefined,
+          ref: r.ref?.trim() || undefined,
         }))
         .filter((r) => r.url);
       await saveAppSettings({ sourceRepos: cleaned });
       setSourceRepos(cleaned);
-      setFlash('Source repositories saved. New server investigations can inspect them.');
-      setTimeout(() => setFlash(null), 6000);
+      // Push the list to the cell so alert-fired (autonomous)
+      // investigations get the same repos — interactive ones already
+      // thread them at create time. Best-effort: the save above is the
+      // source of truth, and `npm run provision` re-pushes regardless.
+      let cellNote = '';
+      try {
+        const { count } = await pushCellRepos(cleaned);
+        cellNote = ` Pushed ${count} to the investigator cell for alert-fired runs.`;
+      } catch (err) {
+        cellNote = ` (Could not reach the cell to update alert-fired runs: ${
+          err instanceof Error ? err.message : String(err)
+        } — re-run provisioning to retry.)`;
+      }
+      setFlash(`Source repositories saved.${cellNote}`);
+      setTimeout(() => setFlash(null), 8000);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -365,6 +380,18 @@ export default function SettingsPage() {
     }
     const n = await ensureAlertNotification(http);
     steps.push({ label: `Alert notification: ${n} (alert_notify → cell)`, ok: true });
+    // Re-push the configured source repos so alert-fired investigations
+    // check out code (interactive ones thread their own at create time).
+    try {
+      const { count } = await pushCellRepos(sourceRepos);
+      steps.push({ label: `Source repos → cell: ${count} for alert-fired runs`, ok: true });
+    } catch (err) {
+      steps.push({
+        label: 'Source repos → cell: failed',
+        ok: false,
+        detail: err instanceof Error ? err.message : String(err),
+      });
+    }
     return steps;
   }
 
@@ -807,8 +834,10 @@ export default function SettingsPage() {
             Repos the investigator may check out to read code once telemetry
             narrows to a service. <strong>Service</strong> maps a repo to a
             telemetry service; leave it <code>*</code> for a monorepo that
-            backs every service (e.g. the OTel Demo). Threaded into
-            investigations you start from the Investigate button.
+            backs every service (e.g. the OTel Demo). <strong>Ref</strong> pins
+            a branch, tag, or commit SHA to check out; leave it empty for the
+            default branch. Threaded into investigations you start from the
+            Investigate button, and into alert-fired ones after Save.
           </div>
           {sourceRepos.length === 0 && (
             <div className={s.fieldHelp} style={{ opacity: 0.8 }}>
@@ -839,6 +868,17 @@ export default function SettingsPage() {
                 spellCheck={false}
                 autoComplete="off"
                 onChange={(e) => updateRepo(i, { service: e.target.value })}
+                style={{ flex: 1 }}
+              />
+              <input
+                className={s.input}
+                type="text"
+                value={repo.ref ?? ''}
+                placeholder="branch/tag/SHA"
+                spellCheck={false}
+                autoCapitalize="none"
+                autoComplete="off"
+                onChange={(e) => updateRepo(i, { ref: e.target.value })}
                 style={{ flex: 1 }}
               />
               <button

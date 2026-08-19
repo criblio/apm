@@ -58,6 +58,12 @@ export type InvestigationStatus =
   | 'failed'
   | 'cancelled';
 
+/** Terminal states: the loop is done and no alarm is pending. (`idle` is
+ *  NOT terminal — an interactive run parks there awaiting a message.) */
+export function isTerminalStatus(status: InvestigationStatus): boolean {
+  return status === 'concluded' || status === 'failed' || status === 'cancelled';
+}
+
 /** How an investigation was started. `autonomous` = an alert trigger
  *  drove it to a conclusion; `interactive` = a user started it from
  *  the UI and can keep chatting (see the 'idle' status). */
