@@ -476,6 +476,64 @@ add user alerts, SLOs, and trace depth.
     dies — the only write-offs on a failed spike are `cell/` and
     the UI transport shim.
 
+- **P4.4 Incidents & investigation lifecycle** (XL — design complete,
+  2026-08-18) — introduce a first-class **Incident** above investigations
+  to solve two problems: old investigations never close (need an
+  "Archived" shelf — hidden by default, still searchable), and one root
+  cause trips alerts across many services (today would spawn N redundant
+  investigations against the `MAX_CONCURRENT=1` search pool). An Incident
+  is a lightweight **warroom**: a state machine (`open → investigating →
+  identified → mitigated → resolved → closed`), a severity, a
+  timestamped timeline that agent + humans append to, and an
+  auto-generated markdown summary. **Cribl-Search-native and
+  cell-independent** — incidents are event-sourced in the dataset
+  (`record_kind:'incident'`), grouped by a saved search (window + service
+  graph → deterministic `incident_id`), and managed entirely by the app,
+  so they work with the server investigator **off**. The investigator,
+  when on, is pure enrichment: automated investigations become incident
+  children and a supervisor agent authors the root cause. Alerts→incidents
+  is standard aggregation (many alerts, one stateful incident;
+  all-cleared → resolved; re-fire-while-open → reopen). Archival is lazy
+  (a derived `WHERE`, zero background work) with a self-re-arming
+  coordinator sweep alarm as "cron" until celld 0.3.0 lands; cron's real
+  job is retention (drop transcripts, keep summaries). Coalescing is
+  layered: (A) admission-time attach-vs-spawn using the dependency graph
+  (`/config/graph`, mirror of `/config/repos`), then (B) an
+  agent-of-agents supervisor that correlates concluded investigations into
+  an incident-level root cause. Full design + 6-phase sequence (phases 1–3
+  ship the cell-independent core; 4–6 are flag-on enrichment):
+  `docs/research/server-investigations/incidents-and-lifecycle.md`.
+  Cross-refs P4.1 (Investigator v2), P4.3 (server-side investigations),
+  P3.1 (alert notifications).
+
+- **P4.5 Materialized read models for hot pages** (M — design 2026-08-18)
+  — a perf/architecture principle the codebase is already halfway to
+  (panel-cache lookups, the metrics-store migration): **events stay the
+  write log / source of truth / audit; hot interactive pages read a
+  materialized projection (a lookup), not a live search over history.**
+  Classic CQRS read models. The split: *hot + bounded + current-state* →
+  lookup (maintained by a scheduled search); *unbounded history / audit*
+  → events, searched on demand; *ad-hoc exploration* (traces, logs) →
+  live search; *numeric time series* → metrics store (done). This also
+  **reduces search-pool load** — the saturation that flaked CI — by
+  replacing many unpredictable page-load searches with a few schedulable
+  maintainers.
+  - **Alerts page** (investigated 2026-08-18): the active table already
+    reads a cached scheduled result (`$vt_results`, `-1h`), but the
+    "Alert incidents" **history timeline** (`Q.alertHistory`) and the
+    investigation badges run **live over 24h of events** on every load.
+    The **incident read model (P4.4) subsumes this** — the firing→resolved
+    pairing becomes a lookup read. First payoff of P4.4.
+  - **Errors page**: only `-1h` + stream-filter is cached; **every longer
+    window runs `listErrorClasses` live over raw error spans** (heaviest
+    of the lot). Fix: a scheduled **error-class rollup lookup** for the
+    common windows (24h), live search only for custom ranges.
+  - Guardrails: each maintainer is itself an `export to lookup` search —
+    be selective (one lookup per genuinely-hot surface), mind the known
+    `export to lookup` KQL traps (`(?i)`/mv-expand corruption, see the
+    skill doc), and accept ~cadence staleness + lookup size limits (that's
+    why history stays events).
+
 ## P5 — Breadth
 
 - **Dashboards** via saved-search composition ("Save this view" on
