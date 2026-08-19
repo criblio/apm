@@ -10,7 +10,7 @@ import { runQuery } from '../api/cribl';
 import { newQueryGeneration, captureQueryGeneration } from '../api/queryGeneration';
 import * as Q from '../api/queries';
 import { serviceColor } from '../utils/spans';
-import { listCachedIncidents, readCachedAlertHistory, type CachedAlertRow } from '../api/panelCache';
+import { latestRunRows, listCachedIncidents, readCachedAlertHistory, type CachedAlertRow } from '../api/panelCache';
 import IncidentsSection from '../components/IncidentsSection';
 import type { IncidentSummary } from '../api/types';
 import { useServerInvestigations } from '../hooks/useServerInvestigations';
@@ -186,7 +186,9 @@ export default function AlertsPage() {
         '-1h', 'now', 500,
       );
       if (!isCurrent()) return;
-      setAlerts(parseAlertRows(alertRows));
+      // Latest run only — $vt_results keeps two runs, and a service
+      // that flapped between them would render twice (stale status).
+      setAlerts(parseAlertRows(latestRunRows(alertRows)));
       hasData.current = true;
       if (!silent) setLoading(false);
 

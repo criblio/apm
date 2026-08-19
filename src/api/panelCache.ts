@@ -96,6 +96,23 @@ function toNum(v: unknown): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+/** Keep only the newest scheduled run's rows. $vt_results retains
+ * keepLastN (2) runs per jobName; readers that treat the partition as
+ * "current state" must not mix a stale run in (a service that flapped
+ * between runs would appear twice, once with its old status). jobId's
+ * fixed-width epoch-millis prefix makes the string max the newest. */
+export function latestRunRows(
+  rows: Record<string, unknown>[],
+): Record<string, unknown>[] {
+  let latest = '';
+  for (const r of rows) {
+    const id = String(r.jobId ?? '');
+    if (id > latest) latest = id;
+  }
+  if (!latest) return rows;
+  return rows.filter((r) => String(r.jobId ?? '') === latest);
+}
+
 /**
  * Issue a single $vt_results query covering every panel in
  * `jobNames`, then partition the mixed row stream by the
@@ -285,7 +302,7 @@ function buildCachedPanels(
     unfilteredErrorClasses: errorRows ? groupErrorClasses(errorRows) : null,
     errorDroppedBy: errorFilter ? errorFilter.droppedBy : null,
     dependencies: mergeDependencyEdges(depRows, msgDepRows),
-    alertRows: alertsRows ? parseAlertRows(alertsRows) : null,
+    alertRows: alertsRows ? parseAlertRows(latestRunRows(alertsRows)) : null,
     lastUpdatedMs,
   };
 }
@@ -364,12 +381,7 @@ export async function listCachedIncidents(): Promise<
   const rows = partitions.get('criblapm__incidents_state');
   if (!rows || rows.length === 0) return null;
 
-  let latestJob = '';
-  for (const r of rows) {
-    const id = String(r.jobId ?? '');
-    if (id > latestJob) latestJob = id;
-  }
-  const latest = rows.filter((r) => String(r.jobId ?? '') === latestJob);
+  const latest = latestRunRows(rows);
 
   // Member rows can briefly disagree on status (per-row liveness is
   // fresh, the incident-level rollup lags one run), so the incident
