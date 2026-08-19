@@ -51,13 +51,45 @@ group, hold state, collect human notes, resolve, archive, and render a
 (deterministic) summary — they just don't get *automated* investigations
 or an *agent-written* root cause.
 
-Concretely, the dataset is the one substrate **both** sides can converge
-on: the app can read/write it (flag off), and the cell already commits
-`record_kind:'investigation'` lifecycle events to it (flag on). App KV is
-*not* a candidate — it's app-scoped and the cell can't read it (see
-`code-investigation.md`'s "App context required" finding). So incident
-state lives in the dataset, and the cell participates by reading/writing
-the same events — never as the source of truth.
+### Where state lives: a lookup, not app KV, not refold-on-read
+
+Two stores are *not* the answer, for concrete reasons:
+
+- **App-platform KV** (the `kvstore/settings/app` surface) is tempting —
+  it's a fast, mutable key→JSON store. But it can't own incident state:
+  (1) **continuity** — its only writer is the app running in a browser,
+  and incidents must open/attach/resolve continuously with no UI open, so
+  the engine has to be server-side; (2) **access** — it needs "app
+  context", so the CLI (`400 App context required`) and the cell (empty
+  machine-token namespace) can't touch it (see `code-investigation.md`).
+  Reserve app KV for genuinely **UI/per-user** state: read/ack markers,
+  draft notes, view prefs — where the browser *is* the writer.
+- **Refold-events-on-read** is also not the default — we don't fold the
+  whole event history on every list.
+
+The store that fits is a **Cribl Search lookup/collection** — a KV-style,
+mutable, key→row store that the **continuous engine can write** (a
+scheduled search via `export to lookup`; it's group-scoped, so the cell
+and CLI reach it through the same `/m/default_search/…` API the
+provisioner already uses — not app-context-limited), that the **app reads
+fast** (a lookup read), and that works **flag-off**. So:
+
+- **Current incident state = a lookup row** (status, severity, services,
+  `root_service`, timestamps, `summary_md`, investigation/alert refs).
+  This is the "store, not search" for mutable state.
+- **Timeline = append-only** — dataset events, or a bounded JSON array on
+  the lookup row. The append log is the audit trail; the row is the fast
+  read.
+
+The **dataset** remains the shared *event* substrate both sides converge
+on for the append log and cross-writer signals — the app reads/writes it
+(flag off) and the cell already commits `record_kind:'investigation'`
+events to it (flag on). But the *hot read path* is the lookup row, not a
+fold.
+
+**Spike:** confirm whether the lookup is written via `export to lookup`
+(search) or a direct lookups REST API from the cell — either way it's a
+KV row, not a refold.
 
 ### What degrades when the investigator is off
 
@@ -324,14 +356,15 @@ one more `WHERE`.
 
 ## Store & topology
 
-**Canonical store: the dataset (event-sourced), managed by the app.**
-Incident lifecycle is an append-only stream of `record_kind:'incident'`
-events — `opened | attached | status_change | severity_change | note |
-investigation_linked | resolved | closed` — each carrying `incident_id`,
-`ts`, `author`, and a payload. Current state is a fold over an incident's
-events (latest status/severity, accumulated timeline). This is the same
-event-sourcing the alert/investigation records already use, and it means
-**incidents exist and mutate entirely within Cribl Search**.
+**Current state = a lookup row; the append log = dataset events; the
+engine = a scheduled search.** (See "Where state lives" above.) The
+lookup row holds an incident's mutable state (status, severity, services,
+`root_service`, `summary_md`, refs); the dataset carries the append-only
+`record_kind:'incident'` events — `opened | attached | status_change |
+severity_change | note | investigation_linked | resolved | closed`, each
+with `incident_id`, `ts`, `author`, payload — as the audit log and the
+cross-writer signal. **Incidents exist and mutate entirely within Cribl
+Search**, with no cell and no browser required.
 
 - **Grouping (alerts→incidents)** is a saved search: it folds `firing`
   alert rows over a window, joins the service-dependency graph (a
