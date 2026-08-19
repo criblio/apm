@@ -1206,8 +1206,19 @@ export function incidentStateFold(): string {
                inc_last_fire >= toreal(now()) - ${closeSec}, "resolved",
                "closed"),
              derived_severity=case(n_svcs >= 3, "sev2", n_svcs == 2, "sev3", "sev4")
-    | extend status=iff(isnotempty(o_status) and o_status_time >= inc_last_fire,
-                        o_status, derived_status),
+    // Status precedence: a human/agent override rules while the
+    // incident is ACTIVE (and "closed" is terminal regardless), but
+    // once every alert has cleared long enough that the system derives
+    // resolved/closed, that supersedes an active-state override —
+    // otherwise an incident marked "identified" would never
+    // auto-resolve (its o_status_time stays newer than the last fire
+    // forever once fires stop).
+    | extend status=case(
+               isnotempty(o_status) and o_status_time >= inc_last_fire
+                 and o_status == "closed", "closed",
+               isnotempty(o_status) and o_status_time >= inc_last_fire
+                 and derived_status == "open", o_status,
+               derived_status),
              severity=iff(isnotempty(o_severity), o_severity, derived_severity)
     | where not(status == "closed" and inc_last_fire < toreal(now()) - ${pruneSec})
     // NO trailing sort: a "| sort" after this join pipeline silently
