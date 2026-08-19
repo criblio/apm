@@ -23,6 +23,13 @@ exports[`incidentGrouper > matches the pinned shape 1`] = `
           )
         | lookup criblapm_incidents on svc
         | where isnotempty(incident_id) and tostring(incident_id) != "__init__"
+        // Adjacency attaches only to OPEN incidents. A resolved-not-
+        // closed incident stays reachable through its own members (a
+        // member refire reopens it), but a mere graph neighbor firing
+        // is a new problem, not a resurrection — observed live
+        // 2026-08-19: a background frontend flap reopened the prior
+        // night's resolved payment incident through adjacency.
+        | where tostring(status) == "open"
         | summarize adj_incident_id=max(tostring(incident_id)) by fire_svc
         | project svc=fire_svc, adj_incident_id
       ) on svc
@@ -66,6 +73,13 @@ exports[`incidentGrouper > matches the pinned shape 1`] = `
           )
         | lookup criblapm_incidents on svc
         | where isnotempty(incident_id) and tostring(incident_id) != "__init__"
+        // Adjacency attaches only to OPEN incidents. A resolved-not-
+        // closed incident stays reachable through its own members (a
+        // member refire reopens it), but a mere graph neighbor firing
+        // is a new problem, not a resurrection — observed live
+        // 2026-08-19: a background frontend flap reopened the prior
+        // night's resolved payment incident through adjacency.
+        | where tostring(status) == "open"
         | summarize adj_incident_id=max(tostring(incident_id)) by fire_svc
         | project svc=fire_svc, adj_incident_id
       ) on svc

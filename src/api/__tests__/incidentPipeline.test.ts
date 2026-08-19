@@ -37,6 +37,11 @@ describe('incidentGrouper', () => {
     expect(q).toContain('tostring(incident_id) != "__init__"');
   });
 
+  it('adjacency attaches only to OPEN incidents (member refire owns reopen)', () => {
+    const adj = q.slice(q.indexOf('criblapm__sysarch_dependencies'), q.indexOf('adj_incident_id=max'));
+    expect(adj).toContain('tostring(status) == "open"');
+  });
+
   it('is idempotent: leftanti dedup on already-committed event ids', () => {
     expect(q).toContain('join kind=leftanti');
     expect(q).toContain('record_kind == "incident"');
