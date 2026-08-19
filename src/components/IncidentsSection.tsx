@@ -84,7 +84,12 @@ function IncidentDetail({ incident }: { incident: IncidentSummary }) {
 
   useEffect(() => {
     let cancelled = false;
-    runQuery(Q.incidentEvents(incident.incidentId), '-7d', 'now', 500)
+    // Window from the incident's own opened time (+1h slack), not a
+    // fixed -7d: dataset scans cost the whole window regardless of the
+    // sparse filter, and a -7d live scan from the browser takes >60s
+    // on the staging pool.
+    const sinceHours = Math.max(2, Math.ceil((Date.now() - incident.openedAtMs) / 3_600_000) + 1);
+    runQuery(Q.incidentEvents(incident.incidentId), `-${sinceHours}h`, 'now', 500)
       .then((rows) => {
         if (cancelled) return;
         setEvents(rows.map((r) => ({
@@ -106,7 +111,7 @@ function IncidentDetail({ incident }: { incident: IncidentSummary }) {
       })
       .catch((e) => { if (!cancelled) setError(e instanceof Error ? e.message : String(e)); });
     return () => { cancelled = true; };
-  }, [incident.incidentId]);
+  }, [incident.incidentId, incident.openedAtMs]);
 
   return (
     <div className={s.detail}>
