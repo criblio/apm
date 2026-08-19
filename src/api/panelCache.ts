@@ -371,6 +371,12 @@ export async function listCachedIncidents(): Promise<
   }
   const latest = rows.filter((r) => String(r.jobId ?? '') === latestJob);
 
+  // Member rows can briefly disagree on status (per-row liveness is
+  // fresh, the incident-level rollup lags one run), so the incident
+  // takes the MOST-OPEN status across its members.
+  const statusRank: Record<string, number> = {
+    open: 0, investigating: 1, identified: 2, mitigated: 3, resolved: 4, closed: 5,
+  };
   const byIncident = new Map<string, import('./types').IncidentSummary>();
   for (const r of latest) {
     const incidentId = String(r.incident_id ?? '');
@@ -382,12 +388,13 @@ export async function listCachedIncidents(): Promise<
       lastFireMs: toNum(r.last_fire_at) * 1000,
       fireCount: toNum(r.fire_n),
     };
+    const rowStatus = String(r.status ?? 'open') as import('./types').IncidentSummary['status'];
     let inc = byIncident.get(incidentId);
     if (!inc) {
       inc = {
         incidentId,
         title: String(r.title ?? incidentId),
-        status: String(r.status ?? 'open') as import('./types').IncidentSummary['status'],
+        status: rowStatus,
         severity: String(r.severity ?? 'sev4') as import('./types').IncidentSummary['severity'],
         services: [],
         rootService: '',
@@ -395,6 +402,8 @@ export async function listCachedIncidents(): Promise<
         lastFireMs: toNum(r.inc_last_fire) * 1000,
       };
       byIncident.set(incidentId, inc);
+    } else if ((statusRank[rowStatus] ?? 9) < (statusRank[inc.status] ?? 9)) {
+      inc.status = rowStatus;
     }
     inc.services.push(member);
   }

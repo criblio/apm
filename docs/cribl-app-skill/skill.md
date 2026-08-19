@@ -93,6 +93,15 @@ working trigger — re-align both sides after any receiver redeploy.
   on synthetic rows, fails on 36+ real rows from a prior summarize).
   Split into separate searches joined via lookups.
 
+### `sort` after a join pipeline drops all rows
+- A trailing `| sort by <col>` after a pipeline of several
+  `join`/`union` stages silently returns ZERO rows — single- or
+  multi-key alike (verified live 2026-08-18: 3 rows in, 0 out; every
+  upstream stage intact). A `| sort` used as a barrier right after a
+  `union` (see below) works fine — the failure appears when sorting
+  the output of a deep join stack. Don't sort materialized fold/export
+  outputs server-side; order client-side in the reader instead.
+
 ### Union + `_time` assignment
 - `| project _time=<column>` (or `extend _time=<column>`) after a
   `union` silently NULLS `_time` on rows that came from the union's

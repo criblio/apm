@@ -274,9 +274,10 @@ function errorRateHistoryExportQuery(): string {
  * keepLastN=2 runs, and jobId's fixed-width epoch-millis prefix makes
  * max(jobId) the newest. Closed incidents are dropped so a new fire on
  * their services opens a fresh incident (the state machine's "only a
- * closed incident lets a new fire open fresh" rule); newest-first sort
- * makes the grouper's first-match `lookup on svc` prefer the most
- * recent incident when a service somehow appears in two.
+ * closed incident lets a new fire open fresh" rule). No sort before
+ * the export — `| sort` after a join pipeline can silently drop every
+ * row (see skill.md), so when a service appears in two live incidents
+ * the grouper's first-match `lookup on svc` picks arbitrarily.
  */
 function incidentsExportQuery(): string {
   // Sentinel-first union — see prevWindowSummary() for the planner
@@ -297,7 +298,6 @@ function incidentsExportQuery(): string {
                   root_service=tostring(root_service),
                   opened_at=tolong(opened_at), last_fire_at=tolong(last_fire_at),
                   title=tostring(title)
-        | sort by opened_at desc
       )
     | export mode=overwrite
              description="Cribl APM - live incident membership (grouper join surface)"

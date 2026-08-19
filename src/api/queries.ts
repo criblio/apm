@@ -1114,6 +1114,15 @@ export function incidentStateFold(): string {
       ) on incident_id
     | extend o_severity=iff(isnotnull(d_severity) and isnotempty(tostring(d_severity)),
                             tostring(d_severity), o_severity)
+    // Own-service liveness, joined per member row. The incident-level
+    // rollup below only sees PREVIOUS-run members, so on the very first
+    // fold of a new incident it is empty — without this per-row join a
+    // brand-new incident whose services are actively firing would
+    // derive "resolved" (observed live 2026-08-18).
+    | join kind=leftouter (
+        ${liveBadBySvc}
+      ) on svc
+    | extend own_bad=iff(isnotnull(live_bad) and live_bad > 0, 1, 0)
     | join kind=leftouter (
         ${prevMembers}
         | join kind=leftouter (
@@ -1129,7 +1138,7 @@ export function incidentStateFold(): string {
              inc_bad_n=iff(isnotnull(inc_bad), tolong(inc_bad), tolong(0)),
              n_svcs=iff(isnotnull(n_svcs_prev) and n_svcs_prev > 0, tolong(n_svcs_prev), tolong(1))
     | extend derived_status=case(
-               inc_bad_n > 0, "open",
+               own_bad > 0 or inc_bad_n > 0, "open",
                inc_last_fire >= toreal(now()) - ${debounceSec}, "open",
                inc_last_fire >= toreal(now()) - ${closeSec}, "resolved",
                "closed"),
@@ -1138,10 +1147,13 @@ export function incidentStateFold(): string {
                         o_status, derived_status),
              severity=iff(isnotempty(o_severity), o_severity, derived_severity)
     | where not(status == "closed" and inc_last_fire < toreal(now()) - ${pruneSec})
+    // NO trailing sort: a "| sort" after this join pipeline silently
+    // drops every row (verified live 2026-08-18 — 3 rows in, 0 out,
+    // single- or multi-key alike; see skill.md). Readers order
+    // client-side.
     | project incident_id, svc, status, severity, opened_at, first_seen,
               last_fire_at, fire_n, n_svcs, inc_last_fire, root_service, title,
-              o_status, o_status_time, o_severity
-    | sort by inc_last_fire desc, incident_id asc, first_seen asc`;
+              o_status, o_status_time, o_severity`;
 }
 
 /**
