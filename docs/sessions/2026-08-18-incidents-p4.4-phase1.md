@@ -211,6 +211,34 @@ agent." What landed (apps 0.13.51–0.13.52):
    dispatch layer, not our config (target/binding verified
    field-perfect; json_array and custom formats both undelivered).
 
+## Addendum 4: natural-fire test — full loop proven (08:00–09:30Z)
+
+`recommendationCacheFailure` on at 08:00Z after the baseline flush:
+
+- **08:26Z the latency arm fired naturally** (p95 2.2ms → 160ms, 73×;
+  pending→firing walk clean) — first-ever detection of this scenario.
+- Grouper attached recommendation to the incident same-cycle.
+- Autonomous investigation concluded in 4 minutes with a root cause
+  down to the code lines (`recommendation_server.py:87-88`, 25%
+  cached_ids growth → ~25M entries), flag + deploy correlation,
+  remediation, and confidence. (Replay path; the coordinator poll
+  awaits the cell-agent deploy — identical payload/admission.)
+- The incident page shows the whole story: two concluded
+  investigations w/ findings + transcripts, 6 members w/ per-signal
+  detail, human note, interleaved timeline. Playwright-asserted;
+  screenshots `morning-*.png`.
+
+Soak findings fixed live (0.13.53–0.13.55): adjacency attaches only
+to OPEN incidents (a frontend flap had resurrected the resolved
+payment incident); late-attached members inherit title/root/opened_at
+from carried state (fold prev-wins + defensive reader reduction — a
+fresh member's own first-fire as opened_at had narrowed the page's
+timeline window and hidden older notes).
+
+End state: app **0.13.55**; `recommendationCacheFailure` ON (matches
+checkpoint; live latency incident visible for review); cell poll
+deploy pending (`f1be7c9`, handoff message delivered).
+
 ## Follow-ups
 
 1. **P4.3: Cribl→cell notify delivery** — see above; highest priority
