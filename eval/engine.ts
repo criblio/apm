@@ -2,6 +2,11 @@ import type { Page } from 'playwright-core';
 import { setFlag, allOff } from '../tests/helpers/flagd.js';
 import { runQuery } from '../tests/helpers/criblSearch.js';
 import { apmFrame } from '../tests/helpers/apmSession.js';
+import {
+  INCIDENT_APP_PRODUCER,
+  incidentEventCommitQuery,
+} from '../src/api/generatedEventContract.js';
+import { incidentKqlChecks, incidentSurfaceChecks } from './incidentChecks.js';
 import type {
   ScenarioDeclaration,
   ScenarioResult,
@@ -10,6 +15,44 @@ import type {
   KqlCheck,
   InvestigatorResult,
 } from './types.js';
+
+/**
+ * Scenario isolation for the incident layer: close every live incident
+ * before a scenario runs, so the previous scenario's incident can't
+ * absorb this one's fires (same-bin collapse or adjacency) and this
+ * scenario's incident checks observe only its own fault. Mirrors the
+ * operator workflow — agent-authored `closed` events through the pinned
+ * commit KQL; the grouper ignores closed incidents by construction.
+ */
+async function closeOpenIncidents(): Promise<void> {
+  const rows = await runQuery(
+    `dataset="$vt_results" | where jobName == "criblapm__incidents_state"
+     | join kind=inner (
+         dataset="$vt_results" | where jobName == "criblapm__incidents_state"
+         | summarize jobId=max(tostring(jobId))
+       ) on jobId
+     | where tostring(status) != "closed"
+     | summarize n=count() by incident_id`,
+    '-1h', 'now', 50,
+  ).catch(() => [] as Record<string, unknown>[]);
+  for (const row of rows) {
+    const id = String(row.incident_id ?? '');
+    if (!id || id === '__init__') continue;
+    const kql = incidentEventCommitQuery(
+      {
+        event_id: `${id}:closed:eval-${Date.now()}`,
+        producer: INCIDENT_APP_PRODUCER,
+        incident_id: id,
+        event_type: 'closed',
+        author: 'agent',
+        status: 'closed',
+      },
+      process.env.CRIBL_DATASET || 'otel',
+    );
+    await runQuery(kql, '-1m', 'now', 5).catch(() => {});
+    console.log(`  [isolation] closed lingering incident ${id}`);
+  }
+}
 
 async function navigateToPage(
   page: Page,
@@ -80,6 +123,36 @@ async function navigateToPage(
     if (!visible) return false;
     await alertsLink.click();
     await page.waitForTimeout(5000);
+    return true;
+  } else if (pageName === 'incident') {
+    // Alerts → the Incidents-section row containing the scenario's
+    // service → its drill-in page (P4.4 Phase 2). The "Open"/
+    // "Investigating" tags only render in the Incidents table, so the
+    // row locator can't land on Episodes or Currently Active.
+    await gotoApm(page, '/');
+    await page.waitForTimeout(2000);
+    const alertsLink = apm.getByRole('link', { name: 'Alerts' });
+    const linkVisible = await alertsLink
+      .waitFor({ state: 'visible', timeout: 10_000 })
+      .then(() => true)
+      .catch(() => false);
+    if (!linkVisible) return false;
+    await alertsLink.click();
+    const row = apm
+      .locator(
+        `table tr:has-text("${serviceName}"):is(:has-text("Open"), :has-text("Investigating"), :has-text("Identified"))`,
+      )
+      .first();
+    const rowVisible = await row
+      .waitFor({ state: 'visible', timeout: 60_000 })
+      .then(() => true)
+      .catch(() => false);
+    if (!rowVisible) return false;
+    await row.click();
+    await apm.getByRole('heading', { name: 'Summary' }).waitFor({
+      state: 'visible',
+      timeout: 30_000,
+    }).catch(() => {});
     return true;
   }
   return false;
@@ -189,7 +262,15 @@ async function runInvestigator(
     // Inner-frame URL changes aren't observable via page.waitForURL —
     // wait on the composer instead.
 
-    const composer = apm.locator('textarea[placeholder*="Ask me to investigate"]');
+    // Two composer generations: the legacy in-browser agent
+    // ("Ask me to investigate…") and the server-investigations
+    // composer ("e.g. Why is the checkout service throwing errors?").
+    // Match either so the harness works with the flag on or off.
+    const composer = apm
+      .locator(
+        'textarea[placeholder*="Ask me to investigate"], textarea[placeholder*="Why is the checkout service"]',
+      )
+      .first();
     const composerVisible = await composer
       .waitFor({ state: 'visible', timeout: 30_000 })
       .then(() => true)
@@ -207,7 +288,13 @@ async function runInvestigator(
     await composer.fill(config.prompt);
     await composer.press('Enter');
 
-    const summaryTitle = apm.getByText('📋 Investigation summary').first();
+    // Completion marker, either generation: the legacy summary heading,
+    // or the server view's "Investigated" status label once the run
+    // concludes and parks.
+    const summaryTitle = apm
+      .getByText('📋 Investigation summary')
+      .or(apm.getByText('Investigated', { exact: true }))
+      .first();
     const arrived = await summaryTitle
       .waitFor({ state: 'visible', timeout: config.waitMs })
       .then(() => true)
@@ -263,13 +350,20 @@ export async function runScenario(
   const surfaces: SurfaceResult[] = [];
   let investigator: InvestigatorResult | undefined;
 
+  // Incident-layer checks are appended, not hand-copied per scenario.
+  const surfaceChecks = scenario.expectsIncident
+    ? [...scenario.surfaceChecks, ...incidentSurfaceChecks(scenario.expectedService)]
+    : scenario.surfaceChecks;
+  const kqlChecks = scenario.expectsIncident
+    ? [...(scenario.kqlChecks ?? []), ...incidentKqlChecks(scenario.expectedService)]
+    : scenario.kqlChecks;
+
   try {
-    // Reset alert state before each scenario to prevent carryover
-    console.log(`  [${scenario.name}] resetting alert state...`);
-    await runQuery(
-      'dataset="otel" | limit 1 | project alert_id="__init__", alert_status="ok", consecutive_bad=0, consecutive_good=0, fire_count=0 | export mode=overwrite description="eval reset" to lookup criblapm_alert_states',
-      '-5m', 'now', 1,
-    ).catch(() => {});
+    // Isolation: the previous scenario's incident must not absorb this
+    // scenario's fires (same-bin collapse / adjacency). Close every
+    // live incident before flipping the flag.
+    console.log(`  [${scenario.name}] closing lingering incidents...`);
+    await closeOpenIncidents();
 
     if (scenario.flag && scenario.variant) {
       console.log(`  [${scenario.name}] flipping ${scenario.flag}=${scenario.variant}`);
@@ -285,7 +379,7 @@ export async function runScenario(
 
     // Group checks by page so we navigate once per page, not per check
     const byPage = new Map<string, SurfaceCheck[]>();
-    for (const check of scenario.surfaceChecks) {
+    for (const check of surfaceChecks) {
       const list = byPage.get(check.page) ?? [];
       list.push(check);
       byPage.set(check.page, list);
@@ -326,8 +420,8 @@ export async function runScenario(
     }
 
     // KQL checks — validate server-side state (alert status, history)
-    if (scenario.kqlChecks) {
-      for (const check of scenario.kqlChecks) {
+    if (kqlChecks) {
+      for (const check of kqlChecks) {
         console.log(`  [${scenario.name}] KQL check: ${check.surface}...`);
         const result = await evaluateKqlCheck(check);
         surfaces.push(result);

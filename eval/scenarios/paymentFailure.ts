@@ -5,6 +5,7 @@ const scenario: ScenarioDeclaration = {
   flag: 'paymentFailure',
   variant: '50%',
   expectedService: 'payment',
+  expectsIncident: true,
   telemetryWaitMs: 7 * 60_000,
   cooldownMs: 10 * 60_000,
   surfaceChecks: [

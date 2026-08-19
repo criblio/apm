@@ -5,6 +5,7 @@ const scenario: ScenarioDeclaration = {
   flag: 'llmRateLimitError',
   variant: 'on',
   expectedService: 'product-reviews',
+  expectsIncident: true,
   telemetryWaitMs: 7 * 60_000,
   cooldownMs: 10 * 60_000,
   surfaceChecks: [

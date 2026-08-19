@@ -9,6 +9,7 @@ const scenario: ScenarioDeclaration = {
   // get connection refused. Check checkout's surfaces since it's
   // the direct caller.
   expectedService: 'checkout',
+  expectsIncident: true,
   // Readiness probe failure → k8s removes cart from endpoints →
   // upstream callers get connection errors. Propagation is slow.
   telemetryWaitMs: 7 * 60_000,

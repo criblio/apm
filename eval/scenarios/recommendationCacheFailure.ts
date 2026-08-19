@@ -5,7 +5,8 @@ const scenario: ScenarioDeclaration = {
   flag: 'recommendationCacheFailure',
   variant: 'on',
   expectedService: 'recommendation',
-  telemetryWaitMs: 7 * 60_000,
+  expectsIncident: true,
+  telemetryWaitMs: 15 * 60_000,
   cooldownMs: 10 * 60_000,
   surfaceChecks: [
     {
@@ -56,7 +57,9 @@ const scenario: ScenarioDeclaration = {
       assertion: 'fieldMatches',
       field: 'alert_status',
       pattern: 'firing|pending',
-      timeoutMs: 8 * 60_000,
+      // Latency arm: p95 ramp crosses the 100ms floor ~15-20 min after
+      // flag-on, then FIRE_AFTER=2 evals (measured live 2026-08-19).
+      timeoutMs: 15 * 60_000,
       pollIntervalMs: 30_000,
     },
     {
@@ -65,14 +68,14 @@ const scenario: ScenarioDeclaration = {
       earliest: '-30m',
       latest: 'now',
       assertion: 'rowCountGt0',
-      timeoutMs: 10 * 60_000,
+      timeoutMs: 15 * 60_000,
       pollIntervalMs: 30_000,
     },
   ],
   investigator: {
     prompt:
       'Why are there recommendation service errors in the last 15 minutes? Summarise root cause.',
-    expectedRootCausePattern: 'recommendation.*error|cache|redis|ListRecommendations',
+    expectedRootCausePattern: 'cache|cached_ids|recommendation.*(latency|slow|leak)|get_product_list',
     // 10m — intermittent cache-miss patterns need multiple queries
     // to surface; 5m timed out in the 2026-05-30 eval.
     waitMs: 10 * 60_000,

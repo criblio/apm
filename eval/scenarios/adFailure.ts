@@ -5,6 +5,7 @@ const scenario: ScenarioDeclaration = {
   flag: 'adFailure',
   variant: 'on',
   expectedService: 'ad',
+  expectsIncident: true,
   // 10% Bernoulli rate on ~10 GetAds/min = ~1 error/min.
   // Need 4+ minutes for reliable detection.
   telemetryWaitMs: 7 * 60_000,

@@ -5,6 +5,7 @@ const scenario: ScenarioDeclaration = {
   flag: 'emailMemoryLeak',
   variant: '100x',
   expectedService: 'email',
+  expectsIncident: true,
   // 100x leak → OOM in minutes. Need enough time for latency
   // drift to become visible on the Duration chart.
   telemetryWaitMs: 7 * 60_000,
