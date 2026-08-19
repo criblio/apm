@@ -8,9 +8,24 @@ exports[`queries.ts — golden snapshots + invariants > alertEvaluator > snapsho
                 curr_errors=toreal(countif(is_error)) by svc
     | extend curr_error_rate=iff(curr_requests > 0, curr_errors/curr_requests, 0.0)
     | lookup criblapm_alert_prev on svc
+    // Service-level p95 in a subquery join, NOT inline in the summarize
+    // above: the baseline (prevWindowSummary) computes p95 with the
+    // >30s streaming-span filter applied, so the current side must
+    // match or services with idle-wait roots (accounting) would show
+    // a fake 10x. The request/error counts above stay unfiltered —
+    // changing them would silently shift months of threshold tuning.
+    | join kind=leftouter (
+        dataset="otel" | where isnotnull(end_time_unix_nano)
+        | extend svc=tostring(resource.attributes['service.name']),
+                 dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0
+        | where dur_us < 30000000
+        | summarize curr_p95_us=percentile(dur_us, 95) by svc
+      ) on svc
     | extend prev_requests=iff(isnotnull(prev_req), toreal(prev_req), 0.0),
              prev_errors=iff(isnotnull(prev_err), toreal(prev_err), 0.0),
-             prev_error_rate=iff(isnotnull(prev_err_rate), toreal(prev_err_rate), 0.0)
+             prev_error_rate=iff(isnotnull(prev_err_rate), toreal(prev_err_rate), 0.0),
+             curr_p95=iff(isnotnull(curr_p95_us), toreal(curr_p95_us), 0.0),
+             prev_p95=iff(isnotnull(prev_p95_us), toreal(prev_p95_us), 0.0)
     | extend curr_err_pct=curr_error_rate * 100,
              prev_err_pct=prev_error_rate * 100,
              // is_persistent is informational — used by notification
@@ -43,6 +58,16 @@ exports[`queries.ts — golden snapshots + invariants > alertEvaluator > snapsho
     // The low-volume-mode setting (P1.2) re-enables an older arm
     // for those — opt-in only since it costs precision on noisier
     // workloads.
+    // Service-level p95 regression arm (the P2 detection gap, found
+    // 2026-08-18): the per-op latency arm's 250ms floor sat above
+    // real regressions on fast services — recommendationCacheFailure
+    // degrades recommendation from ~45ms to ~140ms p95 (3.5x, "both
+    // chips fire" per FAILURE-SCENARIOS) and never alerted. Service
+    // p95 over all spans runs lower than op-level entry-span p95, so
+    // the floor here is 100ms with the same 3x ratio; volume gates
+    // match the sharp-deviation error arm. Baseline caveat: prev is
+    // the -2h..-1h window, so a degradation older than ~2h has
+    // normalized into the baseline and only FRESH regressions fire.
     | extend signal_type=case(
                curr_requests == 0 and prev_requests >= 50, "silent",
                curr_err_pct >= 5 and curr_requests >= 20, "error_rate",
@@ -50,6 +75,9 @@ exports[`queries.ts — golden snapshots + invariants > alertEvaluator > snapsho
                  and prev_requests >= 100, "error_rate",
                curr_errors >= 10 and prev_errors < 1
                  and curr_requests >= 50, "error_rate",
+               curr_p95 >= prev_p95 * 3 and curr_p95 >= 100000
+                 and prev_p95 > 0 and curr_requests >= 20
+                 and prev_requests >= 100, "latency",
                traffic_ratio <= 0.5 and prev_requests >= 50, "traffic_drop",
                "none"),
              is_bad=(
@@ -59,6 +87,9 @@ exports[`queries.ts — golden snapshots + invariants > alertEvaluator > snapsho
                    and prev_requests >= 100)
                or (curr_errors >= 10 and prev_errors < 1
                    and curr_requests >= 50)
+               or (curr_p95 >= prev_p95 * 3 and curr_p95 >= 100000
+                   and prev_p95 > 0 and curr_requests >= 20
+                   and prev_requests >= 100)
                or (traffic_ratio <= 0.5 and prev_requests >= 50))
     // alert_id is STABLE per service (doesn't include signal_type).
     // Why: when a service recovers, signal_type rotates from
