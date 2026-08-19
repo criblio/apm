@@ -117,3 +117,50 @@ incident lookup). Errors rollup → a standalone read-model lookup, same
 machinery, can land independently. Guardrails: selective maintainers (one
 lookup per hot surface), the `export to lookup` KQL traps, cadence
 staleness + lookup size limits. Roadmap: **P4.5**.
+
+## Checkpoint — resume state (end of 2026-08-19 session)
+
+### Merged to master this session
+- **#141** — code-investigation UX (autonomous repos, streaming/interruptible
+  checkout, stop button, ref pinning, syntax-highlighted file viewer + modal
+  + grep-line highlight). App **0.13.44**.
+- **#142** — incidents & lifecycle **design** (P4.4) + ROADMAP P4.4/P4.5.
+- **#143** — incident event **contract** (P4.4 Phase 1): `record_kind:'incident'`,
+  `incidentEventCommitQuery()`, status/severity enums + contract test.
+- **#144** — Alerts **read-model** (P4.5): `criblapm__alert_history` scheduled
+  search; AlertsPage reads the panel cache for ≤7d windows instead of a live
+  24h search. App **0.13.45 deployed**.
+
+### Next (in priority order)
+1. **P4.4 incidents Phase 1 (continue)** — `criblapm_incidents` lookup
+   (current-state row), the alerts→incidents **grouping saved search**
+   (window + service graph → deterministic `incident_id` → `export to
+   lookup`), incident list/detail read path. All Cribl-Search-native
+   (flag-off). Then Phases 4–6 (cell enrichment: coalescing, supervisor).
+   Design: `docs/research/server-investigations/incidents-and-lifecycle.md`.
+2. **P4.5 read models (finish)** — investigation-events badge cache
+   (flag-gated); **Errors 24h rollup** (raw spans → incremental rolling
+   lookup or slower-cadence, so it doesn't add pool load).
+3. **Detection gap — latency alerting (NEW, high value)** — the alert
+   evaluator (`Q.alertEvaluator`, `src/api/queries.ts:640-647`) fires only on
+   **error-rate / silent / traffic-drop**; it has **no latency condition**.
+   `p95_us` + `prev_p95_us` (baseline) are already computed but never gate
+   `is_bad`. So `recommendationCacheFailure` (latency-dominant + intermittent
+   sub-5% errors) never fired an alert despite being visible in metrics
+   (Clint confirmed). Fix: add a **p95-regression arm**
+   (`curr_p95 >= prev_p95 * K and curr_p95 >= floor` → `signal_type="latency"`),
+   the data's already there. ROADMAP P2 detection-quality.
+
+### Environment state (for resume)
+- **flagd**: `recommendationCacheFailure` ON, all else off (port-forward runs
+  on Clint's box — `kubectl -n otel-demo port-forward svc/flagd 4000:4000`;
+  `scripts/flagd-set.sh --status` to check).
+- **Cell**: deployed with the code-investigation features + `/config/repos` =
+  `opentelemetry-demo@2.2.0`. No autonomous investigations from the current
+  scenario because no alert fires (see the detection gap).
+- **App**: 0.13.45.
+- **Branches**: everything merged to master; `feat/incidents-p4.4` +
+  `feat/read-models-p4.5` are merged and can be deleted.
+- **Known flake**: `tests/live-generated-events.spec.ts` times out on search
+  jobs when staging is saturated — #142/#143/#144 were admin-merged past it
+  (all own gates green). Not a regression.

@@ -384,6 +384,15 @@ onset detection and CI live-smoke.
   four evals; threshold loosening provably insufficient). Alert
   when p95 is above baseline AND the slope over the last 3-5
   buckets is positive.
+  - **Near-term first step (evidence 2026-08-19):** the evaluator has
+    **no latency arm at all** today — `is_bad` (`src/api/queries.ts:640-647`)
+    fires only on error-rate / silent / traffic-drop. `curr_p95_us` +
+    `prev_p95_us` (baseline) are already computed but never gate `is_bad`.
+    `recommendationCacheFailure` (latency-dominant, intermittent sub-5%
+    errors) was visible in metrics but **never fired an alert**. Land a
+    simple **p95-regression arm** first (`curr_p95 >= prev_p95 * K and
+    curr_p95 >= floor` → `signal_type="latency"`) — cheap, data's there —
+    then layer slope on top.
 - **P2.2 Seasonality-aware baselines** (L) — day-of-week /
   hour-of-day baselines instead of fixed prior-window. Needs the
   packed-row workaround for the lookup one-row-per-key limit
@@ -505,6 +514,11 @@ add user alerts, SLOs, and trace depth.
   `docs/research/server-investigations/incidents-and-lifecycle.md`.
   Cross-refs P4.1 (Investigator v2), P4.3 (server-side investigations),
   P3.1 (alert notifications).
+  - **Progress (2026-08-19): Phase 1 started** — the incident event
+    contract (`record_kind:'incident'`, `incidentEventCommitQuery`) landed
+    in #143. **Next:** `criblapm_incidents` lookup (current-state row) +
+    the alerts→incidents grouping saved search + incident list/detail read
+    path. Then Phases 4–6 (cell enrichment).
 
 - **P4.5 Materialized read models for hot pages** (M — design 2026-08-18)
   — a perf/architecture principle the codebase is already halfway to
@@ -533,6 +547,11 @@ add user alerts, SLOs, and trace depth.
     `export to lookup` KQL traps (`(?i)`/mv-expand corruption, see the
     skill doc), and accept ~cadence staleness + lookup size limits (that's
     why history stays events).
+  - **Progress (2026-08-19): Alerts history landed** (#144) — the
+    `criblapm__alert_history` scheduled search + panel-cache read removed a
+    live 24h search from every Alerts load. **Next:** investigation-events
+    badge cache (flag-gated), and the Errors 24h rollup (raw spans →
+    incremental / slower-cadence so it doesn't add pool load).
 
 ## P5 — Breadth
 
