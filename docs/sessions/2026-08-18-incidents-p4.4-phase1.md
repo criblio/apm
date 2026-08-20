@@ -268,6 +268,31 @@ design). Notification break confirmed platform-wide (Clint filed the
 Search bug); once fixed, webhook resumes as primary with the poll as
 dedup-free backstop.
 
+## Addendum 6: eval-harness modernization (incidents-aware)
+
+Per Clint: update the scenario eval framework for the new UI and add
+incident coverage. Landed (eval/):
+
+- **Incident-layer checks** (eval/incidentChecks.ts), auto-appended to
+  the 9 alert-firing scenarios via `expectsIncident: true`: incident
+  listed with live status on Alerts (10-min budget — the incident
+  materializes ~6-8 min post-fire), drill-in page renders with the
+  member, opened/attached events (-20m window so a previous scenario's
+  closed incident can't satisfy it), live fold row.
+- **Scenario isolation**: agent-closes all live incidents pre-scenario.
+- **Investigator step** now supports server investigations (both
+  composer generations + completion markers).
+- **Three harness bugs found by live smokes**: fresh auth sessions
+  re-show the workspace announcement modal (run.ts now uses the shared
+  gotoApm that dismisses it); Capra VerticalNavigation items are
+  BUTTONS, not links (getByRole('link') never matched — new navItem
+  locator); nav wait budgets normalized to 30s.
+- **Isolation insight**: back-to-back runs of the SAME scenario are
+  contaminated — the alert never resolves between runs, so no fresh
+  firing transition exists and the (transition-driven) grouper has no
+  trigger. Full-suite runs with cooldowns + distinct services mostly
+  avoid it; same-scenario reruns need the documented 15-30 min decay.
+
 ## Follow-ups
 
 1. **P4.3: Cribl→cell notify delivery** — see above; highest priority

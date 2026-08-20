@@ -51,8 +51,11 @@ export function incidentKqlChecks(svc: string): KqlCheck[] {
   return [
     {
       surface: `incidentEvents_${svc}`,
+      // -20m so events from the PREVIOUS scenario's (closed) incident
+      // can't satisfy this check — the scenario's own events land
+      // ~15 min after flag flip, inside this window at poll time.
       query: `dataset="otel" | where coalesce(tostring(data_datatype), tostring(datatype)) == "criblapm_alert" | where record_kind == "incident" and event_type in ("opened", "attached") and services == "${svc}"`,
-      earliest: '-45m',
+      earliest: '-20m',
       latest: 'now',
       assertion: 'rowCountGt0',
       timeoutMs: 12 * 60_000,
