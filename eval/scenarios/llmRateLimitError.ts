@@ -69,7 +69,7 @@ const scenario: ScenarioDeclaration = {
     },
     {
       surface: 'alertHistoryproductreviewsFired',
-      query: 'dataset="otel" | where data_datatype == "criblapm_alert" and svc == "product-reviews" and event_type == "firing"',
+      query: 'dataset="otel" | where coalesce(tostring(data_datatype), tostring(datatype)) == "criblapm_alert" and svc == "product-reviews" and event_type == "firing"',
       earliest: '-30m',
       latest: 'now',
       assertion: 'rowCountGt0',
