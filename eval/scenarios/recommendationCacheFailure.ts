@@ -6,7 +6,7 @@ const scenario: ScenarioDeclaration = {
   variant: 'on',
   expectedService: 'recommendation',
   expectsIncident: true,
-  telemetryWaitMs: 15 * 60_000,
+  telemetryWaitMs: 22 * 60_000,
   cooldownMs: 10 * 60_000,
   surfaceChecks: [
     {

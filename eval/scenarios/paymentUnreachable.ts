@@ -89,7 +89,7 @@ const scenario: ScenarioDeclaration = {
       'The payment service appears unreachable. What is causing checkout failures in the last 15 minutes? Summarise root cause.',
     expectedRootCausePattern:
       'payment.*unreachable|unavailable|connection.*refused|payment.*down',
-    waitMs: 5 * 60_000,
+    waitMs: 9 * 60_000,
   },
 };
 

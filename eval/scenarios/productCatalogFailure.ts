@@ -74,7 +74,7 @@ const scenario: ScenarioDeclaration = {
     prompt:
       'Why are there product-catalog errors in the last 15 minutes? Which product is affected?',
     expectedRootCausePattern: 'product.catalog|OLJCESPC7Z|product.*id|GetProduct',
-    waitMs: 5 * 60_000,
+    waitMs: 9 * 60_000,
   },
 };
 

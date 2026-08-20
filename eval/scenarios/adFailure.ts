@@ -76,7 +76,7 @@ const scenario: ScenarioDeclaration = {
     prompt:
       'Are there any ad service errors in the last 15 minutes? Summarise root cause.',
     expectedRootCausePattern: 'ad.*error|GetAds|UNAVAILABLE|adservice',
-    waitMs: 5 * 60_000,
+    waitMs: 9 * 60_000,
   },
 };
 

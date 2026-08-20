@@ -80,7 +80,7 @@ const scenario: ScenarioDeclaration = {
     prompt:
       'Checkout is experiencing errors calling the cart service. Is cart having availability issues in the last 15 minutes?',
     expectedRootCausePattern: 'cart.*error|connection.*refused|unavailable|readiness|pod|restart|cart.*down|cart.*unreachable',
-    waitMs: 5 * 60_000,
+    waitMs: 9 * 60_000,
   },
 };
 

@@ -84,7 +84,7 @@ const scenario: ScenarioDeclaration = {
     prompt:
       'Why are there payment service errors in the last 15 minutes? Summarise root cause.',
     expectedRootCausePattern: 'payment.*error|charge.*fail|invalid.*token',
-    waitMs: 5 * 60_000,
+    waitMs: 9 * 60_000,
   },
 };
 

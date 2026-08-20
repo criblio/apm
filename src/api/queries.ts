@@ -592,6 +592,27 @@ export function alertEvaluator(): string {
              is_error=(tostring(status.code)=="2")
     | summarize curr_requests=toreal(count()),
                 curr_errors=toreal(countif(is_error)) by svc
+    // Silent-service driver rows: a fully-down service emits NO spans,
+    // so it has no summarize row — which made the "silent" arm
+    // structurally unreachable AND froze its alert state machine
+    // (found by the 2026-08-20 full-suite eval on paymentUnreachable).
+    // Synthesize curr_requests=0 rows for services present in the -1h
+    // service-summary cache but absent from the current window; the
+    // prev-window volume gate (prev_requests >= 50) still applies, so
+    // a service quiet for over an hour simply ages out of detection
+    // after its alert has already fired.
+    | union (
+        dataset="$vt_results"
+        | where jobName == "criblapm__home_service_summary"
+        | extend svc=tostring(svc)
+        | join kind=leftanti (
+            ${spansBase()}
+            | extend svc=tostring(resource.attributes['service.name'])
+            | summarize n=count() by svc
+          ) on svc
+        | summarize n_rows=count() by svc
+        | project svc, curr_requests=toreal(0), curr_errors=toreal(0)
+      )
     | extend curr_error_rate=iff(curr_requests > 0, curr_errors/curr_requests, 0.0)
     | lookup criblapm_alert_prev on svc
     // Service-level p95 in a subquery join, NOT inline in the summarize

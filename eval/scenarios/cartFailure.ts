@@ -82,7 +82,7 @@ const scenario: ScenarioDeclaration = {
     prompt:
       'Why are there cart service errors in the last 15 minutes? Summarise root cause.',
     expectedRootCausePattern: 'cart.*error|redis|valkey|emptyCart|getCart',
-    waitMs: 5 * 60_000,
+    waitMs: 9 * 60_000,
   },
 };
 

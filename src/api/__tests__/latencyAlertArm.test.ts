@@ -42,6 +42,16 @@ describe('alertEvaluator latency arm', () => {
     expect(beforeJoin).toContain('dur_us < 30000000');
   });
 
+  it('synthesizes driver rows for silent services (the silent arm is reachable)', () => {
+    // A fully-down service emits no spans → no summarize row → without
+    // the driver union the `curr_requests == 0` silent case can never
+    // match a row (proven live 2026-08-20; synthetic blind test showed
+    // signal_type="silent" flows once driver rows exist).
+    expect(q).toContain('jobName == "criblapm__home_service_summary"');
+    expect(q).toContain('join kind=leftanti');
+    expect(q).toContain('curr_requests=toreal(0)');
+  });
+
   it('latency ranks below error_rate and above traffic_drop', () => {
     const caseBlock = q.slice(q.indexOf('signal_type=case('), q.indexOf('is_bad=('));
     const errIdx = caseBlock.indexOf('"error_rate"');

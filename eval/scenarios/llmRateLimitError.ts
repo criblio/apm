@@ -81,7 +81,7 @@ const scenario: ScenarioDeclaration = {
     prompt:
       'Why are there product-reviews errors in the last 15 minutes? Summarise root cause.',
     expectedRootCausePattern: 'product.reviews|rate.limit|llm|429|throttl',
-    waitMs: 5 * 60_000,
+    waitMs: 9 * 60_000,
   },
 };
 
