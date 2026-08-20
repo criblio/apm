@@ -49,20 +49,49 @@ provisioning steps are done.
 
 ### 4. Open it
 
-Give the scheduled searches a few minutes to run, then open **Home** — it
-fills with your services, golden-signal sparklines, and the slowest and
-most error-prone traces.
+Give the scheduled searches a few minutes to run, then open **Overview**
+— it fills with your services, golden-signal sparklines, and detected
+issues.
+
+Alerting and incidents need no extra setup: the provisioned searches
+evaluate every service's health each cadence, firing alerts on
+error-rate spikes, latency regressions, traffic drops, and silent
+services — and related alerts collapse automatically into **Incidents**,
+the unit you drill into from the Alerts page.
+
+### 5. (Optional) Turn on server-side investigations
+
+With an investigator cell deployed, every fired alert gets an
+autonomous AI investigation — root cause, evidence, and remediation,
+written back to the incident. See
+**[docs/server-side-investigations.md](docs/server-side-investigations.md)**
+for setup; without it, everything above still works and the
+**Investigate** page runs interactively in your browser session.
 
 ## What you get
 
-- **Home** — multi-service health board with golden-signal sparklines and
-  top slow / error trace classes.
-- **Search** — Jaeger-style trace search by service, operation, and time.
-- **Trace detail** — full waterfall span tree with per-span detail.
-- **System Architecture** — force-directed service dependency graph.
-- **Compare** — structural diff between two traces.
-- **Investigate** — embedded Cribl Copilot: seed a symptom and it walks
-  the data to surface a root cause.
+- **Overview** — system health at a glance: detected issues, golden
+  signals, services needing attention.
+- **Services / Service Detail** — the health catalog and per-service
+  RED charts, top operations, instances, and spotlight diffs.
+- **Service Map** — force-directed service dependency graph (RPC +
+  messaging edges).
+- **Traces** — Jaeger-style trace search; full waterfall span detail;
+  structural diff between two traces (Compare).
+- **Logs / Metrics** — log search scoped to your services; metric
+  discovery and charting over the wide-column store.
+- **Alerts & Incidents** — server-evaluated alerts (error rate,
+  latency regression, traffic drop, silent service) rolling up into
+  incidents; each incident has a warroom page with the summary
+  narrative, AI investigation findings, member services, and a
+  timeline humans annotate directly (notes, status, severity,
+  close/reopen).
+- **Errors** — error-class rollup with noise filtering.
+- **Investigate** — the AI investigator: seed a symptom (or launch
+  from an alert or incident) and it walks the data — and optionally
+  the service's source code — to a root cause. Runs server-side when
+  the [investigator cell](docs/server-side-investigations.md) is
+  deployed, in-browser otherwise.
 
 ## Notes
 
