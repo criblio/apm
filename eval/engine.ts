@@ -54,6 +54,15 @@ async function closeOpenIncidents(): Promise<void> {
   }
 }
 
+/** Left-nav item locator: Capra VerticalNavigation renders items as
+ * <button> (react-aria), so role=link never matches; scope to the nav
+ * container and accept either element kind. */
+function navItem(apm: ReturnType<typeof apmFrame>, name: string) {
+  return apm
+    .locator(`[class*="VerticalNavigation"] :is(a, button):has-text("${name}")`)
+    .first();
+}
+
 async function navigateToPage(
   page: Page,
   pageName: string,
@@ -76,7 +85,7 @@ async function navigateToPage(
   } else if (pageName === 'home' || pageName === 'services') {
     await gotoApm(page, '/');
     await page.waitForTimeout(1000);
-    await apm.getByRole('link', { name: 'Services', exact: true }).click();
+    await navItem(apm, 'Services').click();
     await apm.getByText(/^Services \(\d+\)/).waitFor({
       state: 'visible',
       timeout: 60_000,
@@ -85,13 +94,13 @@ async function navigateToPage(
   } else if (pageName === 'errors') {
     await gotoApm(page, '/');
     await page.waitForTimeout(1000);
-    await apm.getByRole('link', { name: 'Errors', exact: true }).click();
+    await navItem(apm, 'Errors').click();
     await page.waitForTimeout(5000);
     return true;
   } else if (pageName === 'serviceDetail') {
     await gotoApm(page, '/');
     await page.waitForTimeout(1000);
-    await apm.getByRole('link', { name: 'Services', exact: true }).click();
+    await navItem(apm, 'Services').click();
     const tableLoaded = await apm.getByText(/^Services \(\d+\)/).waitFor({
       state: 'visible',
       timeout: 60_000,
@@ -115,9 +124,9 @@ async function navigateToPage(
   } else if (pageName === 'alerts') {
     await gotoApm(page, '/');
     await page.waitForTimeout(2000);
-    const alertsLink = apm.getByRole('link', { name: 'Alerts' });
+    const alertsLink = navItem(apm, 'Alerts');
     const visible = await alertsLink
-      .waitFor({ state: 'visible', timeout: 10_000 })
+      .waitFor({ state: 'visible', timeout: 30_000 })
       .then(() => true)
       .catch(() => false);
     if (!visible) return false;
@@ -131,9 +140,9 @@ async function navigateToPage(
     // row locator can't land on Episodes or Currently Active.
     await gotoApm(page, '/');
     await page.waitForTimeout(2000);
-    const alertsLink = apm.getByRole('link', { name: 'Alerts' });
+    const alertsLink = navItem(apm, 'Alerts');
     const linkVisible = await alertsLink
-      .waitFor({ state: 'visible', timeout: 10_000 })
+      .waitFor({ state: 'visible', timeout: 30_000 })
       .then(() => true)
       .catch(() => false);
     if (!linkVisible) return false;
@@ -258,7 +267,7 @@ async function runInvestigator(
     await gotoApm(page, '/');
     const apm = apmFrame(page);
     await page.waitForTimeout(1000);
-    await apm.getByRole('link', { name: 'Investigate', exact: true }).click();
+    await navItem(apm, 'Investigate').click();
     // Inner-frame URL changes aren't observable via page.waitForURL —
     // wait on the composer instead.
 

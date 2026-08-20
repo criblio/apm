@@ -25,7 +25,10 @@ export function incidentSurfaceChecks(svc: string): SurfaceCheck[] {
       page: 'alerts',
       locator: `table tr:has-text("${svc}"):is(:has-text("Open"), :has-text("Investigating"), :has-text("Identified"))`,
       assertion: 'countGt0',
-      timeoutMs: 120_000,
+      // The incident materializes ~6-8 min after the alert fires
+      // (grouper +3 cycle → fold +4 → export). The Alerts page
+      // auto-refreshes every 30s, so polling the DOM is enough.
+      timeoutMs: 10 * 60_000,
     },
     {
       surface: `incidentPageSummary_${svc}`,
