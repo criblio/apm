@@ -431,6 +431,7 @@ export interface IncidentTimelineEntry {
   author: 'agent' | 'human' | 'system';
   status?: string;
   severity?: string;
+  rootService?: string;
   services?: string;
   note?: string;
   investigationId?: string;

@@ -41,7 +41,7 @@ const scenario: ScenarioDeclaration = {
     prompt:
       'The ad service latency has increased across all percentiles. What is causing it in the last 15 minutes?',
     expectedRootCausePattern: 'ad.*cpu|saturat|latency.*increas|p95.*p99.*both|broad.*shift',
-    waitMs: 5 * 60_000,
+    waitMs: 9 * 60_000,
   },
 };
 

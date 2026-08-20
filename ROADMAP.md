@@ -379,20 +379,34 @@ aggregation (P1.1 in the old numbering) so threshold changes can
 now be evaluated on both axes. Remaining items address gradual-
 onset detection and CI live-smoke.
 
+- ~~**P2.0 service-level p95-regression arm**~~ — **SHIPPED 2026-08-19
+  (#147)**: `curr_p95 >= prev_p95 * 3 AND curr_p95 >= 100ms`,
+  volume-gated, stream-filter parity with the baseline. Fired
+  naturally on `recommendationCacheFailure` (2.2ms → 160ms) and again
+  inside the 2026-08-20 full-suite eval. Known limitation: the rolling
+  -2h..-1h baseline ABSORBS a sustained degradation after ~2h and the
+  alert self-resolves — a **sticky baseline** (freeze prev while
+  firing) is the follow-up, deliberate evaluator-semantics change.
+- ~~**P2.0b silent arm reachability**~~ — **SHIPPED 2026-08-20**: the
+  silent case was structurally unreachable (a down service emits no
+  spans → no evaluator row; its alert state machine also froze). The
+  evaluator now synthesizes `curr_requests=0` driver rows from the -1h
+  service-summary cache (leftanti current window). Proven by synthetic
+  blind test; found by the full-suite eval on `paymentUnreachable`.
+- **P2.0c lowVolumeMode decision (S, config-only)** — the 2026-08-20
+  full suite scored mean 0.48 (normalized ≈0.54); enabling the
+  existing P1.2 `lowVolumeMode` flag on the demo workspace un-silences
+  the three margin scenarios that never fire (`adFailure` ~4%<5%,
+  `llmRateLimitError`, `productCatalogFailure`) → projected mean
+  ≈0.75. Tradeoff is precision on noisy real workloads — that's why
+  it's a flag. Decision owner: Clint.
 - **P2.1 Slope-based latency detection** (L) — the real fix for
-  gradual-onset scenarios (`emailMemoryLeak` stuck at 0.30 across
-  four evals; threshold loosening provably insufficient). Alert
+  gradual-onset scenarios (`emailMemoryLeak` scored 0.06 surfaces in
+  the 2026-08-20 suite; `adHighCpu`/`adManualGc` similar). Alert
   when p95 is above baseline AND the slope over the last 3-5
-  buckets is positive.
-  - **Near-term first step (evidence 2026-08-19):** the evaluator has
-    **no latency arm at all** today — `is_bad` (`src/api/queries.ts:640-647`)
-    fires only on error-rate / silent / traffic-drop. `curr_p95_us` +
-    `prev_p95_us` (baseline) are already computed but never gate `is_bad`.
-    `recommendationCacheFailure` (latency-dominant, intermittent sub-5%
-    errors) was visible in metrics but **never fired an alert**. Land a
-    simple **p95-regression arm** first (`curr_p95 >= prev_p95 * K and
-    curr_p95 >= floor` → `signal_type="latency"`) — cheap, data's there —
-    then layer slope on top.
+  buckets is positive. With the p95 arm shipped, this layers slope on
+  top; also needed: a traffic-surge arm (`loadGeneratorFloodHomepage`)
+  and a look at why `failedReadinessProbe` no longer manifests.
 - **P2.2 Seasonality-aware baselines** (L) — day-of-week /
   hour-of-day baselines instead of fixed prior-window. Needs the
   packed-row workaround for the lookup one-row-per-key limit
@@ -524,10 +538,34 @@ add user alerts, SLOs, and trace depth.
     $vt_results self-read + -1h delta + high-water dedup; derived
     status with debounce/close/reopen), `criblapm__incidents_export`
     (→ `criblapm_incidents` lookup). Read path:
-    `listCachedIncidents()` + `Q.incidentEvents()`. **Next: Phase 2**
-    — Incidents list/detail UI + human warroom writes (notes,
-    status/severity, close/reopen via `incidentEventCommitQuery`);
-    then Phase 3 archival polish, Phases 4–6 (cell enrichment).
+    `listCachedIncidents()` + `Q.incidentEvents()`.
+  - **Progress (2026-08-19 overnight): Phases 2A+2B COMPLETE, Phase
+    4-lite + poll trigger (#147)** — Incidents section atop the Alerts
+    page (no new nav concept; old table renamed Alert Episodes); rich
+    `/incident/:id` page (summary narrative, correlated investigations
+    with conclusions/transcripts, member episode stats, interleaved
+    warroom timeline); human warroom writes (notes, status/severity,
+    close/reopen — Playwright-validated round-trip); Investigate-from-
+    incident seeds the agent with incident context and commits
+    `investigation_linked`. Cell-side: coordinator now POLLS firing
+    alerts via a durable alarm — Cribl's notification dispatch broke
+    **workspace-wide** ~08-15 (confirmed: Clint's pre-existing ntfy
+    notifications also dead; Search-team bug filed). When dispatch is
+    fixed the webhook resumes as primary; the poll stays as a free
+    dedup-safe backstop. **Poll deploy to celld still pending**
+    (`f1be7c9`; handoff with the cell agent).
+  - **Progress (2026-08-20): grouping hardened by live soak + eval**
+    — adjacency attaches only to OPEN incidents within 60m of onset
+    (window W); member refires own reopen; carried state authoritative
+    for title/root/opened_at; derived resolution supersedes
+    active-state human overrides; all current-state readers keep only
+    the latest evaluator run (keepLastN=2 mixing). The 2026-08-20
+    full-suite eval exercised the whole loop: cartFailure 0.95 with
+    all five incident checks green; investigator root-caused 8/13.
+    **Next: Phase 3** (archival polish + daily reconciliation fold),
+    **Phase 4 proper** (cell stamps incident_id, attach-vs-spawn
+    coalescing, /config/graph), Phases 5–6 (resolved notify,
+    supervisor summary_md).
 
 - **P4.5 Materialized read models for hot pages** (M — design 2026-08-18)
   — a perf/architecture principle the codebase is already halfway to

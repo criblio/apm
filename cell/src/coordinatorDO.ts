@@ -11,6 +11,7 @@
  *   - the investigations index the UI lists.
  */
 import type { Env } from './env';
+import { CriblClient } from './criblClient';
 import {
   incidentKey,
   titleFromPrompt,
@@ -23,6 +24,11 @@ import {
 
 const MAX_CONCURRENT = 1;
 const MAX_PER_HOUR = 10;
+/** Poll cadence for the firing-alert pull loop (see alarm()). */
+const POLL_INTERVAL_MS = 5 * 60_000;
+/** Window for each poll — matches the notify search's -15m; event_id
+ *  dedup absorbs the overlap between consecutive polls. */
+const POLL_WINDOW = '-15m';
 /** A 'running' investigation older than this is treated as orphaned
  *  (its node died) and reclaimed so it can't wedge the queue. Well
  *  above any real run: the InvestigationDO caps itself at MAX_TURNS. */
@@ -67,44 +73,13 @@ export class CoordinatorDO {
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
+    // Any request arms the pull loop — a deploy's first health probe
+    // or UI list call is enough to start polling forever after.
+    await this.ensurePollAlarm();
 
     if (url.pathname === '/internal/fire' && request.method === 'POST') {
       const alerts = (await request.json()) as FiringAlert[];
-      let accepted = 0;
-      const admittedThisHour = Number(
-        this.state.storage.sql
-          .exec(
-            `SELECT COUNT(*) AS n FROM investigations WHERE created_at > ?`,
-            Date.now() - 3_600_000,
-          )
-          .one().n,
-      );
-      let hourBudget = MAX_PER_HOUR - admittedThisHour;
-
-      for (const alert of alerts) {
-        if (!alert?.event_id || !alert?.alert_id || !alert?.svc) continue;
-        if (hourBudget <= 0) break;
-        const id = `inv-${crypto.randomUUID()}`;
-        // event_id is UNIQUE, so let the insert do the dedupe. The
-        // separate SELECT this replaces cost a second statement per
-        // alert and left a gap between the check and the write.
-        const written = this.state.storage.sql.exec(
-          `INSERT INTO investigations
-             (id, event_id, alert_id, incident_key, status, alert_json, created_at)
-           VALUES (?, ?, ?, ?, 'queued', ?, ?)
-           ON CONFLICT(event_id) DO NOTHING`,
-          id,
-          alert.event_id,
-          alert.alert_id,
-          incidentKey(alert),
-          JSON.stringify(alert),
-          Date.now(),
-        ).rowsWritten;
-        if (written === 0) continue; // already admitted
-        accepted++;
-        hourBudget--;
-      }
-
+      const accepted = this.admitAlerts(alerts);
       await this.pump();
       return Response.json({ accepted });
     }
@@ -120,12 +95,19 @@ export class CoordinatorDO {
       // for interactive rows (they have no alert to dedupe on).
       const eventId = `ui-${crypto.randomUUID()}`;
       const title = (body.title?.trim() || titleFromPrompt(prompt)).slice(0, 120);
+      // Carry the seed's service into incident_key ("svc:interactive")
+      // so the incident page can correlate interactive runs by service;
+      // a bare 'interactive' key made them structurally unmatchable
+      // (observed 2026-08-20: eval-launched runs invisible on incidents).
+      const svc = typeof body.context?.service === 'string' ? body.context.service.trim() : '';
+      const incidentKeyVal = svc ? `${svc}:interactive` : 'interactive';
       this.state.storage.sql.exec(
         `INSERT INTO investigations
            (id, event_id, alert_id, incident_key, status, alert_json, created_at, mode, title)
-         VALUES (?, ?, '', 'interactive', 'queued', ?, ?, 'interactive', ?)`,
+         VALUES (?, ?, '', ?, 'queued', ?, ?, 'interactive', ?)`,
         id,
         eventId,
+        incidentKeyVal,
         JSON.stringify({ prompt, context: body.context ?? null, repos: body.repos ?? null }),
         Date.now(),
         title,
@@ -248,6 +230,130 @@ export class CoordinatorDO {
    *  set). */
   private async defaultRepos(): Promise<SourceRepo[]> {
     return (await this.state.storage.get<SourceRepo[]>('defaultRepos')) ?? [];
+  }
+
+  /** Shared admission: dedupe on event_id (UNIQUE column — webhook
+   *  retries, overlapping notify windows, and overlapping poll windows
+   *  all collapse here) under the hourly runaway cap. Used by the
+   *  /internal/fire push path and the alarm pull loop. */
+  private admitAlerts(alerts: FiringAlert[]): number {
+    let accepted = 0;
+    const admittedThisHour = Number(
+      this.state.storage.sql
+        .exec(
+          `SELECT COUNT(*) AS n FROM investigations WHERE created_at > ?`,
+          Date.now() - 3_600_000,
+        )
+        .one().n,
+    );
+    let hourBudget = MAX_PER_HOUR - admittedThisHour;
+
+    for (const alert of alerts) {
+      if (!alert?.event_id || !alert?.alert_id || !alert?.svc) continue;
+      if (hourBudget <= 0) break;
+      const id = `inv-${crypto.randomUUID()}`;
+      const written = this.state.storage.sql.exec(
+        `INSERT INTO investigations
+           (id, event_id, alert_id, incident_key, status, alert_json, created_at)
+         VALUES (?, ?, ?, ?, 'queued', ?, ?)
+         ON CONFLICT(event_id) DO NOTHING`,
+        id,
+        alert.event_id,
+        alert.alert_id,
+        incidentKey(alert),
+        JSON.stringify(alert),
+        Date.now(),
+      ).rowsWritten;
+      if (written === 0) continue; // already admitted
+      accepted++;
+      hourBudget--;
+    }
+    return accepted;
+  }
+
+  // ── Pull-based trigger (replaces the Cribl notification webhook) ──
+  //
+  // Cribl's saved-search notification delivery to the cell webhook
+  // stopped executing silently around 2026-08-15 (target, binding, and
+  // search all verified healthy; multiple payload formats and fresh
+  // bindings all failed to deliver; no log surface exists to see why).
+  // Rather than depend on an opaque push, the coordinator PULLS: a
+  // durable self-re-arming alarm polls the same firing-alert query the
+  // notify search runs, through the same admission/dedup path. The
+  // /alerts/fire webhook stays wired — if Cribl delivery comes back it
+  // simply dedupes against what the poll already admitted.
+
+  /** True while an alarm-poll is in flight. celld does NOT serialize
+   *  DO alarms (learned the hard way in #131), so overlapping alarms
+   *  must short-circuit rather than double-poll. */
+  private pollInFlight = false;
+
+  private async ensurePollAlarm(): Promise<void> {
+    if ((await this.state.storage.getAlarm()) == null) {
+      await this.state.storage.setAlarm(Date.now() + 5_000);
+    }
+  }
+
+  async alarm(): Promise<void> {
+    try {
+      if (!this.pollInFlight) {
+        this.pollInFlight = true;
+        try {
+          await this.pollFiringAlerts();
+        } finally {
+          this.pollInFlight = false;
+        }
+      }
+    } catch {
+      /* next tick retries; polling must never wedge the alarm chain */
+    } finally {
+      await this.state.storage.setAlarm(Date.now() + POLL_INTERVAL_MS);
+    }
+  }
+
+  /** One poll: read the criblapm__alert_notify search's LATEST cached
+   *  results from $vt_results and admit the rows. Reading the notify
+   *  search's output — rather than re-scanning the dataset — preserves
+   *  the app-side serverInvestigations gate: when the flag is off the
+   *  provisioner deletes that search, $vt_results has no rows under its
+   *  jobName, and the poll is a guaranteed no-op. It also replaces a
+   *  raw -15m dataset scan every 5 minutes with a cheap cache read. */
+  private async pollFiringAlerts(): Promise<void> {
+    if (this.env.DISABLED === 'true') return;
+    const { CRIBL_BASE_URL, CRIBL_CLIENT_ID, CRIBL_CLIENT_SECRET } = this.env;
+    if (!CRIBL_BASE_URL || (!this.env.CRIBL_DEV_TOKEN && (!CRIBL_CLIENT_ID || !CRIBL_CLIENT_SECRET))) {
+      return; // no Cribl access configured (e.g. offline smoke) — poll is a no-op
+    }
+    const client = new CriblClient({
+      baseUrl: CRIBL_BASE_URL,
+      clientId: CRIBL_CLIENT_ID ?? '',
+      clientSecret: CRIBL_CLIENT_SECRET ?? '',
+      dataset: (this.env.CRIBL_DATASET || 'otel').replace(/[^a-zA-Z0-9_-]/g, ''),
+      devToken: this.env.CRIBL_DEV_TOKEN,
+    });
+    // Latest run only: $vt_results retains keepLastN runs; jobId's
+    // fixed-width epoch-millis prefix makes the string max the newest.
+    const kql = `dataset="$vt_results"
+      | where jobName == "criblapm__alert_notify"
+      | join kind=inner (
+          dataset="$vt_results"
+          | where jobName == "criblapm__alert_notify"
+          | summarize jobId=max(tostring(jobId))
+        ) on jobId
+      | project event_id, alert_id, svc, signal_type, curr_error_rate, fire_count, _time
+      | limit 50`;
+    const rows = await client.runQuery(kql, POLL_WINDOW, 'now', 50);
+    if (rows.length === 0) return;
+    const alerts: FiringAlert[] = rows.map((r) => ({
+      event_id: String(r.event_id ?? ''),
+      alert_id: String(r.alert_id ?? ''),
+      svc: String(r.svc ?? ''),
+      signal_type: String(r.signal_type ?? ''),
+      curr_error_rate: Number(r.curr_error_rate ?? 0),
+      fire_count: Number(r.fire_count ?? 0),
+      _time: Number(r._time ?? 0),
+    }));
+    if (this.admitAlerts(alerts) > 0) await this.pump();
   }
 
   /**

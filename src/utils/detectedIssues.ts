@@ -168,6 +168,10 @@ export function buildDetectedIssuesFromCache(
       error_rate: r.currErrorRate * 100 >= 5 ? 'error_rate_critical' : 'error_rate_warn',
       traffic_drop: 'traffic_drop',
       silent: 'silent',
+      // Service-level p95-regression arm (2026-08-19). Without this
+      // mapping a firing latency alert showed on the Alerts page but
+      // was silently dropped from the Overview's Detected Issues.
+      latency: 'latency_anomaly',
     };
     const signalType = signalMap[r.signalType];
     if (!signalType) continue;
@@ -192,6 +196,9 @@ export function buildDetectedIssuesFromCache(
       }
       case 'silent':
         detail = `No traffic (was ${fmtRate(r.prevRequests, rangeMinutes)})`;
+        break;
+      case 'latency':
+        detail = `Service p95 latency regressed vs the previous hour`;
         break;
       default:
         continue;

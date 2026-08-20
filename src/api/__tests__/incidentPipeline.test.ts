@@ -37,6 +37,16 @@ describe('incidentGrouper', () => {
     expect(q).toContain('tostring(incident_id) != "__init__"');
   });
 
+  it('adjacency attaches only to OPEN incidents (member refire owns reopen)', () => {
+    const adj = q.slice(q.indexOf('criblapm__sysarch_dependencies'), q.indexOf('adj_incident_id=max'));
+    expect(adj).toContain('tostring(status) == "open"');
+  });
+
+  it('adjacency attaches only within the onset window W', () => {
+    const adj = q.slice(q.indexOf('criblapm__sysarch_dependencies'), q.indexOf('adj_incident_id=max'));
+    expect(adj).toContain(`toreal(opened_at) >= toreal(now()) - ${60 * 60}`);
+  });
+
   it('is idempotent: leftanti dedup on already-committed event ids', () => {
     expect(q).toContain('join kind=leftanti');
     expect(q).toContain('record_kind == "incident"');
@@ -106,7 +116,9 @@ describe('incidentEvents reader', () => {
     const q = Q.incidentEvents('inc:17\'"x');
     expect(q).toContain('record_kind == "incident"');
     expect(q).toContain('incident_id == "inc:17\'\\"x"');
-    expect(q).toContain('sort by _time asc');
+    // Newest-first before the limit so a capped incident drops its
+    // OLDEST events; readers re-sort ascending client-side.
+    expect(q).toContain('sort by _time desc');
   });
 
   it('caps the limit', () => {

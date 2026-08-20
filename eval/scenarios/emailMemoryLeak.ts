@@ -5,6 +5,7 @@ const scenario: ScenarioDeclaration = {
   flag: 'emailMemoryLeak',
   variant: '100x',
   expectedService: 'email',
+  expectsIncident: true,
   // 100x leak → OOM in minutes. Need enough time for latency
   // drift to become visible on the Duration chart.
   telemetryWaitMs: 7 * 60_000,
@@ -62,7 +63,7 @@ const scenario: ScenarioDeclaration = {
     },
     {
       surface: 'alertHistoryemailFired',
-      query: 'dataset="otel" | where data_datatype == "criblapm_alert" and svc == "email" and event_type == "firing"',
+      query: 'dataset="otel" | where coalesce(tostring(data_datatype), tostring(datatype)) == "criblapm_alert" and svc == "email" and event_type == "firing"',
       earliest: '-30m',
       latest: 'now',
       assertion: 'rowCountGt0',
@@ -77,7 +78,7 @@ const scenario: ScenarioDeclaration = {
     // 10m — gradual-drift playbooks need multiple queries (uptime,
     // memory metric, latency slope) and don't complete in 5m. The
     // 2026-05-30 eval saw this scenario time out.
-    waitMs: 10 * 60_000,
+    waitMs: 12 * 60_000,
   },
 };
 

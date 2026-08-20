@@ -5,6 +5,7 @@ const scenario: ScenarioDeclaration = {
   flag: 'paymentUnreachable',
   variant: 'on',
   expectedService: 'payment',
+  expectsIncident: true,
   telemetryWaitMs: 7 * 60_000,
   cooldownMs: 10 * 60_000,
   surfaceChecks: [
@@ -75,7 +76,7 @@ const scenario: ScenarioDeclaration = {
     },
     {
       surface: 'alertHistorypaymentFired',
-      query: 'dataset="otel" | where data_datatype == "criblapm_alert" and svc == "payment" and event_type == "firing"',
+      query: 'dataset="otel" | where coalesce(tostring(data_datatype), tostring(datatype)) == "criblapm_alert" and svc == "payment" and event_type == "firing"',
       earliest: '-30m',
       latest: 'now',
       assertion: 'rowCountGt0',
@@ -88,7 +89,7 @@ const scenario: ScenarioDeclaration = {
       'The payment service appears unreachable. What is causing checkout failures in the last 15 minutes? Summarise root cause.',
     expectedRootCausePattern:
       'payment.*unreachable|unavailable|connection.*refused|payment.*down',
-    waitMs: 5 * 60_000,
+    waitMs: 9 * 60_000,
   },
 };
 

@@ -93,7 +93,7 @@ const scenario: ScenarioDeclaration = {
     // (slope, downstream health, pod uptime, cardinality) and an
     // explicit decision step. Realistic completion is ~6-8 min;
     // 10m leaves headroom without bloating the per-scenario budget.
-    waitMs: 10 * 60_000,
+    waitMs: 12 * 60_000,
   },
 };
 

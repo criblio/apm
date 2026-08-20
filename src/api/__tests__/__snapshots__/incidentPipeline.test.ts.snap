@@ -23,6 +23,17 @@ exports[`incidentGrouper > matches the pinned shape 1`] = `
           )
         | lookup criblapm_incidents on svc
         | where isnotempty(incident_id) and tostring(incident_id) != "__init__"
+        // Adjacency attaches only to OPEN incidents. A resolved-not-
+        // closed incident stays reachable through its own members (a
+        // member refire reopens it), but a mere graph neighbor firing
+        // is a new problem, not a resurrection — observed live
+        // 2026-08-19: a background frontend flap reopened the prior
+        // night's resolved payment incident through adjacency.
+        | where tostring(status) == "open"
+        // ...and only while the incident is young (window W): cascades
+        // propagate in minutes. A later fault that is merely
+        // graph-adjacent to a long-open incident is its own incident.
+        | where toreal(opened_at) >= toreal(now()) - 3600
         | summarize adj_incident_id=max(tostring(incident_id)) by fire_svc
         | project svc=fire_svc, adj_incident_id
       ) on svc
@@ -66,6 +77,17 @@ exports[`incidentGrouper > matches the pinned shape 1`] = `
           )
         | lookup criblapm_incidents on svc
         | where isnotempty(incident_id) and tostring(incident_id) != "__init__"
+        // Adjacency attaches only to OPEN incidents. A resolved-not-
+        // closed incident stays reachable through its own members (a
+        // member refire reopens it), but a mere graph neighbor firing
+        // is a new problem, not a resurrection — observed live
+        // 2026-08-19: a background frontend flap reopened the prior
+        // night's resolved payment incident through adjacency.
+        | where tostring(status) == "open"
+        // ...and only while the incident is young (window W): cascades
+        // propagate in minutes. A later fault that is merely
+        // graph-adjacent to a long-open incident is its own incident.
+        | where toreal(opened_at) >= toreal(now()) - 3600
         | summarize adj_incident_id=max(tostring(incident_id)) by fire_svc
         | project svc=fire_svc, adj_incident_id
       ) on svc
@@ -218,12 +240,28 @@ exports[`incidentStateFold > matches the pinned shape 1`] = `
                               iff(isnotnull(n_root) and isnotempty(tostring(n_root)),
                                   tostring(n_root), svc))
     | join kind=leftouter (
+        // Latest-by-time, not max(value): the warroom writer ships in
+        // this release, and lexicographic max() would let an older
+        // "open" outrank a newer "closed" (and stamp it with the newer
+        // timestamp — sticking the incident open forever). Same
+        // max-_time join pattern as the evaluator's prior-state read;
+        // both scans are the fold's cheap -1h window.
         dataset="otel"
     | where coalesce(tostring(data_datatype), tostring(datatype)) == "criblapm_alert"
     | where record_kind == "incident"
     | where isnull(is_canary) or tostring(is_canary) != "true"
     | extend incident_id=tostring(incident_id)
         | where event_type in ("status_change", "closed") and isnotempty(status)
+        | join kind=inner (
+            dataset="otel"
+    | where coalesce(tostring(data_datatype), tostring(datatype)) == "criblapm_alert"
+    | where record_kind == "incident"
+    | where isnull(is_canary) or tostring(is_canary) != "true"
+    | extend incident_id=tostring(incident_id)
+            | where event_type in ("status_change", "closed") and isnotempty(status)
+            | summarize d_status_time=max(_time) by incident_id
+          ) on incident_id
+        | where _time == d_status_time
         | summarize d_status=max(tostring(status)), d_status_time=max(_time)
           by incident_id
       ) on incident_id
@@ -232,12 +270,25 @@ exports[`incidentStateFold > matches the pinned shape 1`] = `
              o_status_time=iff(isnotnull(d_status_time) and d_status_time > o_status_time,
                                toreal(d_status_time), o_status_time)
     | join kind=leftouter (
+        // Latest-by-time for the same reason as the status override:
+        // max("sev1","sev3") is "sev3", silently discarding an
+        // escalation.
         dataset="otel"
     | where coalesce(tostring(data_datatype), tostring(datatype)) == "criblapm_alert"
     | where record_kind == "incident"
     | where isnull(is_canary) or tostring(is_canary) != "true"
     | extend incident_id=tostring(incident_id)
         | where event_type == "severity_change" and isnotempty(severity)
+        | join kind=inner (
+            dataset="otel"
+    | where coalesce(tostring(data_datatype), tostring(datatype)) == "criblapm_alert"
+    | where record_kind == "incident"
+    | where isnull(is_canary) or tostring(is_canary) != "true"
+    | extend incident_id=tostring(incident_id)
+            | where event_type == "severity_change" and isnotempty(severity)
+            | summarize d_sev_time=max(_time) by incident_id
+          ) on incident_id
+        | where _time == d_sev_time
         | summarize d_severity=max(tostring(severity)) by incident_id
       ) on incident_id
     | extend o_severity=iff(isnotnull(d_severity) and isnotempty(tostring(d_severity)),
@@ -250,6 +301,11 @@ exports[`incidentStateFold > matches the pinned shape 1`] = `
     | join kind=leftouter (
         dataset="$vt_results"
         | where jobName == "criblapm__home_alerts"
+        | join kind=inner (
+            dataset="$vt_results"
+            | where jobName == "criblapm__home_alerts"
+            | summarize jobId=max(tostring(jobId))
+          ) on jobId
         | extend svc=tostring(svc)
         | summarize live_bad=countif(tostring(alert_status) in ("pending", "firing", "resolving")) by svc
       ) on svc
@@ -271,14 +327,32 @@ exports[`incidentStateFold > matches the pinned shape 1`] = `
         | join kind=leftouter (
             dataset="$vt_results"
         | where jobName == "criblapm__home_alerts"
+        | join kind=inner (
+            dataset="$vt_results"
+            | where jobName == "criblapm__home_alerts"
+            | summarize jobId=max(tostring(jobId))
+          ) on jobId
         | extend svc=tostring(svc)
         | summarize live_bad=countif(tostring(alert_status) in ("pending", "firing", "resolving")) by svc
           ) on svc
         | extend bad=iff(isnotnull(live_bad) and live_bad > 0, 1, 0)
         | summarize prev_inc_last=max(last_fire_at), n_svcs_prev=dcount(svc),
-                    inc_bad=sum(bad)
+                    inc_bad=sum(bad), prev_title=max(title),
+                    prev_root=max(root_service), prev_opened=min(opened_at)
           by incident_id
       ) on incident_id
+    // Members attached after the opened event left the delta window
+    // would otherwise carry the "Incident <id>" fallback title, their
+    // own svc as root, and their own first fire as opened_at (observed
+    // live 2026-08-19 — the page then windowed the timeline from the
+    // newest member and hid older warroom notes). The carried rows are
+    // authoritative for incident-level fields: prev wins.
+    | extend title=iff(isnotnull(prev_title) and isnotempty(tostring(prev_title))
+                       and not(tostring(prev_title) == strcat("Incident ", incident_id)),
+                       tostring(prev_title), title),
+             root_service=iff(isnotnull(prev_root) and isnotempty(tostring(prev_root)),
+                              tostring(prev_root), root_service),
+             opened_at=iff(isnotnull(prev_opened) and prev_opened > 0, toreal(prev_opened), opened_at)
     | extend inc_last_fire=iff(isnotnull(prev_inc_last) and prev_inc_last > last_fire_at,
                                toreal(prev_inc_last), last_fire_at),
              inc_bad_n=iff(isnotnull(inc_bad), tolong(inc_bad), tolong(0)),
@@ -289,8 +363,20 @@ exports[`incidentStateFold > matches the pinned shape 1`] = `
                inc_last_fire >= toreal(now()) - 86400, "resolved",
                "closed"),
              derived_severity=case(n_svcs >= 3, "sev2", n_svcs == 2, "sev3", "sev4")
-    | extend status=iff(isnotempty(o_status) and o_status_time >= inc_last_fire,
-                        o_status, derived_status),
+    // Status precedence: a human/agent override rules while it is
+    // newer than the last fire. "closed" is honored until a NEW fire
+    // arrives — a refire supersedes close (reopen semantics; the UI
+    // says so when closing a still-firing incident). Other overrides
+    // rule only while the incident derives open; all-clear
+    // resolution/closure supersedes them, or an incident marked
+    // "identified" would never auto-resolve (its o_status_time stays
+    // newer than the last fire forever once fires stop).
+    | extend status=case(
+               isnotempty(o_status) and o_status_time >= inc_last_fire
+                 and o_status == "closed", "closed",
+               isnotempty(o_status) and o_status_time >= inc_last_fire
+                 and derived_status == "open", o_status,
+               derived_status),
              severity=iff(isnotempty(o_severity), o_severity, derived_severity)
     | where not(status == "closed" and inc_last_fire < toreal(now()) - 604800)
     // NO trailing sort: a "| sort" after this join pipeline silently

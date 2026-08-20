@@ -592,11 +592,78 @@ export function alertEvaluator(): string {
              is_error=(tostring(status.code)=="2")
     | summarize curr_requests=toreal(count()),
                 curr_errors=toreal(countif(is_error)) by svc
+    // Silent-service driver rows: a fully-down service emits NO spans,
+    // so it has no summarize row — which made the "silent" arm
+    // structurally unreachable AND froze its alert state machine
+    // (found by the 2026-08-20 full-suite eval on paymentUnreachable).
+    // Synthesize curr_requests=0 rows for services present in the -1h
+    // service-summary cache but absent from the current window; the
+    // prev-window volume gate (prev_requests >= 50) still applies, so
+    // a service quiet for over an hour simply ages out of detection
+    // after its alert has already fired.
+    | union (
+        dataset="$vt_results"
+        | where jobName == "criblapm__home_service_summary"
+        // Latest run only — keepLastN retains two runs; a service
+        // present only in the stale run must not drive a false silent.
+        | join kind=inner (
+            dataset="$vt_results"
+            | where jobName == "criblapm__home_service_summary"
+            | summarize jobId=max(tostring(jobId))
+          ) on jobId
+        | extend svc=tostring(svc)
+        | join kind=leftanti (
+            ${spansBase()}
+            | extend svc=tostring(resource.attributes['service.name'])
+            | summarize n=count() by svc
+          ) on svc
+        | summarize n_rows=count() by svc
+        | extend jkey=1
+        // Fleet-wide storm guard: when over a third of the baseline
+        // fleet is simultaneously span-less, that's a collector outage
+        // or ingestion lag, not per-service downtime — synthesizing
+        // rows would mass-fire silent alerts for a telemetry hiccup.
+        | join kind=inner (
+            dataset="$vt_results"
+            | where jobName == "criblapm__home_service_summary"
+            | join kind=inner (
+                dataset="$vt_results"
+                | where jobName == "criblapm__home_service_summary"
+                | summarize jobId=max(tostring(jobId))
+              ) on jobId
+            | extend jkey=1
+            | summarize baseline_n=dcount(tostring(svc)) by jkey
+          ) on jkey
+        | join kind=inner (
+            ${spansBase()}
+            | extend svc=tostring(resource.attributes['service.name'])
+            | summarize n=count() by svc
+            | extend jkey=1
+            | summarize current_n=dcount(svc) by jkey
+          ) on jkey
+        | where (baseline_n - current_n) * 3 <= baseline_n
+        | project svc, curr_requests=toreal(0), curr_errors=toreal(0)
+      )
     | extend curr_error_rate=iff(curr_requests > 0, curr_errors/curr_requests, 0.0)
     | lookup criblapm_alert_prev on svc
+    // Service-level p95 in a subquery join, NOT inline in the summarize
+    // above: the baseline (prevWindowSummary) computes p95 with the
+    // >30s streaming-span filter applied, so the current side must
+    // match or services with idle-wait roots (accounting) would show
+    // a fake 10x. The request/error counts above stay unfiltered —
+    // changing them would silently shift months of threshold tuning.
+    | join kind=leftouter (
+        ${spansBase()}
+        | extend svc=tostring(resource.attributes['service.name']),
+                 dur_us=(toreal(end_time_unix_nano)-toreal(start_time_unix_nano))/1000.0
+        ${streamFilterSpanKqlClause()}
+        | summarize curr_p95_us=percentile(dur_us, 95) by svc
+      ) on svc
     | extend prev_requests=iff(isnotnull(prev_req), toreal(prev_req), 0.0),
              prev_errors=iff(isnotnull(prev_err), toreal(prev_err), 0.0),
-             prev_error_rate=iff(isnotnull(prev_err_rate), toreal(prev_err_rate), 0.0)
+             prev_error_rate=iff(isnotnull(prev_err_rate), toreal(prev_err_rate), 0.0),
+             curr_p95=iff(isnotnull(curr_p95_us), toreal(curr_p95_us), 0.0),
+             prev_p95=iff(isnotnull(prev_p95_us), toreal(prev_p95_us), 0.0)
     | extend curr_err_pct=curr_error_rate * 100,
              prev_err_pct=prev_error_rate * 100,
              // is_persistent is informational — used by notification
@@ -629,6 +696,16 @@ export function alertEvaluator(): string {
     // The low-volume-mode setting (P1.2) re-enables an older arm
     // for those — opt-in only since it costs precision on noisier
     // workloads.
+    // Service-level p95 regression arm (the P2 detection gap, found
+    // 2026-08-18): the per-op latency arm's 250ms floor sat above
+    // real regressions on fast services — recommendationCacheFailure
+    // degrades recommendation from ~45ms to ~140ms p95 (3.5x, "both
+    // chips fire" per FAILURE-SCENARIOS) and never alerted. Service
+    // p95 over all spans runs lower than op-level entry-span p95, so
+    // the floor here is 100ms with the same 3x ratio; volume gates
+    // match the sharp-deviation error arm. Baseline caveat: prev is
+    // the -2h..-1h window, so a degradation older than ~2h has
+    // normalized into the baseline and only FRESH regressions fire.
     | extend signal_type=case(
                curr_requests == 0 and prev_requests >= 50, "silent",
                curr_err_pct >= 5 and curr_requests >= 20, "error_rate",
@@ -636,6 +713,9 @@ export function alertEvaluator(): string {
                  and prev_requests >= 100, "error_rate",
                curr_errors >= 10 and prev_errors < 1
                  and curr_requests >= 50, "error_rate",
+               curr_p95 >= prev_p95 * 3 and curr_p95 >= 100000
+                 and prev_p95 > 0 and curr_requests >= 20
+                 and prev_requests >= 100, "latency",
                ${lowVolArm}traffic_ratio <= 0.5 and prev_requests >= 50, "traffic_drop",
                "none"),
              is_bad=(
@@ -645,6 +725,9 @@ export function alertEvaluator(): string {
                    and prev_requests >= 100)
                or (curr_errors >= 10 and prev_errors < 1
                    and curr_requests >= 50)
+               or (curr_p95 >= prev_p95 * 3 and curr_p95 >= 100000
+                   and prev_p95 > 0 and curr_requests >= 20
+                   and prev_requests >= 100)
                ${lowVolBoolArm}or (traffic_ratio <= 0.5 and prev_requests >= 50))
     // alert_id is STABLE per service (doesn't include signal_type).
     // Why: when a service recovers, signal_type rotates from
@@ -861,6 +944,14 @@ export const INCIDENT_CLOSE_AFTER_HOURS = 24;
  * services first fire within the same bin collapses to one incident
  * even before the grouping lookup has caught up. */
 export const INCIDENT_OPEN_BIN = '15m';
+/** Graph-adjacency attach window W: a fire may join an open incident
+ * through a dependency edge only while the incident is YOUNG — cascades
+ * propagate in minutes. Without W, one long-open incident with a
+ * well-connected member (frontend) absorbs every later, unrelated
+ * fault: observed live 2026-08-19 when recommendationCacheFailure's
+ * latency fire attached to the 4-hour-old paymentFailure incident.
+ * Direct member refires are NOT window-limited (reopen semantics). */
+export const INCIDENT_ADJACENCY_WINDOW_MIN = 60;
 
 /**
  * Shared grouper base: one row per firing transition in the window,
@@ -898,6 +989,17 @@ function incidentGrouperBase(): string {
           )
         | lookup criblapm_incidents on svc
         | where isnotempty(incident_id) and tostring(incident_id) != "__init__"
+        // Adjacency attaches only to OPEN incidents. A resolved-not-
+        // closed incident stays reachable through its own members (a
+        // member refire reopens it), but a mere graph neighbor firing
+        // is a new problem, not a resurrection — observed live
+        // 2026-08-19: a background frontend flap reopened the prior
+        // night's resolved payment incident through adjacency.
+        | where tostring(status) == "open"
+        // ...and only while the incident is young (window W): cascades
+        // propagate in minutes. A later fault that is merely
+        // graph-adjacent to a long-open incident is its own incident.
+        | where toreal(opened_at) >= toreal(now()) - ${INCIDENT_ADJACENCY_WINDOW_MIN * 60}
         | summarize adj_incident_id=max(tostring(incident_id)) by fire_svc
         | project svc=fire_svc, adj_incident_id
       ) on svc
@@ -1059,8 +1161,17 @@ export function incidentStateFold(): string {
         | where _time > iff(isnotnull(prev_last), prev_last, toreal(0))
         | summarize d_first=min(_time), d_last=max(_time), d_n=count()
           by incident_id, svc`;
+  // Latest evaluator run only: $vt_results retains keepLastN=2 runs,
+  // and a service that flapped between them would count as live-bad
+  // from the STALE run (observed 2026-08-19: frontend ok in the newest
+  // run, firing in the prior one — held an all-clear incident open).
   const liveBadBySvc = `dataset="$vt_results"
         | where jobName == "criblapm__home_alerts"
+        | join kind=inner (
+            dataset="$vt_results"
+            | where jobName == "criblapm__home_alerts"
+            | summarize jobId=max(tostring(jobId))
+          ) on jobId
         | extend svc=tostring(svc)
         | summarize live_bad=countif(tostring(alert_status) in ("pending", "firing", "resolving")) by svc`;
   return `${prevMembers}
@@ -1098,8 +1209,20 @@ export function incidentStateFold(): string {
                               iff(isnotnull(n_root) and isnotempty(tostring(n_root)),
                                   tostring(n_root), svc))
     | join kind=leftouter (
+        // Latest-by-time, not max(value): the warroom writer ships in
+        // this release, and lexicographic max() would let an older
+        // "open" outrank a newer "closed" (and stamp it with the newer
+        // timestamp — sticking the incident open forever). Same
+        // max-_time join pattern as the evaluator's prior-state read;
+        // both scans are the fold's cheap -1h window.
         ${incidentEventsBase()}
         | where event_type in ("status_change", "closed") and isnotempty(status)
+        | join kind=inner (
+            ${incidentEventsBase()}
+            | where event_type in ("status_change", "closed") and isnotempty(status)
+            | summarize d_status_time=max(_time) by incident_id
+          ) on incident_id
+        | where _time == d_status_time
         | summarize d_status=max(tostring(status)), d_status_time=max(_time)
           by incident_id
       ) on incident_id
@@ -1108,8 +1231,17 @@ export function incidentStateFold(): string {
              o_status_time=iff(isnotnull(d_status_time) and d_status_time > o_status_time,
                                toreal(d_status_time), o_status_time)
     | join kind=leftouter (
+        // Latest-by-time for the same reason as the status override:
+        // max("sev1","sev3") is "sev3", silently discarding an
+        // escalation.
         ${incidentEventsBase()}
         | where event_type == "severity_change" and isnotempty(severity)
+        | join kind=inner (
+            ${incidentEventsBase()}
+            | where event_type == "severity_change" and isnotempty(severity)
+            | summarize d_sev_time=max(_time) by incident_id
+          ) on incident_id
+        | where _time == d_sev_time
         | summarize d_severity=max(tostring(severity)) by incident_id
       ) on incident_id
     | extend o_severity=iff(isnotnull(d_severity) and isnotempty(tostring(d_severity)),
@@ -1130,9 +1262,22 @@ export function incidentStateFold(): string {
           ) on svc
         | extend bad=iff(isnotnull(live_bad) and live_bad > 0, 1, 0)
         | summarize prev_inc_last=max(last_fire_at), n_svcs_prev=dcount(svc),
-                    inc_bad=sum(bad)
+                    inc_bad=sum(bad), prev_title=max(title),
+                    prev_root=max(root_service), prev_opened=min(opened_at)
           by incident_id
       ) on incident_id
+    // Members attached after the opened event left the delta window
+    // would otherwise carry the "Incident <id>" fallback title, their
+    // own svc as root, and their own first fire as opened_at (observed
+    // live 2026-08-19 — the page then windowed the timeline from the
+    // newest member and hid older warroom notes). The carried rows are
+    // authoritative for incident-level fields: prev wins.
+    | extend title=iff(isnotnull(prev_title) and isnotempty(tostring(prev_title))
+                       and not(tostring(prev_title) == strcat("Incident ", incident_id)),
+                       tostring(prev_title), title),
+             root_service=iff(isnotnull(prev_root) and isnotempty(tostring(prev_root)),
+                              tostring(prev_root), root_service),
+             opened_at=iff(isnotnull(prev_opened) and prev_opened > 0, toreal(prev_opened), opened_at)
     | extend inc_last_fire=iff(isnotnull(prev_inc_last) and prev_inc_last > last_fire_at,
                                toreal(prev_inc_last), last_fire_at),
              inc_bad_n=iff(isnotnull(inc_bad), tolong(inc_bad), tolong(0)),
@@ -1143,8 +1288,20 @@ export function incidentStateFold(): string {
                inc_last_fire >= toreal(now()) - ${closeSec}, "resolved",
                "closed"),
              derived_severity=case(n_svcs >= 3, "sev2", n_svcs == 2, "sev3", "sev4")
-    | extend status=iff(isnotempty(o_status) and o_status_time >= inc_last_fire,
-                        o_status, derived_status),
+    // Status precedence: a human/agent override rules while it is
+    // newer than the last fire. "closed" is honored until a NEW fire
+    // arrives — a refire supersedes close (reopen semantics; the UI
+    // says so when closing a still-firing incident). Other overrides
+    // rule only while the incident derives open; all-clear
+    // resolution/closure supersedes them, or an incident marked
+    // "identified" would never auto-resolve (its o_status_time stays
+    // newer than the last fire forever once fires stop).
+    | extend status=case(
+               isnotempty(o_status) and o_status_time >= inc_last_fire
+                 and o_status == "closed", "closed",
+               isnotempty(o_status) and o_status_time >= inc_last_fire
+                 and derived_status == "open", o_status,
+               derived_status),
              severity=iff(isnotempty(o_severity), o_severity, derived_severity)
     | where not(status == "closed" and inc_last_fire < toreal(now()) - ${pruneSec})
     // NO trailing sort: a "| sort" after this join pipeline silently
@@ -1175,7 +1332,10 @@ export function incidentEvents(incidentId?: string, limit = 500): string {
     | project _time, event_id, event_type, incident_id, author, status,
               severity, root_service, services, note, investigation_id,
               alert_event_id, title, producer
-    | sort by _time asc
+    // Newest-first before the limit: once an incident exceeds the cap,
+    // it must drop the OLDEST events, not the fresh note a user just
+    // committed. Readers re-sort ascending client-side.
+    | sort by _time desc
     | limit ${safeLimit}`;
 }
 

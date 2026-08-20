@@ -18,6 +18,7 @@ import { execSync } from 'node:child_process';
 import { chromium } from 'playwright-core';
 import { runScenario } from './engine.js';
 import { printReport } from './report.js';
+import { gotoApm as gotoApmShared } from '../tests/helpers/apmSession.js';
 import type { ScenarioDeclaration, RunResult } from './types.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -154,6 +155,8 @@ async function main(): Promise<void> {
   // Launch browser
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({
+    // baseURL so the shared gotoApm helper (relative goto) works.
+    baseURL: baseUrl,
     viewport: { width: 1600, height: 1000 },
     storageState: resolve(
       REPO_ROOT,
@@ -184,10 +187,12 @@ async function main(): Promise<void> {
     [appPath, apiUrl, token],
   );
 
+  // Shared navigation helper: waits for the APM iframe to attach and
+  // dismisses host announcement modals — a fresh auth session re-shows
+  // the workspace announcement, which otherwise swallows the first
+  // click and times out every scenario (observed 2026-08-19).
   const gotoApm = async (page: import('playwright-core').Page, inAppPath: string) => {
-    const trimmed = inAppPath.replace(/^\//, '');
-    const target = appPath.replace(/\/$/, '') + '/' + trimmed;
-    await page.goto(baseUrl + target, { waitUntil: 'domcontentloaded' });
+    await gotoApmShared(page, inAppPath);
   };
 
   const runStart = Date.now();

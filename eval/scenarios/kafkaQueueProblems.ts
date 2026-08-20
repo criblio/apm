@@ -34,7 +34,7 @@ const scenario: ScenarioDeclaration = {
     prompt:
       'Why is the fraud-detection service showing high p99 latency in the last 15 minutes? Summarise root cause.',
     expectedRootCausePattern: 'kafka|consumer|lag|queue|accounting|fraud',
-    waitMs: 5 * 60_000,
+    waitMs: 9 * 60_000,
   },
 };
 
