@@ -121,12 +121,17 @@ export async function runQuery(
   }
   const jobId = job.id;
 
-  // Poll ≤ 60s (120 × 500ms). Most scenario queries finish in <2s;
-  // this budget only matters when the cluster is under load.
+  // Poll ≤ 150s (300 × 500ms). Most scenario queries finish in <2s;
+  // this budget only matters when the cluster is under load. Raised
+  // from 60s for v0.14.0: the incident-pipeline scheduled searches
+  // added steady-state pool load, and the live smoke's serial query
+  // suite started deterministically exceeding 60s of QUEUE time on
+  // the small staging pool (6 consecutive CI failures with healthy
+  // ~13s query runtimes measured ad-hoc).
   let status = job.status ?? 'queued';
   for (
     let i = 0;
-    i < 120 &&
+    i < 300 &&
     status !== 'completed' &&
     status !== 'failed' &&
     status !== 'canceled';
