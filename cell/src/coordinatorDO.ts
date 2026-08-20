@@ -13,10 +13,6 @@
 import type { Env } from './env';
 import { CriblClient } from './criblClient';
 import {
-  ALERT_EVENT_DATATYPE,
-  STORED_DATATYPE_EXPR,
-} from '../../src/api/generatedEventContract';
-import {
   incidentKey,
   titleFromPrompt,
   type CreateInvestigationBody,
@@ -308,34 +304,36 @@ export class CoordinatorDO {
     }
   }
 
-  /** One poll: run the firing-alert selection (same shape as the app's
-   *  Q.alertNotify()) and admit the rows. */
+  /** One poll: read the criblapm__alert_notify search's LATEST cached
+   *  results from $vt_results and admit the rows. Reading the notify
+   *  search's output — rather than re-scanning the dataset — preserves
+   *  the app-side serverInvestigations gate: when the flag is off the
+   *  provisioner deletes that search, $vt_results has no rows under its
+   *  jobName, and the poll is a guaranteed no-op. It also replaces a
+   *  raw -15m dataset scan every 5 minutes with a cheap cache read. */
   private async pollFiringAlerts(): Promise<void> {
     if (this.env.DISABLED === 'true') return;
     const { CRIBL_BASE_URL, CRIBL_CLIENT_ID, CRIBL_CLIENT_SECRET } = this.env;
     if (!CRIBL_BASE_URL || (!this.env.CRIBL_DEV_TOKEN && (!CRIBL_CLIENT_ID || !CRIBL_CLIENT_SECRET))) {
       return; // no Cribl access configured (e.g. offline smoke) — poll is a no-op
     }
-    const dataset = (this.env.CRIBL_DATASET || 'otel').replace(/[^a-zA-Z0-9_-]/g, '');
     const client = new CriblClient({
       baseUrl: CRIBL_BASE_URL,
       clientId: CRIBL_CLIENT_ID ?? '',
       clientSecret: CRIBL_CLIENT_SECRET ?? '',
-      dataset,
+      dataset: (this.env.CRIBL_DATASET || 'otel').replace(/[^a-zA-Z0-9_-]/g, ''),
       devToken: this.env.CRIBL_DEV_TOKEN,
     });
-    // Keep in sync with Q.alertNotify() in src/api/queries.ts — the
-    // app's queries module carries browser-coupled imports, so the
-    // small stable KQL is built here from the shared contract pieces.
-    const kql = `dataset="${dataset}"
-      | where ${STORED_DATATYPE_EXPR} == "${ALERT_EVENT_DATATYPE}"
-      | where record_kind == "evaluation"
-      | where event_type == "firing"
-      | where isnull(is_canary) or tostring(is_canary) != "true"
-      | summarize _time=max(_time)
-        by event_id, alert_id, svc, signal_type, curr_error_rate, fire_count
+    // Latest run only: $vt_results retains keepLastN runs; jobId's
+    // fixed-width epoch-millis prefix makes the string max the newest.
+    const kql = `dataset="$vt_results"
+      | where jobName == "criblapm__alert_notify"
+      | join kind=inner (
+          dataset="$vt_results"
+          | where jobName == "criblapm__alert_notify"
+          | summarize jobId=max(tostring(jobId))
+        ) on jobId
       | project event_id, alert_id, svc, signal_type, curr_error_rate, fire_count, _time
-      | sort by _time desc
       | limit 50`;
     const rows = await client.runQuery(kql, POLL_WINDOW, 'now', 50);
     if (rows.length === 0) return;

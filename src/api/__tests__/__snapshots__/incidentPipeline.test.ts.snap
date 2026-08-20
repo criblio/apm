@@ -240,12 +240,28 @@ exports[`incidentStateFold > matches the pinned shape 1`] = `
                               iff(isnotnull(n_root) and isnotempty(tostring(n_root)),
                                   tostring(n_root), svc))
     | join kind=leftouter (
+        // Latest-by-time, not max(value): the warroom writer ships in
+        // this release, and lexicographic max() would let an older
+        // "open" outrank a newer "closed" (and stamp it with the newer
+        // timestamp — sticking the incident open forever). Same
+        // max-_time join pattern as the evaluator's prior-state read;
+        // both scans are the fold's cheap -1h window.
         dataset="otel"
     | where coalesce(tostring(data_datatype), tostring(datatype)) == "criblapm_alert"
     | where record_kind == "incident"
     | where isnull(is_canary) or tostring(is_canary) != "true"
     | extend incident_id=tostring(incident_id)
         | where event_type in ("status_change", "closed") and isnotempty(status)
+        | join kind=inner (
+            dataset="otel"
+    | where coalesce(tostring(data_datatype), tostring(datatype)) == "criblapm_alert"
+    | where record_kind == "incident"
+    | where isnull(is_canary) or tostring(is_canary) != "true"
+    | extend incident_id=tostring(incident_id)
+            | where event_type in ("status_change", "closed") and isnotempty(status)
+            | summarize d_status_time=max(_time) by incident_id
+          ) on incident_id
+        | where _time == d_status_time
         | summarize d_status=max(tostring(status)), d_status_time=max(_time)
           by incident_id
       ) on incident_id
@@ -254,12 +270,25 @@ exports[`incidentStateFold > matches the pinned shape 1`] = `
              o_status_time=iff(isnotnull(d_status_time) and d_status_time > o_status_time,
                                toreal(d_status_time), o_status_time)
     | join kind=leftouter (
+        // Latest-by-time for the same reason as the status override:
+        // max("sev1","sev3") is "sev3", silently discarding an
+        // escalation.
         dataset="otel"
     | where coalesce(tostring(data_datatype), tostring(datatype)) == "criblapm_alert"
     | where record_kind == "incident"
     | where isnull(is_canary) or tostring(is_canary) != "true"
     | extend incident_id=tostring(incident_id)
         | where event_type == "severity_change" and isnotempty(severity)
+        | join kind=inner (
+            dataset="otel"
+    | where coalesce(tostring(data_datatype), tostring(datatype)) == "criblapm_alert"
+    | where record_kind == "incident"
+    | where isnull(is_canary) or tostring(is_canary) != "true"
+    | extend incident_id=tostring(incident_id)
+            | where event_type == "severity_change" and isnotempty(severity)
+            | summarize d_sev_time=max(_time) by incident_id
+          ) on incident_id
+        | where _time == d_sev_time
         | summarize d_severity=max(tostring(severity)) by incident_id
       ) on incident_id
     | extend o_severity=iff(isnotnull(d_severity) and isnotempty(tostring(d_severity)),
@@ -334,13 +363,14 @@ exports[`incidentStateFold > matches the pinned shape 1`] = `
                inc_last_fire >= toreal(now()) - 86400, "resolved",
                "closed"),
              derived_severity=case(n_svcs >= 3, "sev2", n_svcs == 2, "sev3", "sev4")
-    // Status precedence: a human/agent override rules while the
-    // incident is ACTIVE (and "closed" is terminal regardless), but
-    // once every alert has cleared long enough that the system derives
-    // resolved/closed, that supersedes an active-state override —
-    // otherwise an incident marked "identified" would never
-    // auto-resolve (its o_status_time stays newer than the last fire
-    // forever once fires stop).
+    // Status precedence: a human/agent override rules while it is
+    // newer than the last fire. "closed" is honored until a NEW fire
+    // arrives — a refire supersedes close (reopen semantics; the UI
+    // says so when closing a still-firing incident). Other overrides
+    // rule only while the incident derives open; all-clear
+    // resolution/closure supersedes them, or an incident marked
+    // "identified" would never auto-resolve (its o_status_time stays
+    // newer than the last fire forever once fires stop).
     | extend status=case(
                isnotempty(o_status) and o_status_time >= inc_last_fire
                  and o_status == "closed", "closed",

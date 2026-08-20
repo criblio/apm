@@ -63,7 +63,11 @@ export function incidentKqlChecks(svc: string): KqlCheck[] {
     },
     {
       surface: `incidentFoldRow_${svc}`,
-      query: `dataset="$vt_results" | where jobName == "criblapm__incidents_state" and svc == "${svc}" | project status`,
+      // Latest fold run only (keepLastN=2 retains a stale run whose
+      // pre-close row could false-pass this check for the PREVIOUS
+      // scenario's incident) — same discipline as every other
+      // current-state $vt_results reader.
+      query: `dataset="$vt_results" | where jobName == "criblapm__incidents_state" and svc == "${svc}" | join kind=inner (dataset="$vt_results" | where jobName == "criblapm__incidents_state" | summarize jobId=max(tostring(jobId))) on jobId | project status`,
       earliest: '-1h',
       latest: 'now',
       assertion: 'fieldMatches',

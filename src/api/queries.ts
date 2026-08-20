@@ -604,6 +604,13 @@ export function alertEvaluator(): string {
     | union (
         dataset="$vt_results"
         | where jobName == "criblapm__home_service_summary"
+        // Latest run only — keepLastN retains two runs; a service
+        // present only in the stale run must not drive a false silent.
+        | join kind=inner (
+            dataset="$vt_results"
+            | where jobName == "criblapm__home_service_summary"
+            | summarize jobId=max(tostring(jobId))
+          ) on jobId
         | extend svc=tostring(svc)
         | join kind=leftanti (
             ${spansBase()}
@@ -611,6 +618,30 @@ export function alertEvaluator(): string {
             | summarize n=count() by svc
           ) on svc
         | summarize n_rows=count() by svc
+        | extend jkey=1
+        // Fleet-wide storm guard: when over a third of the baseline
+        // fleet is simultaneously span-less, that's a collector outage
+        // or ingestion lag, not per-service downtime — synthesizing
+        // rows would mass-fire silent alerts for a telemetry hiccup.
+        | join kind=inner (
+            dataset="$vt_results"
+            | where jobName == "criblapm__home_service_summary"
+            | join kind=inner (
+                dataset="$vt_results"
+                | where jobName == "criblapm__home_service_summary"
+                | summarize jobId=max(tostring(jobId))
+              ) on jobId
+            | extend jkey=1
+            | summarize baseline_n=dcount(tostring(svc)) by jkey
+          ) on jkey
+        | join kind=inner (
+            ${spansBase()}
+            | extend svc=tostring(resource.attributes['service.name'])
+            | summarize n=count() by svc
+            | extend jkey=1
+            | summarize current_n=dcount(svc) by jkey
+          ) on jkey
+        | where (baseline_n - current_n) * 3 <= baseline_n
         | project svc, curr_requests=toreal(0), curr_errors=toreal(0)
       )
     | extend curr_error_rate=iff(curr_requests > 0, curr_errors/curr_requests, 0.0)
@@ -1178,8 +1209,20 @@ export function incidentStateFold(): string {
                               iff(isnotnull(n_root) and isnotempty(tostring(n_root)),
                                   tostring(n_root), svc))
     | join kind=leftouter (
+        // Latest-by-time, not max(value): the warroom writer ships in
+        // this release, and lexicographic max() would let an older
+        // "open" outrank a newer "closed" (and stamp it with the newer
+        // timestamp — sticking the incident open forever). Same
+        // max-_time join pattern as the evaluator's prior-state read;
+        // both scans are the fold's cheap -1h window.
         ${incidentEventsBase()}
         | where event_type in ("status_change", "closed") and isnotempty(status)
+        | join kind=inner (
+            ${incidentEventsBase()}
+            | where event_type in ("status_change", "closed") and isnotempty(status)
+            | summarize d_status_time=max(_time) by incident_id
+          ) on incident_id
+        | where _time == d_status_time
         | summarize d_status=max(tostring(status)), d_status_time=max(_time)
           by incident_id
       ) on incident_id
@@ -1188,8 +1231,17 @@ export function incidentStateFold(): string {
              o_status_time=iff(isnotnull(d_status_time) and d_status_time > o_status_time,
                                toreal(d_status_time), o_status_time)
     | join kind=leftouter (
+        // Latest-by-time for the same reason as the status override:
+        // max("sev1","sev3") is "sev3", silently discarding an
+        // escalation.
         ${incidentEventsBase()}
         | where event_type == "severity_change" and isnotempty(severity)
+        | join kind=inner (
+            ${incidentEventsBase()}
+            | where event_type == "severity_change" and isnotempty(severity)
+            | summarize d_sev_time=max(_time) by incident_id
+          ) on incident_id
+        | where _time == d_sev_time
         | summarize d_severity=max(tostring(severity)) by incident_id
       ) on incident_id
     | extend o_severity=iff(isnotnull(d_severity) and isnotempty(tostring(d_severity)),
@@ -1236,13 +1288,14 @@ export function incidentStateFold(): string {
                inc_last_fire >= toreal(now()) - ${closeSec}, "resolved",
                "closed"),
              derived_severity=case(n_svcs >= 3, "sev2", n_svcs == 2, "sev3", "sev4")
-    // Status precedence: a human/agent override rules while the
-    // incident is ACTIVE (and "closed" is terminal regardless), but
-    // once every alert has cleared long enough that the system derives
-    // resolved/closed, that supersedes an active-state override —
-    // otherwise an incident marked "identified" would never
-    // auto-resolve (its o_status_time stays newer than the last fire
-    // forever once fires stop).
+    // Status precedence: a human/agent override rules while it is
+    // newer than the last fire. "closed" is honored until a NEW fire
+    // arrives — a refire supersedes close (reopen semantics; the UI
+    // says so when closing a still-firing incident). Other overrides
+    // rule only while the incident derives open; all-clear
+    // resolution/closure supersedes them, or an incident marked
+    // "identified" would never auto-resolve (its o_status_time stays
+    // newer than the last fire forever once fires stop).
     | extend status=case(
                isnotempty(o_status) and o_status_time >= inc_last_fire
                  and o_status == "closed", "closed",
@@ -1279,7 +1332,10 @@ export function incidentEvents(incidentId?: string, limit = 500): string {
     | project _time, event_id, event_type, incident_id, author, status,
               severity, root_service, services, note, investigation_id,
               alert_event_id, title, producer
-    | sort by _time asc
+    // Newest-first before the limit: once an incident exceeds the cap,
+    // it must drop the OLDEST events, not the fresh note a user just
+    // committed. Readers re-sort ascending client-side.
+    | sort by _time desc
     | limit ${safeLimit}`;
 }
 

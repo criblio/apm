@@ -35,6 +35,7 @@ async function closeOpenIncidents(): Promise<void> {
      | summarize n=count() by incident_id`,
     '-1h', 'now', 50,
   ).catch(() => [] as Record<string, unknown>[]);
+  let closed = 0;
   for (const row of rows) {
     const id = String(row.incident_id ?? '');
     if (!id || id === '__init__') continue;
@@ -50,7 +51,18 @@ async function closeOpenIncidents(): Promise<void> {
       process.env.CRIBL_DATASET || 'otel',
     );
     await runQuery(kql, '-1m', 'now', 5).catch(() => {});
+    closed++;
     console.log(`  [isolation] closed lingering incident ${id}`);
+  }
+  // Propagation wait: the criblapm_incidents lookup still lists a
+  // just-closed incident until the next fold + export cycle (~6 min).
+  // Flipping the next flag immediately lets its early fires attach to
+  // the old incident and reopen it — exactly the contamination this
+  // isolation step exists to prevent. Only pay the wait when something
+  // was actually closed.
+  if (closed > 0) {
+    console.log('  [isolation] waiting 7m for close to propagate to the lookup');
+    await new Promise((r) => setTimeout(r, 7 * 60_000));
   }
 }
 
@@ -158,11 +170,15 @@ async function navigateToPage(
       .catch(() => false);
     if (!rowVisible) return false;
     await row.click();
-    await apm.getByRole('heading', { name: 'Summary' }).waitFor({
+    // Fail honestly if the drill-in never rendered: returning true
+    // with the app still on the Alerts page lets fallback locators
+    // (e.g. `table a:has-text(svc)`) false-pass against the Alerts
+    // page's own service links.
+    const summaryVisible = await apm.getByRole('heading', { name: 'Summary' }).waitFor({
       state: 'visible',
       timeout: 30_000,
-    }).catch(() => {});
-    return true;
+    }).then(() => true).catch(() => false);
+    return summaryVisible;
   }
   return false;
 }

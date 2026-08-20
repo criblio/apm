@@ -98,7 +98,7 @@ export default function IncidentPage() {
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [noteDraft, setNoteDraft] = useState('');
   const [writeNudge, setWriteNudge] = useState(0);
-  const [syncNote, setSyncNote] = useState(false);
+  const [syncNote, setSyncNote] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -115,25 +115,36 @@ export default function IncidentPage() {
    *  the header (the folded read model catches up within a cadence). */
   const act = useCallback((label: string, action: HumanIncidentAction, optimistic?: Partial<IncidentSummary>) => {
     setPendingAction(label);
+    // Honesty over optimism: a close committed while the incident is
+    // still deriving open (members firing) WILL be superseded by the
+    // next fire — the fold's refire-beats-close reopen semantics.
+    const closingWhileActive = action.kind === 'close'
+      && (incident?.status === 'open' || incident?.status === 'investigating'
+          || incident?.status === 'identified' || incident?.status === 'mitigated');
     commitHumanIncidentAction(incidentId, action)
       .then(() => {
         if (optimistic) {
           setIncident((cur) => (cur ? { ...cur, ...optimistic } : cur));
-          setSyncNote(true);
+          setSyncNote(closingWhileActive
+            ? 'Close recorded — but members of this incident may still be firing. A new fire after the close reopens the incident (by design); it stays closed only once its alerts have cleared.'
+            : "Recorded on the incident's event log. The list and status chips re-fold from events within ~5 minutes; this page shows your change immediately.");
         }
         if (action.kind === 'note') setNoteDraft('');
         setWriteNudge((n) => n + 1);
       })
       .catch((e) => setError(e instanceof Error ? e.message : String(e)))
       .finally(() => setPendingAction(null));
-  }, [incidentId]);
+  }, [incidentId, incident?.status]);
 
   // Timeline + investigations + member episode stats, windowed from the
-  // incident's own age (never a fixed wide live scan — pool cost).
+  // incident's own age, CAPPED at 48h — a week-old retained incident
+  // (or a fold row whose opened_at read as 0) must not fire multi-day
+  // raw scans on page mount; a -7d scan measured >60s on the pool.
   useEffect(() => {
     if (!incident) return;
     let cancelled = false;
-    const sinceHours = Math.max(2, Math.ceil((Date.now() - incident.openedAtMs) / 3_600_000) + 1);
+    const ageMs = incident.openedAtMs > 0 ? Date.now() - incident.openedAtMs : 0;
+    const sinceHours = Math.min(48, Math.max(2, Math.ceil(ageMs / 3_600_000) + 1));
     const memberSvcs = new Set(incident.services.map((m) => m.service));
     const windowStart = incident.openedAtMs - CORRELATE_BEFORE_MS;
     const windowEnd = incident.lastFireMs + CORRELATE_AFTER_MS;
@@ -352,8 +363,8 @@ export default function IncidentPage() {
                 service: incident.rootService || incident.services[0]?.service || '',
                 signalType: episodes.get(incident.rootService)?.signalTypes.values().next().value ?? 'error_rate',
                 errorRate: episodes.get(incident.rootService)?.peakErrorRate ?? 0,
-                // eslint-disable-next-line react-hooks/purity -- live window from incident age
-                earliest: `-${Math.max(2, Math.ceil((Date.now() - incident.openedAtMs) / 3_600_000) + 1)}h`,
+                // eslint-disable-next-line react-hooks/purity -- live window from incident age (capped like the page queries)
+                earliest: `-${Math.min(48, Math.max(2, Math.ceil((incident.openedAtMs > 0 ? Date.now() - incident.openedAtMs : 0) / 3_600_000) + 1))}h`,
               }),
               incidentId: incident.incidentId,
               knownSignals: [
@@ -368,13 +379,7 @@ export default function IncidentPage() {
         </div>
       </div>
 
-      {syncNote && (
-        <StatusBanner kind="info">
-          Recorded on the incident's event log. The list and status chips
-          re-fold from events within ~5 minutes; this page shows your
-          change immediately.
-        </StatusBanner>
-      )}
+      {syncNote && <StatusBanner kind="info">{syncNote}</StatusBanner>}
 
       {/* What happened — deterministic narrative; the supervisor agent
           overwrites this with a root-caused version in Phase 6. */}

@@ -74,7 +74,7 @@ const scenario: ScenarioDeclaration = {
   ],
   investigator: {
     prompt:
-      'Why are there recommendation service errors in the last 15 minutes? Summarise root cause.',
+      'Why is the recommendation service slow right now? Its p95 latency has regressed sharply. Summarise root cause.',
     expectedRootCausePattern: 'cache|cached_ids|recommendation.*(latency|slow|leak)|get_product_list',
     // 10m — intermittent cache-miss patterns need multiple queries
     // to surface; 5m timed out in the 2026-05-30 eval.

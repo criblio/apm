@@ -116,7 +116,9 @@ describe('incidentEvents reader', () => {
     const q = Q.incidentEvents('inc:17\'"x');
     expect(q).toContain('record_kind == "incident"');
     expect(q).toContain('incident_id == "inc:17\'\\"x"');
-    expect(q).toContain('sort by _time asc');
+    // Newest-first before the limit so a capped incident drops its
+    // OLDEST events; readers re-sort ascending client-side.
+    expect(q).toContain('sort by _time desc');
   });
 
   it('caps the limit', () => {

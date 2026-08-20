@@ -422,7 +422,11 @@ export async function listCachedIncidents(): Promise<
       // the fold inherits carried state, but a freshly-attached row can
       // briefly carry its own first fire / fallback title.
       const rowOpened = toNum(r.opened_at) * 1000;
-      if (rowOpened > 0 && rowOpened < inc.openedAtMs) inc.openedAtMs = rowOpened;
+      // Min across rows; a 0 initial value counts as missing, not
+      // smallest (it can never be repaired by `<` alone).
+      if (rowOpened > 0 && (inc.openedAtMs === 0 || rowOpened < inc.openedAtMs)) {
+        inc.openedAtMs = rowOpened;
+      }
       const rowTitle = String(r.title ?? '');
       if (inc.title === `Incident ${incidentId}` && rowTitle && rowTitle !== inc.title) {
         inc.title = rowTitle;
