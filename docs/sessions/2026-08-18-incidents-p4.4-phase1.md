@@ -293,6 +293,32 @@ incident coverage. Landed (eval/):
   trigger. Full-suite runs with cooldowns + distinct services mostly
   avoid it; same-scenario reruns need the documented 15-30 min decay.
 
+## Addendum 7: full-suite eval results (2026-08-20, 11h27m, pack 0.13.59)
+
+Mean **0.48** across 14 scenarios (raw; every alert scenario carried
+one guaranteed miss from the stale `data_datatype` history check —
+fixed mid-run for future runs — so normalized ≈ 0.53-0.55).
+
+| Tier | Scenarios | Story |
+|---|---|---|
+| Everything works | cartFailure **0.95**, paymentFailure 0.65 | Detection → incident → drill-in page → agent root cause, end to end. All 5 incident checks green. |
+| Agent rescues | adFailure, failedReadinessProbe, kafkaQueueProblems, llmRateLimitError, paymentUnreachable, productCatalogFailure | Detection partial/missed; **investigator root-caused 8/13 scenarios**, 6 with no alert at all. |
+| Detection gaps | adHighCpu, adManualGc, emailMemoryLeak | Subtle latency/leak signatures below current arms (known P2 targets). |
+| Timing-shy | recommendationCacheFailure 0.53 | **The latency arm fired in-suite** and its incident materialized (alertState + both incident KQL checks ✓); only the UI-timing surfaces missed by ~2 min — scenario wait needs 15m→22m. |
+
+New findings from the run:
+1. **Silent-detection arm is structurally unreachable** (paymentUnreachable):
+   a fully-silent service emits no spans → no evaluator row → the
+   `curr_requests == 0` case can never produce a row. Fix: drive from
+   the prev lookup (union leftanti current svcs). Tracked.
+2. **Same-service scenario adjacency**: paymentFailure →
+   paymentUnreachable back-to-back left payment's alert state unable to
+   produce fresh transitions. Suite ordering should interleave services.
+3. **Investigator wait budgets**: 5 of the "timed out" investigator legs
+   matched the root-cause pattern but didn't conclude inside waitMs —
+   budgets need +3-5m, or the completion marker needs to catch the
+   conclusion-in-progress state.
+
 ## Follow-ups
 
 1. **P4.3: Cribl→cell notify delivery** — see above; highest priority
