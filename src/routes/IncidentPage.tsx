@@ -23,6 +23,7 @@ import * as Q from '../api/queries';
 import { serviceColor } from '../utils/spans';
 import { listCachedIncidents, readCachedAlertHistory } from '../api/panelCache';
 import { commitHumanIncidentAction, type HumanIncidentAction } from '../api/incidents';
+import { fetchInvestigationStatus, listInvestigations } from '../api/investigationTransport';
 import { useServerInvestigations } from '../hooks/useServerInvestigations';
 import type { IncidentSummary, IncidentTimelineEntry } from '../api/types';
 import type { IncidentSeverity, IncidentStatus } from '../api/generatedEventContract';
@@ -148,6 +149,7 @@ export default function IncidentPage() {
     const memberSvcs = new Set(incident.services.map((m) => m.service));
     const windowStart = incident.openedAtMs - CORRELATE_BEFORE_MS;
     const windowEnd = incident.lastFireMs + CORRELATE_AFTER_MS;
+    const isOngoingIncident = incident.status !== 'resolved' && incident.status !== 'closed';
 
     runQuery(Q.incidentEvents(incident.incidentId), `-${sinceHours}h`, 'now', 500)
       .then((rows) => {
@@ -172,20 +174,56 @@ export default function IncidentPage() {
       .catch(() => { /* timeline is best-effort */ });
 
     if (serverInvestigations) {
-      runQuery(Q.investigationEvents(500), `-${sinceHours}h`, 'now', 500)
-        .then((rows) => {
+      // Correlate via the CELL'S INDEX, not a dataset scan: the index
+      // is one fast HTTP call with complete coverage, while the
+      // -Nh raw scan could exceed the query budget on older incidents
+      // and silently leave this section empty (observed live). The
+      // svc comes from incidentKey ("svc:signal") / alertId
+      // ("auto:health:svc"); the window is open-ended for ongoing
+      // incidents — investigations often conclude well after the last
+      // firing transition.
+      const svcOf = (inv: { incidentKey: string; alertId: string }): string => {
+        const key = inv.incidentKey.split(':')[0];
+        if (key && key !== 'interactive') return key;
+        const m = /^auto:[a-z_]+:([^:]+)/.exec(inv.alertId);
+        return m?.[1] ?? '';
+      };
+      const statusToEventType: Record<string, string> = {
+        concluded: 'investigated',
+        failed: 'investigation_failed',
+        queued: 'started',
+        running: 'started',
+        idle: 'linked',
+        cancelled: 'linked',
+      };
+      listInvestigations({ limit: 100 })
+        .then(async (all) => {
           if (cancelled) return;
-          const mapped = rows.map((r) => ({
-            timeMs: Number(r._time) * 1000,
-            eventType: String(r.event_type ?? ''),
-            investigationId: String(r.investigation_id ?? ''),
-            svc: String(r.svc ?? ''),
-            signalType: String(r.signal_type ?? ''),
-            conclusion: String(r.conclusion ?? ''),
+          const correlated = all.filter((inv) => {
+            const svc = svcOf(inv);
+            if (!svc || !memberSvcs.has(svc)) return false;
+            if (inv.createdAt < windowStart) return false;
+            return isOngoingIncident || inv.createdAt <= windowEnd;
+          }).slice(0, 8);
+          const withConclusions = await Promise.all(correlated.map(async (inv) => {
+            let conclusion = '';
+            if (inv.status === 'concluded') {
+              try {
+                const st = await fetchInvestigationStatus(inv.id);
+                const c = st.conclusion as { conclusion?: unknown } | null;
+                if (c && typeof c.conclusion === 'string') conclusion = c.conclusion;
+              } catch { /* conclusion is a bonus, the row still renders */ }
+            }
+            return {
+              timeMs: inv.concludedAt ?? inv.startedAt ?? inv.createdAt,
+              eventType: statusToEventType[inv.status] ?? 'started',
+              investigationId: inv.id,
+              svc: svcOf(inv),
+              signalType: '',
+              conclusion,
+            };
           }));
-          setInvestigations(mapped.filter((iv) =>
-            memberSvcs.has(iv.svc) && iv.timeMs >= windowStart && iv.timeMs <= windowEnd,
-          ));
+          if (!cancelled) setInvestigations(withConclusions);
         })
         .catch(() => { /* investigations are best-effort */ });
     }
@@ -222,7 +260,9 @@ export default function IncidentPage() {
           ? `Auto-investigation started on ${iv.svc}`
           : iv.eventType === 'investigated'
             ? `Auto-investigation concluded on ${iv.svc}${iv.conclusion ? ` — ${iv.conclusion.slice(0, 160)}` : ''}`
-            : `Auto-investigation failed on ${iv.svc}`,
+            : iv.eventType === 'investigation_failed'
+              ? `Auto-investigation failed on ${iv.svc}`
+              : `Investigation on ${iv.svc}`,
         link: `/investigate?investigation=${encodeURIComponent(iv.investigationId)}`,
       })),
     ];
