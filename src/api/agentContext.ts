@@ -37,6 +37,10 @@ export interface InvestigationSeed {
   /** Time range the user is looking at. Defaults to -15m/now. */
   earliest?: string;
   latest?: string;
+  /** When the investigation is launched from an incident, its id — the
+   *  create flow commits an `investigation_linked` incident event so
+   *  the run shows up on the incident's page (P4.4 Phase 4-lite). */
+  incidentId?: string;
 }
 
 /** The alert facts a seed can be built from — the subset of an

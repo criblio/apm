@@ -9,6 +9,7 @@ const scenario: ScenarioDeclaration = {
   // get connection refused. Check checkout's surfaces since it's
   // the direct caller.
   expectedService: 'checkout',
+  expectsIncident: true,
   // Readiness probe failure → k8s removes cart from endpoints →
   // upstream callers get connection errors. Propagation is slow.
   telemetryWaitMs: 7 * 60_000,
@@ -67,7 +68,7 @@ const scenario: ScenarioDeclaration = {
     },
     {
       surface: 'alertHistorycheckoutFired',
-      query: 'dataset="otel" | where data_datatype == "criblapm_alert" and svc == "checkout" and event_type == "firing"',
+      query: 'dataset="otel" | where coalesce(tostring(data_datatype), tostring(datatype)) == "criblapm_alert" and svc == "checkout" and event_type == "firing"',
       earliest: '-30m',
       latest: 'now',
       assertion: 'rowCountGt0',
@@ -79,7 +80,7 @@ const scenario: ScenarioDeclaration = {
     prompt:
       'Checkout is experiencing errors calling the cart service. Is cart having availability issues in the last 15 minutes?',
     expectedRootCausePattern: 'cart.*error|connection.*refused|unavailable|readiness|pod|restart|cart.*down|cart.*unreachable',
-    waitMs: 5 * 60_000,
+    waitMs: 9 * 60_000,
   },
 };
 

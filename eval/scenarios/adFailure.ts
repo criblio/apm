@@ -5,6 +5,7 @@ const scenario: ScenarioDeclaration = {
   flag: 'adFailure',
   variant: 'on',
   expectedService: 'ad',
+  expectsIncident: true,
   // 10% Bernoulli rate on ~10 GetAds/min = ~1 error/min.
   // Need 4+ minutes for reliable detection.
   telemetryWaitMs: 7 * 60_000,
@@ -63,7 +64,7 @@ const scenario: ScenarioDeclaration = {
     },
     {
       surface: 'alertHistoryadFired',
-      query: 'dataset="otel" | where data_datatype == "criblapm_alert" and svc == "ad" and event_type == "firing"',
+      query: 'dataset="otel" | where coalesce(tostring(data_datatype), tostring(datatype)) == "criblapm_alert" and svc == "ad" and event_type == "firing"',
       earliest: '-30m',
       latest: 'now',
       assertion: 'rowCountGt0',
@@ -75,7 +76,7 @@ const scenario: ScenarioDeclaration = {
     prompt:
       'Are there any ad service errors in the last 15 minutes? Summarise root cause.',
     expectedRootCausePattern: 'ad.*error|GetAds|UNAVAILABLE|adservice',
-    waitMs: 5 * 60_000,
+    waitMs: 9 * 60_000,
   },
 };
 

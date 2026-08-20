@@ -96,6 +96,23 @@ function toNum(v: unknown): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+/** Keep only the newest scheduled run's rows. $vt_results retains
+ * keepLastN (2) runs per jobName; readers that treat the partition as
+ * "current state" must not mix a stale run in (a service that flapped
+ * between runs would appear twice, once with its old status). jobId's
+ * fixed-width epoch-millis prefix makes the string max the newest. */
+export function latestRunRows(
+  rows: Record<string, unknown>[],
+): Record<string, unknown>[] {
+  let latest = '';
+  for (const r of rows) {
+    const id = String(r.jobId ?? '');
+    if (id > latest) latest = id;
+  }
+  if (!latest) return rows;
+  return rows.filter((r) => String(r.jobId ?? '') === latest);
+}
+
 /**
  * Issue a single $vt_results query covering every panel in
  * `jobNames`, then partition the mixed row stream by the
@@ -285,7 +302,7 @@ function buildCachedPanels(
     unfilteredErrorClasses: errorRows ? groupErrorClasses(errorRows) : null,
     errorDroppedBy: errorFilter ? errorFilter.droppedBy : null,
     dependencies: mergeDependencyEdges(depRows, msgDepRows),
-    alertRows: alertsRows ? parseAlertRows(alertsRows) : null,
+    alertRows: alertsRows ? parseAlertRows(latestRunRows(alertsRows)) : null,
     lastUpdatedMs,
   };
 }
@@ -345,6 +362,86 @@ export async function readCachedAlertHistory(): Promise<Record<string, unknown>[
   const partitions = await readCachedPanelsRaw(['criblapm__alert_history']);
   const rows = partitions.get('criblapm__alert_history');
   return rows && rows.length > 0 ? rows : null;
+}
+
+// ── Incidents cache (P4.4) ───────────────────────────────────
+
+/**
+ * Read the incident state fold (`criblapm__incidents_state`) from
+ * $vt_results and assemble one IncidentSummary per incident from its
+ * per-(incident, service) rows. Returns null when the fold hasn't run
+ * yet. keepLastN retains two runs, so rows are first narrowed to the
+ * newest jobId (fixed-width epoch-millis prefix makes the string max
+ * the latest run).
+ */
+export async function listCachedIncidents(): Promise<
+  import('./types').IncidentSummary[] | null
+> {
+  const partitions = await readCachedPanelsRaw(['criblapm__incidents_state']);
+  const rows = partitions.get('criblapm__incidents_state');
+  if (!rows || rows.length === 0) return null;
+
+  const latest = latestRunRows(rows);
+
+  // Member rows can briefly disagree on status (per-row liveness is
+  // fresh, the incident-level rollup lags one run), so the incident
+  // takes the MOST-OPEN status across its members.
+  const statusRank: Record<string, number> = {
+    open: 0, investigating: 1, identified: 2, mitigated: 3, resolved: 4, closed: 5,
+  };
+  const byIncident = new Map<string, import('./types').IncidentSummary>();
+  for (const r of latest) {
+    const incidentId = String(r.incident_id ?? '');
+    const service = String(r.svc ?? '');
+    if (!incidentId || !service || incidentId === '__init__') continue;
+    const member = {
+      service,
+      firstSeenMs: toNum(r.first_seen) * 1000,
+      lastFireMs: toNum(r.last_fire_at) * 1000,
+      fireCount: toNum(r.fire_n),
+    };
+    const rowStatus = String(r.status ?? 'open') as import('./types').IncidentSummary['status'];
+    let inc = byIncident.get(incidentId);
+    if (!inc) {
+      inc = {
+        incidentId,
+        title: String(r.title ?? incidentId),
+        status: rowStatus,
+        severity: String(r.severity ?? 'sev4') as import('./types').IncidentSummary['severity'],
+        services: [],
+        rootService: '',
+        openedAtMs: toNum(r.opened_at) * 1000,
+        lastFireMs: toNum(r.inc_last_fire) * 1000,
+      };
+      byIncident.set(incidentId, inc);
+    } else {
+      if ((statusRank[rowStatus] ?? 9) < (statusRank[inc.status] ?? 9)) {
+        inc.status = rowStatus;
+      }
+      // Incident-level fields defensively reduce across member rows —
+      // the fold inherits carried state, but a freshly-attached row can
+      // briefly carry its own first fire / fallback title.
+      const rowOpened = toNum(r.opened_at) * 1000;
+      // Min across rows; a 0 initial value counts as missing, not
+      // smallest (it can never be repaired by `<` alone).
+      if (rowOpened > 0 && (inc.openedAtMs === 0 || rowOpened < inc.openedAtMs)) {
+        inc.openedAtMs = rowOpened;
+      }
+      const rowTitle = String(r.title ?? '');
+      if (inc.title === `Incident ${incidentId}` && rowTitle && rowTitle !== inc.title) {
+        inc.title = rowTitle;
+      }
+    }
+    inc.services.push(member);
+  }
+
+  const incidents = Array.from(byIncident.values());
+  for (const inc of incidents) {
+    inc.services.sort((a, b) => a.firstSeenMs - b.firstSeenMs);
+    inc.rootService = inc.services[0]?.service ?? '';
+  }
+  incidents.sort((a, b) => b.lastFireMs - a.lastFireMs);
+  return incidents;
 }
 
 // ── ServiceDetail panel cache ─────────────────────────────────

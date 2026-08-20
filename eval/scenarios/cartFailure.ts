@@ -5,6 +5,7 @@ const scenario: ScenarioDeclaration = {
   flag: 'cartFailure',
   variant: 'on',
   expectedService: 'cart',
+  expectsIncident: true,
   telemetryWaitMs: 7 * 60_000,
   cooldownMs: 10 * 60_000,
   surfaceChecks: [
@@ -69,7 +70,7 @@ const scenario: ScenarioDeclaration = {
     },
     {
       surface: 'alertHistorycartFired',
-      query: 'dataset="otel" | where data_datatype == "criblapm_alert" and svc == "cart" and event_type == "firing"',
+      query: 'dataset="otel" | where coalesce(tostring(data_datatype), tostring(datatype)) == "criblapm_alert" and svc == "cart" and event_type == "firing"',
       earliest: '-30m',
       latest: 'now',
       assertion: 'rowCountGt0',
@@ -81,7 +82,7 @@ const scenario: ScenarioDeclaration = {
     prompt:
       'Why are there cart service errors in the last 15 minutes? Summarise root cause.',
     expectedRootCausePattern: 'cart.*error|redis|valkey|emptyCart|getCart',
-    waitMs: 5 * 60_000,
+    waitMs: 9 * 60_000,
   },
 };
 

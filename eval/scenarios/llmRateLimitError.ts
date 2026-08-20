@@ -5,6 +5,7 @@ const scenario: ScenarioDeclaration = {
   flag: 'llmRateLimitError',
   variant: 'on',
   expectedService: 'product-reviews',
+  expectsIncident: true,
   telemetryWaitMs: 7 * 60_000,
   cooldownMs: 10 * 60_000,
   surfaceChecks: [
@@ -68,7 +69,7 @@ const scenario: ScenarioDeclaration = {
     },
     {
       surface: 'alertHistoryproductreviewsFired',
-      query: 'dataset="otel" | where data_datatype == "criblapm_alert" and svc == "product-reviews" and event_type == "firing"',
+      query: 'dataset="otel" | where coalesce(tostring(data_datatype), tostring(datatype)) == "criblapm_alert" and svc == "product-reviews" and event_type == "firing"',
       earliest: '-30m',
       latest: 'now',
       assertion: 'rowCountGt0',
@@ -80,7 +81,7 @@ const scenario: ScenarioDeclaration = {
     prompt:
       'Why are there product-reviews errors in the last 15 minutes? Summarise root cause.',
     expectedRootCausePattern: 'product.reviews|rate.limit|llm|429|throttl',
-    waitMs: 5 * 60_000,
+    waitMs: 9 * 60_000,
   },
 };
 

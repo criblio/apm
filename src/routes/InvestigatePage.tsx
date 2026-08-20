@@ -29,6 +29,7 @@ import { getCurrentDataset } from '@cribl/app-utils/dataset';
 import { useInvestigationSession } from '../hooks/useInvestigationSession';
 import { useServerInvestigations } from '../hooks/useServerInvestigations';
 import { createInvestigation } from '../api/investigationTransport';
+import { commitInvestigationLink } from '../api/incidents';
 import { loadAppSettings } from '../api/appSettings';
 import InvestigationsSidebar from '../components/InvestigationsSidebar';
 import sidebar from '../components/InvestigationsSidebar.module.css';
@@ -397,6 +398,11 @@ function CreatingInvestigation({ seed }: { seed: InvestigationSeed }) {
         }),
       )
       .then(({ id }) => {
+        // Launched from an incident → record the link on the incident's
+        // event log (best-effort; the run itself is already created).
+        if (seed.incidentId) {
+          void commitInvestigationLink(seed.incidentId, id).catch(() => {});
+        }
         navigate(`/investigate?investigation=${encodeURIComponent(id)}`, {
           replace: true,
           state: { openingPrompt: prompt },

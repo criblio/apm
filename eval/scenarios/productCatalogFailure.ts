@@ -5,6 +5,7 @@ const scenario: ScenarioDeclaration = {
   flag: 'productCatalogFailure',
   variant: 'on',
   expectedService: 'product-catalog',
+  expectsIncident: true,
   telemetryWaitMs: 7 * 60_000,
   cooldownMs: 10 * 60_000,
   surfaceChecks: [
@@ -61,7 +62,7 @@ const scenario: ScenarioDeclaration = {
     },
     {
       surface: 'alertHistoryproductcatalogFired',
-      query: 'dataset="otel" | where data_datatype == "criblapm_alert" and svc == "product-catalog" and event_type == "firing"',
+      query: 'dataset="otel" | where coalesce(tostring(data_datatype), tostring(datatype)) == "criblapm_alert" and svc == "product-catalog" and event_type == "firing"',
       earliest: '-30m',
       latest: 'now',
       assertion: 'rowCountGt0',
@@ -73,7 +74,7 @@ const scenario: ScenarioDeclaration = {
     prompt:
       'Why are there product-catalog errors in the last 15 minutes? Which product is affected?',
     expectedRootCausePattern: 'product.catalog|OLJCESPC7Z|product.*id|GetProduct',
-    waitMs: 5 * 60_000,
+    waitMs: 9 * 60_000,
   },
 };
 

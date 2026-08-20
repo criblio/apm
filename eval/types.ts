@@ -1,6 +1,8 @@
 export interface SurfaceCheck {
   surface: string;
-  page: 'home' | 'overview' | 'services' | 'serviceDetail' | 'systemArch' | 'alerts' | 'errors';
+  /** `incident` navigates Alerts → the incident row containing the
+   * scenario's expectedService → its drill-in page (P4.4). */
+  page: 'home' | 'overview' | 'services' | 'serviceDetail' | 'systemArch' | 'alerts' | 'errors' | 'incident';
   locator: string;
   assertion: 'visible' | 'countGt0' | 'textMatches';
   pattern?: string;
@@ -30,6 +32,11 @@ export interface ScenarioDeclaration {
   expectedService: string;
   telemetryWaitMs: number;
   cooldownMs: number;
+  /** When true (scenarios whose alert reliably fires), the engine
+   * appends the standard incident-layer checks from
+   * eval/incidentChecks.ts: incident opened containing the service,
+   * drill-in page renders, incident events + fold row present. */
+  expectsIncident?: boolean;
   surfaceChecks: SurfaceCheck[];
   kqlChecks?: KqlCheck[];
   investigator?: {

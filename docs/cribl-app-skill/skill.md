@@ -93,6 +93,24 @@ working trigger — re-align both sides after any receiver redeploy.
   on synthetic rows, fails on 36+ real rows from a prior summarize).
   Split into separate searches joined via lookups.
 
+### `sort` after a join pipeline drops all rows
+- A trailing `| sort by <col>` after a pipeline of several
+  `join`/`union` stages silently returns ZERO rows — single- or
+  multi-key alike (verified live 2026-08-18: 3 rows in, 0 out; every
+  upstream stage intact). A `| sort` used as a barrier right after a
+  `union` (see below) works fine — the failure appears when sorting
+  the output of a deep join stack. Don't sort materialized fold/export
+  outputs server-side; order client-side in the reader instead.
+
+### Union + `_time` assignment
+- `| project _time=<column>` (or `extend _time=<column>`) after a
+  `union` silently NULLS `_time` on rows that came from the union's
+  subquery branch — main-branch rows keep it (found 2026-08-18 in the
+  incident grouper; two identical-value rows, one null). Put a
+  materializing operator between the union and the assignment:
+  `| sort by <col> | project _time=<col>, …` fixes it. Assigning a
+  constant (`_time=now()`) is unaffected.
+
 ### Unsupported functions
 - `any()` — not supported in all Cribl Search versions. Use `max()`
 - `percentileif()` — not available. Use conditional filtering before
@@ -114,6 +132,18 @@ working trigger — re-align both sides after any receiver redeploy.
   windows, join via lookup. Don't try to pivot with `max(iff(...))`.
 - State machine in KQL: `case()` with `iff()` for conditional logic,
   `| lookup` for previous state, `| export to lookup` for persistence.
+- Fold/read-model searches: make them INCREMENTAL, not recompute. A
+  full-history fold needs one wide dataset scan per join subquery —
+  every scan pays for the whole time window even when the filter keeps
+  only sparse curated events (a -7d scan measured >60s on staging; 8
+  of them per cadence saturates the pool). Instead read the search's
+  own previous output back from `$vt_results` (latest jobId via a
+  `summarize jobId=max(tostring(jobId))` self-join — the fixed-width
+  epoch-millis prefix makes the string max the newest run) and merge a
+  short delta window, gating per-key on a carried high-water `_time`
+  mark so window overlap never double-counts. Caveat: carried state is
+  only visible within the search window — pause the search longer than
+  that and the fold restarts from the delta.
 
 ## Sandboxed iframe constraints
 
