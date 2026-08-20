@@ -319,6 +319,37 @@ New findings from the run:
    budgets need +3-5m, or the completion marker needs to catch the
    conclusion-in-progress state.
 
+## Addendum 8: 0.14.0 release-gate review + investigation-correlation fix
+
+Pre-tag high-effort review of the full release diff: 9 confirmed
+findings, all fixed (details in the PR #147 comment). Standouts: the
+fold's lexicographic override reduction (close-after-reopen stuck
+incidents open forever), the cell poll bypassing the
+serverInvestigations gate (now reads the notify search's cached
+results — flag off ⇒ no-op), a fleet-wide silent-alert storm guard,
+and latency alerts being invisible in Overview's Detected Issues.
+
+Clint then caught the incident page showing no investigations despite
+runs existing. Three stacked causes, all fixed (0.13.61):
+1. Correlation window ended at lastFire+30m — investigations often
+   conclude later.
+2. The -Nh investigation-events dataset scan could exceed the query
+   budget on older incidents and get swallowed silently. The page now
+   correlates via the CELL'S INDEX (one HTTP call) with per-id
+   conclusion fetches — the dataset scan is gone.
+3. The runs Clint saw were the eval's INTERACTIVE investigations,
+   which stored incident_key='interactive' with no service metadata —
+   structurally unmatchable. The cell now stamps "svc:interactive"
+   from the seed context (rides with the pending celld deploy).
+
+Verified live: autonomous replay for the open incident renders
+Investigations (1)/Concluded on the deployed page
+(screenshot investigations-index-fix.png).
+
+**celld deploy now carries THREE changes** (cell/src/coordinatorDO.ts):
+the poll trigger, the notify-search-results read (flag-gate
+restoration), and the interactive svc metadata.
+
 ## Follow-ups
 
 1. **P4.3: Cribl→cell notify delivery** — see above; highest priority
