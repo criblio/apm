@@ -95,12 +95,19 @@ export class CoordinatorDO {
       // for interactive rows (they have no alert to dedupe on).
       const eventId = `ui-${crypto.randomUUID()}`;
       const title = (body.title?.trim() || titleFromPrompt(prompt)).slice(0, 120);
+      // Carry the seed's service into incident_key ("svc:interactive")
+      // so the incident page can correlate interactive runs by service;
+      // a bare 'interactive' key made them structurally unmatchable
+      // (observed 2026-08-20: eval-launched runs invisible on incidents).
+      const svc = typeof body.context?.service === 'string' ? body.context.service.trim() : '';
+      const incidentKeyVal = svc ? `${svc}:interactive` : 'interactive';
       this.state.storage.sql.exec(
         `INSERT INTO investigations
            (id, event_id, alert_id, incident_key, status, alert_json, created_at, mode, title)
-         VALUES (?, ?, '', 'interactive', 'queued', ?, ?, 'interactive', ?)`,
+         VALUES (?, ?, '', ?, 'queued', ?, ?, 'interactive', ?)`,
         id,
         eventId,
+        incidentKeyVal,
         JSON.stringify({ prompt, context: body.context ?? null, repos: body.repos ?? null }),
         Date.now(),
         title,
