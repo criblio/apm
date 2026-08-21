@@ -6,8 +6,15 @@ can reuse the harness without copying it. APM-specific code stays in
 this repo; the generic agent harness moves to
 `cribl-search-app-framework`.
 
-Status: **design + spike results** (2026-08-20). Decisions confirmed
-with Clint inline below. Not built.
+Status: **implementation in flight** (2026-08-20). Steps 1-4 built +
+step 5's offline half, as a PR stack — apm: #149 (payload seam) →
+#150 (protocol consumption) → #151 (pi-agent-core runner) → #152
+(cell rebuilt on framework packages); framework: #27
+(agent-protocol) → #28 (cell-harness + cell-workspace) → #29 (write
+tools + git write-back). Remaining: CF-computer vfs + just-bash
+(needs live celld), tool-defs move to app-utils (§2.5), GitHub
+Packages publishing, coding-app scaffold. Decisions confirmed with
+Clint inline below.
 
 ## Decisions (2026-08-20, second round)
 
