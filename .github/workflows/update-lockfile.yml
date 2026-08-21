@@ -7,6 +7,12 @@ name: Update lockfile
 # version bumps from a machine without npm auth.
 on:
   workflow_dispatch:
+  # Temporary bootstrap trigger: workflow_dispatch is only discoverable
+  # once this file is on the default branch, and this branch needs the
+  # lockfile regenerated BEFORE it can merge. Remove after merge.
+  push:
+    branches: [feat/github-packages-consume]
+    paths: ['.github/workflows/update-lockfile.yml']
 
 permissions:
   contents: write
