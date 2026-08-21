@@ -30,6 +30,8 @@
     "@capra/theme": "^1.2.0",
     "@cribl/app-utils": "file:../cribl-search-app-framework/packages/app-utils",
     "@criblio/agent-protocol": "file:../cribl-search-app-framework/packages/agent-protocol",
+    "@criblio/cell-harness": "file:../cribl-search-app-framework/packages/cell-harness",
+    "@criblio/cell-workspace": "file:../cribl-search-app-framework/packages/cell-workspace",
     "d3-array": "^3.2.4",
     "d3-force": "^3.0.0",
     "d3-scale": "^4.0.2",

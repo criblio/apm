@@ -36,7 +36,7 @@ import type {
   LifecycleEvent,
   SeedResult,
   StubTurn,
-} from '../payload';
+} from '@criblio/cell-harness';
 
 /** Poll cadence window — matches the notify search's -15m; the
  *  coordinator's event_id dedupe absorbs the overlap between
@@ -81,7 +81,7 @@ const LIFECYCLE_EVENT_TYPE: Record<
   failed: 'investigation_failed',
 };
 
-export const apmPayload: CellPayload<FiringAlert> = {
+export const apmPayload: CellPayload<FiringAlert, Env> = {
   parseTrigger(raw: unknown): FiringAlert | null {
     if (!raw || typeof raw !== 'object') return null;
     const r = raw as Record<string, unknown>;
