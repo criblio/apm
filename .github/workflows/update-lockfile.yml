@@ -7,10 +7,6 @@ name: Update lockfile
 # version bumps from a machine without npm auth.
 on:
   workflow_dispatch:
-  # Temporary bootstrap trigger (remove before merge).
-  push:
-    branches: [feat/github-packages-consume]
-    paths: ['package.json', '.github/workflows/update-lockfile.yml']
 
 permissions:
   contents: write
