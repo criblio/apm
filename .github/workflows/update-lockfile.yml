@@ -10,7 +10,7 @@ on:
   # Temporary bootstrap trigger (remove before merge).
   push:
     branches: [feat/github-packages-consume]
-    paths: ['package.json']
+    paths: ['package.json', '.github/workflows/update-lockfile.yml']
 
 permissions:
   contents: write
