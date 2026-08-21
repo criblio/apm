@@ -30,7 +30,10 @@ jobs:
       - name: Regenerate package-lock.json
         env:
           NODE_AUTH_TOKEN: ${{ github.token }}
-        run: npm install --package-lock-only
+        # Bootstrap: full regen — the migrated-from lockfile carries
+        # stale file:../ resolutions npm would otherwise preserve.
+        # Revert to plain `npm install --package-lock-only` after merge.
+        run: rm -f package-lock.json && npm install --package-lock-only
       - name: Commit and push if changed
         run: |
           set -euo pipefail
