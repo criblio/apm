@@ -20,77 +20,28 @@
  */
 import type { LoopEvent } from '@cribl/app-utils/agent-loop';
 import type { ToolResultUi } from '@cribl/app-utils/agent-tools';
+import { isTerminalStatus } from '@criblio/agent-protocol';
+import type {
+  EventsResponse,
+  SessionMode,
+  SessionStatus,
+  SessionStatusResponse,
+  SessionSummaryRow,
+  SourceRepo,
+  WireLoopEvent,
+} from '@criblio/agent-protocol';
 
-/** Wire form of a single LoopEvent (error carries a message, not an
- *  Error instance). Mirrors cell/src/protocol.ts WireLoopEvent. */
-export type WireLoopEvent =
-  // A user's turn — rendered as a user bubble, not a framework LoopEvent.
-  | { kind: 'userMessage'; turnId: string; content: string }
-  | { kind: 'assistantText'; turnId: string; chunk: string }
-  | { kind: 'assistantDone'; turnId: string }
-  | {
-      kind: 'toolCall';
-      turnId: string;
-      call: { id: string; type?: string; function: { name: string; arguments: string } };
-      needsApproval: boolean;
-    }
-  | {
-      kind: 'toolResult';
-      turnId: string;
-      result: { id: string; name: string; content: string; ui?: unknown };
-    }
-  | { kind: 'notification'; turnId: string; content: unknown }
-  | { kind: 'error'; message: string }
-  | { kind: 'done'; reason: string };
-
-export type InvestigationStatus =
-  | 'queued'
-  | 'running'
-  // Interactive investigations only: answered the current user turn,
-  // awaiting the next message. Non-terminal.
-  | 'idle'
-  | 'concluded'
-  | 'failed'
-  | 'cancelled';
-
-export type InvestigationMode = 'autonomous' | 'interactive';
-
-/** One row of the recall panel — mirrors the cell's
- *  InvestigationSummaryRow. */
-export interface InvestigationSummary {
-  id: string;
-  alertId: string;
-  incidentKey: string;
-  status: InvestigationStatus;
-  title: string;
-  mode: InvestigationMode;
-  createdAt: number;
-  startedAt: number | null;
-  concludedAt: number | null;
-}
-
-export interface EventsResponse {
-  protocolVersion: number;
-  status: InvestigationStatus;
-  latestSeq: number;
-  frames: Array<{ seq: number; ev: WireLoopEvent }>;
-}
-
-export interface InvestigationStatusResponse {
-  id: string;
-  status: InvestigationStatus;
-  mode?: InvestigationMode;
-  title?: string | null;
-  alertId: string;
-  incidentKey: string;
-  createdAt: number;
-  startedAt: number | null;
-  concludedAt: number | null;
-  /** The small InvestigationSeed (carries the opening `question`). */
-  seed?: { question?: string } | null;
-  conclusion: unknown | null;
-  latestSeq: number;
-}
+// The wire shapes now come from @criblio/agent-protocol — the same
+// module the cell imports, so the two sides can no longer drift (this
+// file used to carry a hand-maintained mirror). Re-exported under the
+// established investigation-flavored names the rest of the UI uses.
+export { isTerminalStatus };
+export type { EventsResponse, SourceRepo, WireLoopEvent };
+export type InvestigationStatus = SessionStatus;
+export type InvestigationMode = SessionMode;
+/** One row of the recall panel. */
+export type InvestigationSummary = SessionSummaryRow;
+export type InvestigationStatusResponse = SessionStatusResponse;
 
 /**
  * Rehydrate one wire event into a framework LoopEvent. Pure — the
@@ -134,11 +85,6 @@ export function wireEventToLoopEvent(ev: WireLoopEvent): LoopEvent | null {
     default:
       return null;
   }
-}
-
-/** Terminal states stop polling. */
-export function isTerminalStatus(status: InvestigationStatus): boolean {
-  return status === 'concluded' || status === 'failed' || status === 'cancelled';
 }
 
 /**
@@ -292,16 +238,6 @@ async function postJson<T>(url: string, body: unknown, signal?: AbortSignal): Pr
     throw new Error(`investigator cell ${resp.status}: ${await resp.text()}`);
   }
   return (await resp.json()) as T;
-}
-
-/** A source repo the agent may check out. `service` maps it to a
- *  telemetry service; `*`/omitted = monorepo catch-all. Mirrors the
- *  cell's protocol SourceRepo. */
-export interface SourceRepo {
-  url: string;
-  name?: string;
-  service?: string;
-  ref?: string;
 }
 
 export interface CreateInvestigationInput {
