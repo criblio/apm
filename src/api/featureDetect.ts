@@ -17,7 +17,7 @@
  * detection avoids forcing every query call site to probe — they
  * just read a sync value.
  */
-import { getCurrentDataset } from '@cribl/app-utils/dataset';
+import { getCurrentDataset } from '@criblio/app-utils/dataset';
 import { runQuery } from './cribl';
 import { kqlDatasetId } from './kqlSafety';
 

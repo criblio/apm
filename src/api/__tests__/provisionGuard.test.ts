@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { validateQuery, validateName, validateProvisionPlan } from '../provisionGuard';
-import { setCurrentDataset } from '@cribl/app-utils/dataset';
+import { setCurrentDataset } from '@criblio/app-utils/dataset';
 import { getProvisioningPlan, SEED_LOOKUPS } from '../provisionedSearches';
 
 describe('validateQuery', () => {

@@ -1,6 +1,6 @@
 /**
  * Type-level parity between @criblio/agent-protocol's WireLoopEvent
- * and the framework's LoopEvent union (@cribl/app-utils agent-loop) —
+ * and the framework's LoopEvent union (@criblio/app-utils agent-loop) —
  * the assertion the old hand-mirrored protocol.ts asked for. The
  * protocol package deliberately doesn't depend on app-utils, so the
  * pin lives here, where both packages are installed.
@@ -15,7 +15,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import type { WireLoopEvent } from '@criblio/agent-protocol';
-import type { LoopEvent } from '@cribl/app-utils/agent-loop';
+import type { LoopEvent } from '@criblio/app-utils/agent-loop';
 
 type Extends<A, B> = A extends B ? true : false;
 type Assert<T extends true> = T;

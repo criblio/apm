@@ -3,7 +3,7 @@
  *
  * The chat shell (transcript, streaming markdown, approvals,
  * composer, PNG export, stop/new controls) lives in
- * @cribl/app-utils/investigator. This page owns what's APM about
+ * @criblio/app-utils/investigator. This page owns what's APM about
  * an investigation:
  *
  *   - the seed handed over via router state from "Investigate"
@@ -22,10 +22,10 @@ import {
   InvestigatorChat,
   InvestigatorTranscript,
   type InvestigatorTranscriptEntry,
-} from '@cribl/app-utils/investigator';
+} from '@criblio/app-utils/investigator';
 import { SourceFileView, SourceFileModal } from '../components/SourceFileView';
-import MetricsToolCard from '@cribl/app-utils/investigator/metrics-tool-card';
-import { getCurrentDataset } from '@cribl/app-utils/dataset';
+import MetricsToolCard from '@criblio/app-utils/investigator/metrics-tool-card';
+import { getCurrentDataset } from '@criblio/app-utils/dataset';
 import { useInvestigationSession } from '../hooks/useInvestigationSession';
 import { useServerInvestigations } from '../hooks/useServerInvestigations';
 import { createInvestigation } from '../api/investigationTransport';

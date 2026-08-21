@@ -18,8 +18,8 @@
  * matching `config/proxies.yml` domain + `kv.cellToken` header
  * injection land with the UI wiring PR once the cell host is known.
  */
-import type { LoopEvent } from '@cribl/app-utils/agent-loop';
-import type { ToolResultUi } from '@cribl/app-utils/agent-tools';
+import type { LoopEvent } from '@criblio/app-utils/agent-loop';
+import type { ToolResultUi } from '@criblio/app-utils/agent-tools';
 import { isTerminalStatus } from '@criblio/agent-protocol';
 import type {
   EventsResponse,

@@ -1,6 +1,6 @@
 /**
  * APM-typed wrapper over the shared d3-force simulation driver
- * (@cribl/app-utils/graph, extracted from this app). The generic hook
+ * (@criblio/app-utils/graph, extracted from this app). The generic hook
  * owns the physics/lifecycle; this file pins the APM datum types so
  * DependencyGraph and IsometricGraph keep their existing contracts.
  */
@@ -8,7 +8,7 @@ import {
   useForceLayout as useForceLayoutGeneric,
   type ForceNode,
   type UseForceLayoutResult as GenericResult,
-} from '@cribl/app-utils/graph';
+} from '@criblio/app-utils/graph';
 import type { SimulationLinkDatum } from 'd3-force';
 
 export interface SimNode extends ForceNode {

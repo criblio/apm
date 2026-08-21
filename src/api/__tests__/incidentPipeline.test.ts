@@ -6,7 +6,7 @@
  * shapes, the idempotency joins, and the provisioning wiring.
  */
 import { describe, expect, it } from 'vitest';
-import { setCurrentDataset } from '@cribl/app-utils/dataset';
+import { setCurrentDataset } from '@criblio/app-utils/dataset';
 import * as Q from '../queries';
 import { validateQuery } from '../provisionGuard';
 import {

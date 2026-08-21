@@ -1,7 +1,7 @@
 /**
  * APM-specific binding for the framework provisioner.
  *
- * The reconciliation logic itself lives in @cribl/app-utils. This
+ * The reconciliation logic itself lives in @criblio/app-utils. This
  * module supplies APM's prefix, plan, and lookup seeds, and exposes
  * thin wrappers that callers can invoke without repeating config.
  */
@@ -11,7 +11,7 @@ import {
   unprovisionAll as fwUnprovisionAll,
   type HttpClient,
   type ProvisionerConfig,
-} from '@cribl/app-utils/provisioner';
+} from '@criblio/app-utils/provisioner';
 import {
   CRIBLAPM_PREFIX,
   SEED_LOOKUPS,
@@ -32,11 +32,11 @@ export const unprovisionAll = (http: HttpClient) =>
 export {
   applyProvisioningPlan,
   createBrowserHttpClient,
-} from '@cribl/app-utils/provisioner';
+} from '@criblio/app-utils/provisioner';
 export type {
   HttpClient,
   PlanAction,
   ActionResult,
   SavedSearchRow,
   ProvisionedSearch,
-} from '@cribl/app-utils/provisioner';
+} from '@criblio/app-utils/provisioner';

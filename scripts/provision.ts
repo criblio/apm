@@ -22,7 +22,7 @@ import {
   listProvisioned,
   type HttpClient,
   type PlanAction,
-} from '@cribl/app-utils/provisioner';
+} from '@criblio/app-utils/provisioner';
 import { reconcile, planOnly } from '../src/api/provisioner.js';
 import { validateProvisionPlan } from '../src/api/provisionGuard.js';
 import { runCanary } from '../src/api/postReconcileCanary.js';
@@ -42,8 +42,8 @@ import {
   apply as applyDatasetProvisioning,
   getStatus as getDatasetStatus,
 } from '../src/api/datasetProvisioner.js';
-import { setSearchCadence } from '@cribl/app-utils/cadence';
-import { setCurrentDataset } from '@cribl/app-utils/dataset';
+import { setSearchCadence } from '@criblio/app-utils/cadence';
+import { setCurrentDataset } from '@criblio/app-utils/dataset';
 import { setLowVolumeMode } from '../src/api/lowVolumeMode.js';
 import { setMetricsEmit, getMetricsEmit } from '../src/api/metricsEmit.js';
 import { getServerInvestigations, setServerInvestigations } from '../src/api/serverInvestigations.js';

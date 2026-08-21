@@ -9,7 +9,7 @@
  * silently corrupting production.
  *
  * Pure string validation — no I/O, no framework imports — so it can
- * be unit-tested and later upstreamed to @cribl/app-utils.
+ * be unit-tested and later upstreamed to @criblio/app-utils.
  */
 
 export interface GuardTarget {

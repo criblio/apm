@@ -25,7 +25,7 @@
  * re-seeded — and so wiped — every lookup.
  */
 import { describe, it, expect } from 'vitest';
-import { seedLookups, type HttpClient } from '@cribl/app-utils/provisioner';
+import { seedLookups, type HttpClient } from '@criblio/app-utils/provisioner';
 
 const LOOKUP = 'criblapm_op_baselines';
 const SEED = `print svc="__init__" | export mode=overwrite to lookup ${LOOKUP}`;

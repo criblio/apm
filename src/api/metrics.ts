@@ -1,7 +1,7 @@
 /**
  * Metrics query client for the fast Cribl PromQL store.
  *
- * Re-exported from the shared framework (`@cribl/app-utils/metrics`, the
+ * Re-exported from the shared framework (`@criblio/app-utils/metrics`, the
  * same client the Ubiquiti app is built on). These queries hit a
  * synchronous `searchJobSource=metrics` endpoint that returns NDJSON
  * immediately — they do NOT spawn a search job, so they stay off the
@@ -11,7 +11,7 @@
  *
  * Import from this module (not the framework root barrel) — the barrel
  * pulls the provisioner → `node:fs` and breaks in browser code. The
- * framework subpath `@cribl/app-utils/metrics` is browser-safe.
+ * framework subpath `@criblio/app-utils/metrics` is browser-safe.
  *
  * NOTE: read-time aggregations verified live (2026-07-23): `rate`,
  * `sum by`, `topk`, `histogram_quantile`, scalar math. `label_replace`
@@ -34,7 +34,7 @@ export {
   type MetricSeries,
   type MetricMetadata,
   type SearchDatasetInfo,
-} from '@cribl/app-utils/metrics';
+} from '@criblio/app-utils/metrics';
 
 /**
  * Pick a range-query `step` (seconds) that yields ~`targetBuckets`

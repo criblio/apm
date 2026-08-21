@@ -6,7 +6,7 @@
  * MCP validation).
  */
 import { beforeAll, describe, it, expect } from 'vitest';
-import { setCurrentDataset } from '@cribl/app-utils/dataset';
+import { setCurrentDataset } from '@criblio/app-utils/dataset';
 import {
   attrValueDistribution,
   spotlightAttrDiff,

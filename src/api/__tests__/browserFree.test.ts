@@ -12,7 +12,7 @@
  * import-time coupling that would break a Worker bundle.)
  */
 import { beforeAll, describe, expect, it } from 'vitest';
-import { setCurrentDataset } from '@cribl/app-utils/dataset';
+import { setCurrentDataset } from '@criblio/app-utils/dataset';
 import { buildAlertSeed, buildSeedPrompt } from '../agentContext';
 import { APM_TOOL_DEFINITIONS } from '../agentToolDefs';
 import { runPreflight, formatPreflightSignals } from '../agentPreflight';

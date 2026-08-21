@@ -4,7 +4,7 @@
  * The signal-aware browser search client — `runQuery` with the
  * navigation-generation abort default, the get/post-carry-signal /
  * del-no-signal nuance, and the search-job runner wiring — now lives in
- * the shared framework (`@cribl/app-utils/search`). It was pushed down so
+ * the shared framework (`@criblio/app-utils/search`). It was pushed down so
  * every framework consumer gets nav-scoped KQL cancellation, not just
  * this app. This module re-exports it so existing imports (`./cribl`)
  * keep working.
@@ -16,4 +16,4 @@
  *
  * App-specific query builders live in queries.ts and search.ts.
  */
-export { runQuery, apiUrl } from '@cribl/app-utils/search';
+export { runQuery, apiUrl } from '@criblio/app-utils/search';

@@ -1,7 +1,7 @@
 /**
  * Persistent banners surfaced above every page when the workspace
  * is missing provisioning state the app depends on. Two checks
- * run in parallel via @cribl/app-utils's useProvisioningBanners:
+ * run in parallel via @criblio/app-utils's useProvisioningBanners:
  *
  *   1. Saved searches — the `criblapm__*` scheduled-search plan
  *      delivered via the framework provisioner. Without these,
@@ -28,9 +28,9 @@ import {
   Banner,
   useProvisioningBanners,
   type ProvisioningBannerSource,
-} from '@cribl/app-utils/provisioning-banner';
-import { createBrowserHttpClient } from '@cribl/app-utils/provisioner';
-import { useDataset } from '@cribl/app-utils/dataset';
+} from '@criblio/app-utils/provisioning-banner';
+import { createBrowserHttpClient } from '@criblio/app-utils/provisioner';
+import { useDataset } from '@criblio/app-utils/dataset';
 import { planOnly, type PlanAction } from '../api/provisioner';
 import { getStatus as getDatasetStatus } from '../api/datasetProvisioner';
 import { useServerInvestigations } from '../hooks/useServerInvestigations';

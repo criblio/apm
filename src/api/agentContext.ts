@@ -17,7 +17,7 @@
  * prompt timed out) to ~8min with a deeper finding (ECONNREFUSED at
  * a specific IP:port).
  */
-import { getCurrentDataset } from '@cribl/app-utils/dataset';
+import { getCurrentDataset } from '@criblio/app-utils/dataset';
 
 export interface InvestigationSeed {
   /** The thing the user wants investigated — a short hypothesis or

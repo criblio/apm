@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { setCurrentDataset } from '@cribl/app-utils/dataset';
+import { setCurrentDataset } from '@criblio/app-utils/dataset';
 import { runQuery } from './helpers/criblSearch';
 import * as Q from '../src/api/queries';
 

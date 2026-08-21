@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { Button } from '@capra/core';
-import { ResilienceBoundary as SharedResilienceBoundary } from '@cribl/app-utils/resilience-boundary';
+import { ResilienceBoundary as SharedResilienceBoundary } from '@criblio/app-utils/resilience-boundary';
 
 interface Props {
   children: ReactNode;
