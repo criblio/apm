@@ -125,6 +125,23 @@ tools, dataset commits) stays in `apm/cell/`, which shrinks to
 payload + entry wiring + deploy scripts. The coding app's payload
 supplies a task/prompt trigger, Pi persona, and coding tools.
 
+### 2.5 The Cribl domain tools are framework-level, not APM-level
+
+`run_search` and `run_metrics_query` (and the concluding
+`present_investigation_summary`, whose card the framework chat shell
+renders natively) are Cribl-Search-generic, and their *executors*
+already live in the framework — `createRunSearchTool` /
+`createRunMetricsQueryTool` in `app-utils/agent-tools.ts`. APM only
+contributes the wiring (dataset, KQL read-only guard, search client,
+metrics transport) and its own `render_trace`. What still lives
+app-side for no good reason is the tool *definitions*
+(`agentToolDefs.ts` schemas/descriptions for run_search,
+run_metrics_query, update_context, present_investigation_summary):
+step 4 moves those into `app-utils` next to their executors, so any
+payload — the coding agent included — can offer the Cribl search
+tools without importing anything from APM. `render_trace` (defs +
+executor) stays APM-only.
+
 ## 3. What stays where
 
 - **apm repo**: APM payload, provisioned searches, incidents/alerts
