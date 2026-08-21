@@ -6,8 +6,15 @@ can reuse the harness without copying it. APM-specific code stays in
 this repo; the generic agent harness moves to
 `cribl-search-app-framework`.
 
-Status: **design + spike results** (2026-08-20). Decisions confirmed
-with Clint inline below. Not built.
+Status: **implementation in flight** (2026-08-20). Steps 1-4 built +
+step 5's offline half, as a PR stack — apm: #149 (payload seam) →
+#150 (protocol consumption) → #151 (pi-agent-core runner) → #152
+(cell rebuilt on framework packages); framework: #27
+(agent-protocol) → #28 (cell-harness + cell-workspace) → #29 (write
+tools + git write-back). Remaining: CF-computer vfs + just-bash
+(needs live celld), tool-defs move to app-utils (§2.5), GitHub
+Packages publishing, coding-app scaffold. Decisions confirmed with
+Clint inline below.
 
 ## Decisions (2026-08-20, second round)
 
@@ -124,6 +131,23 @@ APM's payload implementation (alert parsing, `buildAlertSeed`, APM
 tools, dataset commits) stays in `apm/cell/`, which shrinks to
 payload + entry wiring + deploy scripts. The coding app's payload
 supplies a task/prompt trigger, Pi persona, and coding tools.
+
+### 2.5 The Cribl domain tools are framework-level, not APM-level
+
+`run_search` and `run_metrics_query` (and the concluding
+`present_investigation_summary`, whose card the framework chat shell
+renders natively) are Cribl-Search-generic, and their *executors*
+already live in the framework — `createRunSearchTool` /
+`createRunMetricsQueryTool` in `app-utils/agent-tools.ts`. APM only
+contributes the wiring (dataset, KQL read-only guard, search client,
+metrics transport) and its own `render_trace`. What still lives
+app-side for no good reason is the tool *definitions*
+(`agentToolDefs.ts` schemas/descriptions for run_search,
+run_metrics_query, update_context, present_investigation_summary):
+step 4 moves those into `app-utils` next to their executors, so any
+payload — the coding agent included — can offer the Cribl search
+tools without importing anything from APM. `render_trace` (defs +
+executor) stays APM-only.
 
 ## 3. What stays where
 
