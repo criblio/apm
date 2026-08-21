@@ -5,6 +5,21 @@ construction — celld replicates every cell's SQLite to the bucket,
 so `terraform apply` replacing the node loses nothing (given a
 graceful stop; the systemd unit handles that).
 
+**This is a thin root over a shared module.** The resources live in
+the framework's `infra/celld-fleet` (extracted from this stack in PRs
+#129/#130/#132); `main.tf` here supplies only this fleet's identity —
+`cell_name = "apm-cell"`, the bucket, the SSM prefix, and the two env
+inputs (`secret_env_keys` for SSM SecureStrings, `plain_env` for
+non-secret values). The provider and the S3 backend stay in this root.
+The module is consumed as a **sibling checkout**
+(`../../../cribl-search-app-framework/infra/celld-fleet`), matching how
+the app consumes the framework's npm packages — so a divergent local
+framework checkout changes your plan. Keep it at `.framework-sha`.
+
+The `moved` blocks at the bottom of `main.tf` record the state
+migration from the pre-module addresses into `module.fleet.*`. Leave
+them in place.
+
 ## Picking this up on a new machine
 
 Nothing here depends on a particular laptop — state is in S3, secrets
@@ -13,10 +28,15 @@ are in SSM. From a fresh clone:
 ```bash
 aws sso login --profile test            # only interactive step
 cd cell/infra
-terraform init                          # pulls remote state from the bucket
+terraform init                          # installs the module + remote state
 terraform output                        # cell_url, public_ip, instance_id, bucket
 terraform plan -var bucket_name=cribl-apm-cell-test   # expect: No changes
 ```
+
+`terraform init` resolves the module from the sibling framework
+checkout, so clone `criblio/cribl-search-app-framework` next to this
+repo first. After changing anything under the module's directory, re-run
+`terraform init -upgrade` before planning.
 
 Then confirm the cell is serving and run the smoke suite:
 
@@ -71,11 +91,21 @@ done
 
 (Already done in the test account — all three exist at version 1.)
 
-The instance reads these at boot into `CELLD_VAR_*` (root-only env
-file). Rotate by updating the parameter and replacing the instance
-(`terraform apply -replace=aws_instance.cell`). PR 7 adds
-`CRIBL_CLIENT_ID` / `CRIBL_CLIENT_SECRET` / the LLM endpoint key to
-this list.
+The real agent loop adds three more: `LLM_API_KEY`, `CRIBL_CLIENT_ID`,
+`CRIBL_CLIENT_SECRET`. All six are named in `secret_env_keys` in
+`main.tf`, and the instance reads exactly that list at boot into
+`CELLD_VAR_*` (root-only env file).
+
+**Boot now fails on any missing one.** The pre-module template skipped
+the LLM/Cribl keys when `llm_base_url` was empty (a stub-agent
+fallback); the module reads `secret_env_keys` unconditionally. All six
+exist in the test account, so this is a no-op there — but if you ever
+want a stub-mode node, shorten `secret_env_keys` rather than clearing
+`llm_base_url`.
+
+Rotate by updating the parameter and replacing the instance
+(`terraform apply -replace=module.fleet.aws_instance.cell` — note the
+module-qualified address).
 
 ## Apply
 
@@ -142,7 +172,9 @@ answers 502 — that is a missing deploy, not broken infra.
   `CELLD_MAX_COHOSTED`, `CELLD_MAX_CPU_PERCENT`, `CELLD_VALIDATE`, and
   renames `CELLD_HIBERNATIONS` → `CELLD_EVICTIONS`; v0.2.0 validates
   every variable at startup and refuses to boot on an unknown one, so
-  keep `user_data.sh.tftpl`'s env block in sync with `celld --help`.
+  keep the module's `user_data.sh.tftpl` env block in sync with
+  `celld --help` (it lives in the framework repo now, so that edit is a
+  framework PR affecting every cell).
   A fleet must never mix v0.1.0 and v0.2.0 nodes — v0.2.0 writes
   compacted block-format replication objects a v0.1.0 reader cannot
   restore. Upgrade by replacing all nodes, never rolling.
@@ -156,3 +188,10 @@ answers 502 — that is a missing deploy, not broken infra.
   `AutoTagCreatorId` on create; the provider's `ignore_tags` keeps
   plans from fighting it. Without that, every plan shows a spurious
   tag-removal diff.
+- **A security group's `description` is create-time.** Because the
+  group's name is derived from `cell_name`, changing the description is
+  a same-name destroy/create that fights the attached instance — so the
+  module takes `security_group_description` and this root pins the
+  original text. Treat any cosmetic string the module renders into a
+  create-time argument the same way: make it an input, don't accept the
+  replacement.
