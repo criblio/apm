@@ -21,7 +21,7 @@ import {
 } from '../../../src/api/agentPreflight';
 import { createApmToolExecutors } from '../../../src/api/agentTools';
 import { APM_TOOL_DEFINITIONS } from '../../../src/api/agentToolDefs';
-import { setCurrentDataset } from '@cribl/app-utils/dataset';
+import { setCurrentDataset } from '@criblio/app-utils/dataset';
 import { CriblClient } from '../criblClient';
 import {
   createCellSearchClient,

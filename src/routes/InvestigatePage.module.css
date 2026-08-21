@@ -2,7 +2,7 @@
  *
  * The chat layout itself (transcript, composer, approval cards)
  * moved into the shared Investigator shell in
- * @cribl/app-utils/investigator; only the SpanTree waterfall card
+ * @criblio/app-utils/investigator; only the SpanTree waterfall card
  * this page renders via renderToolCard still needs local styling.
  * The card classes mirror the shell's tool-call card so the trace
  * card sits visually flush with the built-in search/summary cards.

@@ -7,12 +7,12 @@
  * app's shared `investigationEventCommitQuery` so none of the wire
  * shapes are re-implemented here.
  */
-import { getBearerToken } from '@cribl/app-utils/auth';
+import { getBearerToken } from '@criblio/app-utils/auth';
 import {
   runSearchJob,
   type SearchHttpClient,
   type SearchJobOptions,
-} from '@cribl/app-utils/search-job';
+} from '@criblio/app-utils/search-job';
 import {
   investigationEventCommitQuery,
   type InvestigationEvent,

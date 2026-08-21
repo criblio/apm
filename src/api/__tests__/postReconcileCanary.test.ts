@@ -8,8 +8,8 @@
  * stage-failure cases that mimic real API errors.
  */
 import { beforeAll, describe, it, expect, vi } from 'vitest';
-import type { HttpClient } from '@cribl/app-utils/provisioner';
-import { setCurrentDataset } from '@cribl/app-utils/dataset';
+import type { HttpClient } from '@criblio/app-utils/provisioner';
+import { setCurrentDataset } from '@criblio/app-utils/dataset';
 import {
   runCanary,
   CANARY_SENTINEL_SEARCH_ID,

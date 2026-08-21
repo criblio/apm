@@ -22,7 +22,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   applyLoopEvent,
   type InvestigatorTranscriptEntry,
-} from '@cribl/app-utils/investigator';
+} from '@criblio/app-utils/investigator';
 import {
   cancelInvestigation,
   fetchInvestigationStatus,

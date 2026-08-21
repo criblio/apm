@@ -9,7 +9,7 @@
  * relevant Settings sections.
  */
 import { useEffect, useState } from 'react';
-import { createBrowserHttpClient } from '@cribl/app-utils/provisioner';
+import { createBrowserHttpClient } from '@criblio/app-utils/provisioner';
 import { planOnly, type PlanAction } from '../api/provisioner';
 import {
   getStatus as getDatasetStatus,

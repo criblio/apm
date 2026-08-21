@@ -7,7 +7,7 @@
  *
  * Spans are identified by isnotnull(end_time_unix_nano).
  */
-import { getCurrentDataset } from '@cribl/app-utils/dataset';
+import { getCurrentDataset } from '@criblio/app-utils/dataset';
 import { streamFilterKqlClause, streamFilterSpanKqlClause } from './streamFilter';
 import { getLowVolumeMode } from './lowVolumeMode';
 import {

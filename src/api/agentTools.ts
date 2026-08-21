@@ -2,7 +2,7 @@
  * APM's tool implementations for the Copilot Investigator agent
  * loop. The generic plumbing (run_search execution, native-UI tool
  * acknowledgements, summary normalization, arg parsing) lives in
- * @cribl/app-utils/agent-tools — this module wires it to APM's
+ * @criblio/app-utils/agent-tools — this module wires it to APM's
  * query layer and adds the one genuinely APM-specific tool:
  * render_trace, which fetches a full trace and hands it to the UI
  * as a SpanTree waterfall card.
@@ -13,7 +13,7 @@
  * tools. The module-level `executeToolCall`/`requiresApproval`
  * exports are the browser-wired instance the client loop imports.
  */
-import { getCurrentDataset } from '@cribl/app-utils/dataset';
+import { getCurrentDataset } from '@criblio/app-utils/dataset';
 import {
   createRunSearchTool,
   createRunMetricsQueryTool,
@@ -21,8 +21,8 @@ import {
   parseArgs,
   type ToolCallInvocation,
   type ToolExecutionResult,
-} from '@cribl/app-utils/agent-tools';
-import type { MetricsTransport } from '@cribl/app-utils/metrics';
+} from '@criblio/app-utils/agent-tools';
+import type { MetricsTransport } from '@criblio/app-utils/metrics';
 import { assertReadOnlyKql } from './kqlSafety';
 import { getTrace } from './search';
 import { browserSearchClient, type SearchClient } from './searchClient';
@@ -37,7 +37,7 @@ export {
   type ToolCallInvocation,
   type ToolExecutionResult,
   type ToolResultUi,
-} from '@cribl/app-utils/agent-tools';
+} from '@criblio/app-utils/agent-tools';
 
 /** UI payload for a render_trace tool execution. */
 export type RenderTraceUi = {

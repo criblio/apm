@@ -1,15 +1,15 @@
 import { useCallback, useEffect, useState } from 'react';
 import StatusBanner from '../components/StatusBanner';
-import ProvisioningPanel from '@cribl/app-utils/provisioning-panel';
+import ProvisioningPanel from '@criblio/app-utils/provisioning-panel';
 import DatasetProvisioningPanel from '../components/DatasetProvisioningPanel';
 import MetricsBackfillPanel from '../components/MetricsBackfillPanel';
 import SettingsSetupStatus from './SettingsSetupStatus';
 import SettingsNav, { type NavGroup } from './SettingsNav';
 import { loadAppSettings, saveAppSettings } from '../api/appSettings';
-import { setCurrentDataset, useDataset } from '@cribl/app-utils/dataset';
+import { setCurrentDataset, useDataset } from '@criblio/app-utils/dataset';
 import { setStreamFilterEnabled } from '../api/streamFilter';
 import { setLowVolumeMode } from '../api/lowVolumeMode';
-import { setSearchCadence, CADENCE_OPTIONS, type CadenceOption } from '@cribl/app-utils/cadence';
+import { setSearchCadence, CADENCE_OPTIONS, type CadenceOption } from '@criblio/app-utils/cadence';
 import {
   CRIBLAPM_PREFIX,
   SEED_LOOKUPS,
@@ -30,7 +30,7 @@ import {
 } from '../api/cellProvisioning';
 import type { HttpClient } from '../api/provisioner';
 import type { SourceRepo } from '../api/investigationTransport';
-import type { ProvisioningExtraStep } from '@cribl/app-utils/provisioning-panel';
+import type { ProvisioningExtraStep } from '@criblio/app-utils/provisioning-panel';
 import { useSearchCadence } from '../hooks/useSearchCadence';
 import s from './SettingsPage.module.css';
 

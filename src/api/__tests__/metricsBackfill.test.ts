@@ -9,7 +9,7 @@ import {
   type BackfillEmitter,
 } from '../metricsBackfill';
 import { getMetricEmitters } from '../provisionedSearches';
-import { setCurrentDataset } from '@cribl/app-utils/dataset';
+import { setCurrentDataset } from '@criblio/app-utils/dataset';
 
 setCurrentDataset('otel');
 

@@ -1,7 +1,7 @@
 /**
  * APM binding for the shared Copilot Investigator agent loop.
  *
- * The tool-use orchestration lives in @cribl/app-utils/agent-loop;
+ * The tool-use orchestration lives in @criblio/app-utils/agent-loop;
  * this wrapper preserves the historical `src/api/agentLoop` import
  * surface (runInvestigation with APM's options shape) by pre-wiring
  * the app-specific pieces: APM's tool definitions, the dataset-aware
@@ -12,13 +12,13 @@ import './agent';
 import {
   runInvestigation as runSharedInvestigation,
   type RunLoopOptions as SharedRunLoopOptions,
-} from '@cribl/app-utils/agent-loop';
+} from '@criblio/app-utils/agent-loop';
 import { executeToolCall, requiresApproval } from './agentTools';
 import { buildAgentContext } from './agentContext';
 import { APM_TOOL_DEFINITIONS } from './agentToolDefs';
-import { getCurrentDataset } from '@cribl/app-utils/dataset';
+import { getCurrentDataset } from '@criblio/app-utils/dataset';
 
-export type { LoopEvent } from '@cribl/app-utils/agent-loop';
+export type { LoopEvent } from '@criblio/app-utils/agent-loop';
 
 /** APM's loop options — the shared options minus the app-specific
  *  fields this wrapper injects. */

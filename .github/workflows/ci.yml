@@ -15,16 +15,13 @@ jobs:
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
-      # Read the pinned SHA from .framework-sha so a framework bump only
-      # has to update that one file — the release-build action asserts its
-      # framework-sha input equals .framework-sha, so hardcoding it here
-      # silently drifts and fails CI (happened 2026-08-14).
-      - name: Read framework SHA
-        id: framework
-        run: echo "sha=$(tr -d '[:space:]' < .framework-sha)" >> "$GITHUB_OUTPUT"
-      - uses: criblio/cribl-search-app-framework/.github/actions/release-build@1c37201bdf67c720e2727e1a7cf1db9b233ea845
+      # Registry mode: framework packages come from GitHub Packages
+      # (@criblio scope, routed by the committed .npmrc); the action
+      # writes the auth line from registry-token at install time. The
+      # .framework-sha pin era ended with the packages being published.
+      - uses: criblio/cribl-search-app-framework/.github/actions/release-build@7ef8eb4693afeafe707b5c26a998892c36c3c13e
         with:
-          framework-sha: ${{ steps.framework.outputs.sha }}
+          registry-token: ${{ github.token }}
       - name: Retain the exact tested candidate
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

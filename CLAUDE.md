@@ -145,35 +145,40 @@ npm run provision          # reconcile
 npm run provision -- --dry # dry-run (show plan without applying)
 ```
 
-### Framework SHA pin
+### Framework packages (GitHub Packages)
 
-The shared framework (`cribl-search-app-framework`) is consumed
-via a local `file:..` reference in `package.json`. CI clones it
-at the SHA recorded in `.framework-sha`. PR #66 shipped a latent
-break through green CI because we cloned master with no SHA
-record; the pin makes framework bumps deliberate.
+The shared framework (`cribl-search-app-framework`) is consumed as
+published npm packages from **GitHub Packages** under the `@criblio`
+scope: `app-utils`, `app-tooling`, `agent-protocol`, `cell-harness`,
+`cell-workspace`. The committed `.npmrc` routes the scope; the old
+`file:../` + `.framework-sha` pin is gone (retired 2026-08-21) — no
+local framework checkout is needed to build this app.
 
-**To bump the framework:**
+**Auth (one-time per machine):** GitHub Packages requires a token
+even for public packages. Add to `~/.npmrc`:
 
-1. Check out the framework repo locally and pull the SHA you
-   want to ship.
-2. In this repo, replace the contents of `.framework-sha` with
-   that 40-char SHA (one line, trailing newline OK). **That's the
-   only file to change for a bump** — `ci.yml` and `release.yml`
-   read `.framework-sha` at runtime and pass it to the
-   `release-build` action (which asserts the input equals the file).
-   You only touch the `release-build@<sha>` *action ref* in those
-   workflows if the action itself changes, which is rare.
-   (History: before 2026-08-14 the workflows hardcoded the SHA in
-   three places; they drifted and CI failed on the next bump.)
-3. Run `npm run lint && npm test && npx tsc --noEmit` to confirm
-   the new framework still builds against APM master.
-4. Open a small PR titled `chore: bump framework SHA to <short>`
-   with the framework PRs included in the bump listed in the body.
+```
+//npm.pkg.github.com/:_authToken=YOUR_TOKEN
+```
 
-Local devs are expected to keep their framework checkout at the
-recorded SHA. If your local is divergent, expect to see lint or
-type errors CI won't reproduce.
+where the token has `read:packages` — either a classic PAT, or the
+gh CLI's token after `gh auth refresh -h github.com -s read:packages`
+(then `gh auth token` prints it). CI needs neither: workflows pass
+`registry-token: ${{ github.token }}` to the release-build action.
+
+**To bump the framework:** merge the framework change (the publish
+workflow puts any new package version in the registry on master
+push), then bump the version range in this repo's `package.json` and
+run `npm install` — a normal dependency PR. If your machine has no
+registry token, the **Update lockfile** workflow
+(`gh workflow run "Update lockfile" --ref <branch>`) regenerates
+`package-lock.json` on the branch in CI.
+
+**Developing the framework itself** still uses a local checkout of
+`cribl-search-app-framework` (npm workspaces; `npm test -ws`). To
+test unpublished framework changes against this app, temporarily
+point the dependency at the checkout (`file:../…`) locally — but
+never commit that; the published version is what ships.
 
 ### Cutting a release
 

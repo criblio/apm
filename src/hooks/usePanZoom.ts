@@ -7,4 +7,4 @@ export {
   usePanZoom,
   type PanZoomTransform,
   type UsePanZoomResult,
-} from '@cribl/app-utils/graph';
+} from '@criblio/app-utils/graph';
