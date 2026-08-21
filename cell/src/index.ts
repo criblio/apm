@@ -32,7 +32,6 @@ import type { Env } from './env';
 import { CoordinatorDO } from './coordinatorDO';
 import { InvestigationDO } from './investigationDO';
 import { mintTicket, verifyTicket } from './tickets';
-import type { FiringAlert } from './protocol';
 
 export { CoordinatorDO, InvestigationDO };
 
@@ -56,13 +55,15 @@ function bearerOk(request: Request, expected: string | undefined): boolean {
   return header === `Bearer ${expected}`;
 }
 
-/** Accept the payload shapes a webhook target might send. */
-function extractAlerts(body: unknown): FiringAlert[] {
-  if (Array.isArray(body)) return body as FiringAlert[];
+/** Accept the envelope shapes a webhook target might send. Rows stay
+ *  raw here — the coordinator validates each one through the
+ *  payload's parseTrigger on admission. */
+function extractTriggerRows(body: unknown): unknown[] {
+  if (Array.isArray(body)) return body;
   if (body && typeof body === 'object') {
     const o = body as Record<string, unknown>;
     for (const key of ['items', 'results', 'resultSet', 'events']) {
-      if (Array.isArray(o[key])) return o[key] as FiringAlert[];
+      if (Array.isArray(o[key])) return o[key];
     }
   }
   return [];
@@ -91,19 +92,19 @@ export default {
       if (env.DISABLED === 'true') {
         return Response.json({ accepted: 0, disabled: true }, { status: 202 });
       }
-      let alerts: FiringAlert[];
+      let rows: unknown[];
       try {
-        alerts = extractAlerts(await request.json());
+        rows = extractTriggerRows(await request.json());
       } catch {
         return Response.json({ error: 'invalid JSON' }, { status: 400 });
       }
-      if (alerts.length === 0) {
+      if (rows.length === 0) {
         return Response.json({ accepted: 0 }, { status: 202 });
       }
       const res = await coordinator().fetch('https://coordinator.internal/internal/fire', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(alerts),
+        body: JSON.stringify(rows),
       });
       const out = await res.json();
       return Response.json(out, { status: 202 });

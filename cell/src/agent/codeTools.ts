@@ -8,7 +8,10 @@
  * client Investigator — code lives only on the cell.
  */
 import type { AgentToolDefinition } from '@cribl/app-utils/agent';
-import type { ToolCallInvocation, ToolExecutionResult } from '../../../src/api/agentTools';
+import type {
+  ToolCallInvocation,
+  ToolExecutionResult,
+} from '@cribl/app-utils/agent-tools';
 import type { RepoStore } from '../workspace/repoStore';
 import { checkoutRepo, resolveRepoForService, type RepoConfig } from '../workspace/checkout';
 

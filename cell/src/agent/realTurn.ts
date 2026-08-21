@@ -21,9 +21,8 @@ import type {
   Tool,
   ToolResultMessage,
 } from '@earendil-works/pi-ai';
-import { APM_TOOL_DEFINITIONS } from '../../../src/api/agentToolDefs';
 import type { AgentToolDefinition } from '@cribl/app-utils/agent';
-import type { ApmToolExecutors } from '../../../src/api/agentTools';
+import type { ToolExecutors } from '../payload';
 import type { WireLoopEvent } from '../protocol';
 import { mapPiEvent, toolCallsOf } from './loopEventMap';
 
@@ -70,7 +69,7 @@ function capText(text: string): string {
 export interface RealTurnResult {
   /** New pi messages to append to agent_messages (assistant + tool results). */
   newMessages: Message[];
-  /** The conclusion ui payload if present_investigation_summary ran this turn. */
+  /** The conclusion ui payload if the concluding tool ran this turn. */
   conclusion: unknown | null;
   /** True when the loop should stop (summary presented, or a plain
    *  assistant reply with no tool calls). */
@@ -96,13 +95,12 @@ function piModel(cfg: LlmConfig): Model<'openai-completions'> {
   };
 }
 
-function piTools(extra: AgentToolDefinition[]): Tool[] {
+function piTools(tools: AgentToolDefinition[]): Tool[] {
   // AgentToolDefinition {id, description, schema} → pi Tool. The
   // schemas are plain JSON Schema objects, which is what typebox's
   // TSchema is structurally; the cast is the seam between the two
-  // type systems, not a data conversion. `extra` carries the
-  // server-only code tools when a repo is configured.
-  return [...APM_TOOL_DEFINITIONS, ...extra].map((def) => ({
+  // type systems, not a data conversion.
+  return tools.map((def) => ({
     name: def.id,
     description: def.description,
     parameters: (def.schema ?? { type: 'object', properties: {} }) as Tool['parameters'],
@@ -121,19 +119,22 @@ export async function runRealTurn(opts: {
    *  which sends buildSeedPrompt() output as messages[0]. */
   history: Message[];
   turnIndex: number;
-  executors: ApmToolExecutors;
-  /** Server-only tool definitions to offer alongside the APM tools
-   *  (the code tools when a repo is configured). */
-  extraTools?: AgentToolDefinition[];
+  executors: ToolExecutors;
+  /** Every tool offered this turn: the payload's domain tools plus
+   *  any harness tools (the code tools when a repo is configured). */
+  tools: AgentToolDefinition[];
+  /** The tool whose call concludes the session (its result `ui` is
+   *  the conclusion). Absent ⇒ only a call-free reply concludes. */
+  concludingTool?: string;
   emit: (ev: WireLoopEvent) => void;
   signal?: AbortSignal;
 }): Promise<RealTurnResult> {
-  const { llm, history, turnIndex, executors, extraTools, emit, signal } = opts;
+  const { llm, history, turnIndex, executors, tools, concludingTool, emit, signal } = opts;
   const turnId = `turn-${turnIndex}`;
 
   const context: Context = {
     messages: history,
-    tools: piTools(extraTools ?? []),
+    tools: piTools(tools),
   };
 
   // Bound the whole turn: a timeout (combined with any caller signal)
@@ -213,11 +214,12 @@ export async function runRealTurn(opts: {
 
   const newMessages: Message[] = [capMessage(final)];
   const calls = toolCallsOf(final.content);
-  const concluding = calls.some((c) => c.name === 'present_investigation_summary');
-  // The summary tool's card IS the final report. Drop any wrap-up text
-  // the model emits alongside it — the seed prompt says STOP after the
-  // summary, but deepseek routinely adds a redundant sentence beside the
-  // card. Suppressing it here keeps the transcript clean regardless.
+  const concluding =
+    concludingTool != null && calls.some((c) => c.name === concludingTool);
+  // The concluding tool's card IS the final report. Drop any wrap-up
+  // text the model emits alongside it — the seed prompt says STOP after
+  // the summary, but deepseek routinely adds a redundant sentence beside
+  // the card. Suppressing it here keeps the transcript clean regardless.
   if (concluding) textBuf = '';
   else flushText();
   emit({ kind: 'assistantDone', turnId });
@@ -243,7 +245,7 @@ export async function runRealTurn(opts: {
         ui: result.ui,
       },
     });
-    if (call.name === 'present_investigation_summary') {
+    if (concludingTool != null && call.name === concludingTool) {
       conclusion = result.ui ?? null;
     }
     const toolResult: ToolResultMessage = {
@@ -259,7 +261,7 @@ export async function runRealTurn(opts: {
     newMessages.push(toolResult);
   }
 
-  // Terminal conditions mirror the client loop: the summary tool
+  // Terminal conditions mirror the client loop: the concluding tool
   // concludes; an assistant message with no tool calls is the
   // model's final answer.
   const done = conclusion != null || calls.length === 0;
