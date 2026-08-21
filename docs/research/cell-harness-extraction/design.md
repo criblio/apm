@@ -9,6 +9,25 @@ this repo; the generic agent harness moves to
 Status: **design + spike results** (2026-08-20). Decisions confirmed
 with Clint inline below. Not built.
 
+## Decisions (2026-08-20, second round)
+
+6. **GitHub Packages** is the registry, under the `criblio` org.
+   GitHub Packages requires the npm scope to match the owning org,
+   so published names are `@criblio/agent-protocol`,
+   `@criblio/cell-harness`, `@criblio/cell-workspace`. The existing
+   `@cribl/app-utils` / `@cribl/app-tooling` either republish as
+   `@criblio/*`, or apps keep imports unchanged via npm aliasing
+   (`"@cribl/app-utils": "npm:@criblio/app-utils@^x.y.z"`) —
+   resolve when the publishing PR lands.
+7. **Coding app is interactive-first.** UI-prompted sessions are the
+   v1 trigger; the harness's webhook trigger surface stays available
+   but no autonomous trigger ships in the coding app's v1.
+8. **v1 write-back is via Git** (§4.4): GitHub Data API backend
+   first (fits the tarball checkout — no `.git` state in the vfs),
+   behind a tool surface that can later swap to isomorphic-git,
+   including a just-bash `git` command emulated as a wrapper around
+   isomorphic-git.
+
 ## Decisions (2026-08-20)
 
 1. **Framework monorepo** hosts the extracted packages (not a new
@@ -52,14 +71,14 @@ Runtime is the package boundary: `app-utils` is browser-flavored;
 the cell needs `@cloudflare/workers-types`. New packages, own
 tsconfigs:
 
-### 2.1 `@cribl/agent-protocol` (tiny, isomorphic)
+### 2.1 `@criblio/agent-protocol` (tiny, isomorphic)
 
 `WireLoopEvent`, `ServerFrame`, session statuses + terminal-status
 logic, `PROTOCOL_VERSION`, ticket format. Imported by both the UI
 transport and the cell; a type-level assertion pins it to the
 framework `LoopEvent` union so the mirror can't drift.
 
-### 2.2 `@cribl/cell-harness` (workers runtime)
+### 2.2 `@criblio/cell-harness` (workers runtime)
 
 - Router factory (`createCellRouter(payload, opts)`), bearer auth,
   tickets.
@@ -72,7 +91,7 @@ framework `LoopEvent` union so the mirror can't drift.
 - The turn runner (pi-agent-core based, §4).
 - A default stub agent so any payload's configless smoke works.
 
-### 2.3 `@cribl/cell-workspace` (workers runtime)
+### 2.3 `@criblio/cell-workspace` (workers runtime)
 
 The `@cloudflare/computer` Workspace vfs + just-bash layer (S3-spike
 proven: vfs and just-bash run fully self-hosted in a celld DO;
@@ -175,7 +194,7 @@ today:
   supported subpath for just the tools.
 
 **Recommendation:** implement the coding tools in
-`@cribl/cell-workspace` against the Workspace vfs + just-bash,
+`@criblio/cell-workspace` against the Workspace vfs + just-bash,
 matching pi's tool names/schemas/behavior (read, write, edit, ls,
 grep, find, bash):
 
@@ -193,7 +212,28 @@ grep, find, bash):
   `./tools` export; if accepted, swap our implementations for
   theirs behind the same Operations interfaces.
 
-### 4.3 What "Pi in the cell" looks like
+### 4.3 Write-back: git, API-backend first
+
+Edits live in the vfs; the session's output is a branch + PR on
+GitHub. Two viable backends, one tool surface:
+
+- **v1 — GitHub Data API.** The tarball checkout carries no `.git`
+  state, and the API needs none: resolve the base ref's sha, create
+  blobs for changed files, a tree, a commit, a branch ref, then a
+  PR — all plain worker `fetch` against api.github.com with the
+  existing `GITHUB_TOKEN`. No git implementation in the bundle.
+- **Upgrade — isomorphic-git over the vfs.** When richer workflows
+  matter (history, diff against ancestors, multi-commit sessions):
+  shallow-fetch (depth 1) into the vfs, commit locally, push.
+  Surfaced to the agent either as the same tool or as a just-bash
+  `git` command emulated as a wrapper around isomorphic-git — the
+  S3 spike already saw `createGitClient()` wire up in-DO.
+
+The agent-facing tool (e.g. `commit_and_push` / `open_pr`, or the
+emulated `git` command) is defined in `@criblio/cell-workspace` so the
+backend can swap without touching payloads.
+
+### 4.4 What "Pi in the cell" looks like
 
 `AgentSessionDO` alarm → rehydrate `Agent` from `agent_messages` →
 `continue()` (or `prompt()` on the first turn / a queued user
@@ -228,7 +268,7 @@ Yes — extraction is the forcing function. Two apps × `file:../` +
 checkouts drift; CI clones at the SHA; devs must manually stay
 aligned). Publishing gives semver, lockfile-pinned installs, no
 local checkout requirement, and the cell's standalone package.json
-can depend on `@cribl/cell-harness` like any dep.
+can depend on `@criblio/cell-harness` like any dep.
 
 - **Mechanics**: framework monorepo publishes per-package
   (changesets or a plain version-tag workflow — changesets
@@ -236,25 +276,23 @@ can depend on `@cribl/cell-harness` like any dep.
   is a normal lockfile PR (Dependabot-able). Framework development
   against a local checkout uses `npm link`/overrides, no longer the
   default wiring.
-- **Open: registry.** GitHub Packages under `@criblio` (auth via
-  existing gh tokens; `.npmrc` per dev + `NODE_AUTH_TOKEN` in CI)
-  vs. npmjs (private costs per-seat; public only if Cribl wants the
-  framework public). Recommendation: GitHub Packages now; a public
-  npmjs move later is nondestructive.
+- **Registry: GitHub Packages under `criblio` (decided).** Auth via
+  existing gh tokens; `.npmrc` per dev + `NODE_AUTH_TOKEN` in CI.
+  Scope must match the org, so packages publish as `@criblio/*`
+  (decision 6 covers the `@cribl/app-utils` naming migration). A
+  public npmjs move later is nondestructive.
 - The `release-build` action's SHA assertion and `.framework-sha`
   die with the migration; CI just `npm ci`s.
 
 ## 7. Open questions
 
-1. **Registry choice** (§6) — GitHub Packages vs npmjs.
-2. **Coding-app trigger model** — interactive-first (UI prompt) is
-   assumed; any webhook/autonomous trigger for v1?
-3. **Write-back story** — edits live in the vfs; is "open a PR via
-   GitHub API" the v1 output, or is reading+proposing patches in
-   the transcript enough?
-4. **Package naming** — `@cribl/cell-harness` / `@cribl/cell-workspace`
-   / `@cribl/agent-protocol` placeholders; align with framework
-   naming when publishing lands.
+All four first-round questions were resolved 2026-08-20 (decisions
+6–8). Remaining:
+
+1. **`@cribl/*` → `@criblio/*` migration mechanics** for the
+   existing framework packages: republish under the new scope and
+   update imports, or keep import paths via npm aliasing. Decide in
+   the publishing PR.
 
 ## Appendix: spike artifacts
 
