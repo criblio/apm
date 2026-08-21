@@ -7,6 +7,11 @@ name: Update lockfile
 # version bumps from a machine without npm auth.
 on:
   workflow_dispatch:
+  # Temporary bootstrap trigger (remove before merge): regen when the
+  # dep ranges change on this branch.
+  push:
+    branches: [feat/github-packages-consume]
+    paths: ['package.json']
   # Temporary bootstrap trigger (remove after merge): regenerate on
   # this branch when the lockfile is pushed pre-seeded.
   push:
