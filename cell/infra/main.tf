@@ -1,168 +1,129 @@
 # Investigator cell on AWS: one celld node + one S3 bucket.
 #
-# Deliberately minimal — celld's own design carries the durability
-# (every cell's SQLite replicates to the bucket; nodes are stateless
-# and replaceable), so the instance is disposable by construction.
-# Scale-out later = more instances pointed at the same bucket.
+# The infrastructure itself now lives in the shared framework module
+# `infra/celld-fleet` (extracted from this very stack in PRs
+# #129/#130/#132), so every cell-harness app deploys the same pattern
+# under its own names. What stays here is this stack's identity: the
+# cell name, the bucket, and which env vars the APM cell needs.
+#
+# celld's own design carries the durability — every cell's SQLite
+# replicates to the bucket and nodes are stateless — so the instance
+# is disposable by construction. Scale-out later = more instances
+# pointed at the same bucket.
 
-# ── Fleet bucket ─────────────────────────────────────────────────
+module "fleet" {
+  # Sibling checkout, matching how the app consumes the framework's
+  # npm packages (`file:../cribl-search-app-framework/...`). Pin a git
+  # ref here once the module lands on the framework's master.
+  source = "../../../cribl-search-app-framework/infra/celld-fleet"
 
-resource "aws_s3_bucket" "fleet" {
-  bucket = var.bucket_name
-}
+  # Drives "apm-cell-node" for every named resource and the default
+  # SSM prefix /apm-cell — both must keep their existing values, or
+  # the create-time names churn.
+  cell_name   = var.cell_name
+  bucket_name = var.bucket_name
 
-resource "aws_s3_bucket_public_access_block" "fleet" {
-  bucket                  = aws_s3_bucket.fleet.id
-  block_public_acls       = true
-  block_public_policy     = true
-  ignore_public_acls      = true
-  restrict_public_buckets = true
-}
+  region               = var.region
+  instance_type        = var.instance_type
+  celld_version        = var.celld_version
+  caddy_version        = var.caddy_version
+  ssm_parameter_prefix = var.ssm_parameter_prefix
 
-resource "aws_s3_bucket_server_side_encryption_configuration" "fleet" {
-  bucket = aws_s3_bucket.fleet.id
-  rule {
-    apply_server_side_encryption_by_default {
-      sse_algorithm = "AES256"
-    }
+  # The security group's description is a create-time argument and the
+  # group's name is derived from cell_name, so letting the module's
+  # generic wording apply would be a same-name destroy/create that
+  # fights the attached instance. Pin this stack's original text.
+  security_group_description = "Investigator cell: HTTPS in (Cribl webhooks + platform proxy), no SSH (use SSM Session Manager)."
+
+  # Secrets: SSM SecureStrings under the prefix, created out-of-band
+  # and never in Terraform state. Boot fails loudly on a missing one,
+  # so this list is exactly what the real agent loop needs.
+  secret_env_keys = [
+    "WEBHOOK_BEARER",
+    "UI_BEARER",
+    "TICKET_SECRET",
+    "LLM_API_KEY",
+    "CRIBL_CLIENT_ID",
+    "CRIBL_CLIENT_SECRET",
+  ]
+
+  # Non-secret agent-loop config. These land in state — secrets never
+  # go here, they go in secret_env_keys above.
+  plain_env = {
+    LLM_BASE_URL   = var.llm_base_url
+    LLM_MODEL      = var.llm_model
+    CRIBL_BASE_URL = var.cribl_base_url
+    CRIBL_DATASET  = var.cribl_dataset
   }
 }
 
-# This bucket also holds the Terraform state (see the backend block in
-# versions.tf), so versioning is not optional: it is the recovery path
-# for a truncated or clobbered state push.
-resource "aws_s3_bucket_versioning" "fleet" {
-  bucket = aws_s3_bucket.fleet.id
-  versioning_configuration {
-    status = "Enabled"
-  }
+# ── State migration into the module ──────────────────────────────
+#
+# Every resource below moved from this root into module.fleet.* when
+# the stack adopted the module. `moved` blocks make that a state
+# re-address, not a destroy/create. Keep them: removing one would
+# make Terraform plan a delete of the old address plus a create of
+# the new one. (The one legitimate replacement in the adoption apply
+# was the instance, whose generalized user_data differs textually
+# under user_data_replace_on_change — durable state is in the bucket
+# and the EIP is separate, so the URL survived.)
+
+moved {
+  from = aws_s3_bucket.fleet
+  to   = module.fleet.aws_s3_bucket.fleet
 }
 
-# ── Instance role: bucket + SSM only, no SSH keys ────────────────
-
-data "aws_iam_policy_document" "assume" {
-  statement {
-    actions = ["sts:AssumeRole"]
-    principals {
-      type        = "Service"
-      identifiers = ["ec2.amazonaws.com"]
-    }
-  }
+moved {
+  from = aws_s3_bucket_public_access_block.fleet
+  to   = module.fleet.aws_s3_bucket_public_access_block.fleet
 }
 
-resource "aws_iam_role" "cell" {
-  name               = "apm-cell-node"
-  assume_role_policy = data.aws_iam_policy_document.assume.json
+moved {
+  from = aws_s3_bucket_server_side_encryption_configuration.fleet
+  to   = module.fleet.aws_s3_bucket_server_side_encryption_configuration.fleet
 }
 
-data "aws_iam_policy_document" "cell" {
-  statement {
-    sid       = "FleetBucketList"
-    actions   = ["s3:ListBucket"]
-    resources = [aws_s3_bucket.fleet.arn]
-  }
-  statement {
-    sid       = "FleetBucketObjects"
-    actions   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
-    resources = ["${aws_s3_bucket.fleet.arn}/*"]
-  }
-  statement {
-    sid       = "ReadCellSecrets"
-    actions   = ["ssm:GetParameter", "ssm:GetParametersByPath"]
-    resources = ["arn:aws:ssm:${var.region}:*:parameter${var.ssm_parameter_prefix}/*"]
-  }
+moved {
+  from = aws_s3_bucket_versioning.fleet
+  to   = module.fleet.aws_s3_bucket_versioning.fleet
 }
 
-resource "aws_iam_role_policy" "cell" {
-  name   = "apm-cell-node"
-  role   = aws_iam_role.cell.id
-  policy = data.aws_iam_policy_document.cell.json
+moved {
+  from = aws_iam_role.cell
+  to   = module.fleet.aws_iam_role.cell
 }
 
-# Session Manager instead of SSH — no port 22, no key management.
-resource "aws_iam_role_policy_attachment" "ssm" {
-  role       = aws_iam_role.cell.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+moved {
+  from = aws_iam_role_policy.cell
+  to   = module.fleet.aws_iam_role_policy.cell
 }
 
-resource "aws_iam_instance_profile" "cell" {
-  name = "apm-cell-node"
-  role = aws_iam_role.cell.name
+moved {
+  from = aws_iam_role_policy_attachment.ssm
+  to   = module.fleet.aws_iam_role_policy_attachment.ssm
 }
 
-# ── Network ──────────────────────────────────────────────────────
-
-data "aws_vpc" "default" {
-  default = true
+moved {
+  from = aws_iam_instance_profile.cell
+  to   = module.fleet.aws_iam_instance_profile.cell
 }
 
-resource "aws_security_group" "cell" {
-  name        = "apm-cell-node"
-  description = "Investigator cell: HTTPS in (Cribl webhooks + platform proxy), no SSH (use SSM Session Manager)."
-  vpc_id      = data.aws_vpc.default.id
-
-  ingress {
-    description = "HTTPS (Caddy)"
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-  ingress {
-    description = "HTTP (ACME challenges + redirect)"
-    from_port   = 80
-    to_port     = 80
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
+moved {
+  from = aws_security_group.cell
+  to   = module.fleet.aws_security_group.cell
 }
 
-# ── Node ─────────────────────────────────────────────────────────
-
-data "aws_ssm_parameter" "al2023_arm64" {
-  name = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64"
+moved {
+  from = aws_eip.cell
+  to   = module.fleet.aws_eip.cell
 }
 
-resource "aws_eip" "cell" {
-  domain = "vpc"
-  tags   = { Name = "apm-cell-node" }
+moved {
+  from = aws_instance.cell
+  to   = module.fleet.aws_instance.cell
 }
 
-resource "aws_instance" "cell" {
-  ami                    = data.aws_ssm_parameter.al2023_arm64.value
-  instance_type          = var.instance_type
-  iam_instance_profile   = aws_iam_instance_profile.cell.name
-  vpc_security_group_ids = [aws_security_group.cell.id]
-
-  user_data = templatefile("${path.module}/user_data.sh.tftpl", {
-    bucket         = aws_s3_bucket.fleet.bucket
-    region         = var.region
-    celld_version  = var.celld_version
-    caddy_version  = var.caddy_version
-    domain         = "${replace(aws_eip.cell.public_ip, ".", "-")}.sslip.io"
-    ssm_prefix     = var.ssm_parameter_prefix
-    llm_base_url   = var.llm_base_url
-    llm_model      = var.llm_model
-    cribl_base_url = var.cribl_base_url
-    cribl_dataset  = var.cribl_dataset
-  })
-  user_data_replace_on_change = true
-
-  root_block_device {
-    volume_size = 20
-    volume_type = "gp3"
-  }
-
-  tags = { Name = "apm-cell-node" }
-}
-
-resource "aws_eip_association" "cell" {
-  instance_id   = aws_instance.cell.id
-  allocation_id = aws_eip.cell.id
+moved {
+  from = aws_eip_association.cell
+  to   = module.fleet.aws_eip_association.cell
 }
