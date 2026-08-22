@@ -54,26 +54,31 @@ change is needed for the new keys.
 
 ```bash
 cd cell/infra
-terraform init
-terraform apply \
-  -var bucket_name=cribl-apm-cell-test \
-  -var llm_base_url=https://openrouter.ai/api/v1 \
-  -var llm_model=deepseek/deepseek-v4-flash-0731 \
-  -var cribl_base_url=https://main-objective-shirley-sho21r7.cribl-staging.cloud \
-  -var cribl_dataset=otel
+terraform init                                  # fetches the pinned module ref
+terraform apply -var bucket_name=cribl-apm-cell-test
 ```
 
-Setting `llm_base_url` flips the node from stub → real loop.
+`bucket_name` is the only flag: the agent-loop config lives in
+`variables.tf` defaults now. It used to be four `-var` flags, but all
+of them render into `user_data` under
+`user_data_replace_on_change = true`, so an apply that forgot one would
+replace the node into stub mode (empty `llm_base_url` ⇒ no agent loop)
+without erroring.
+
 `user_data_replace_on_change=true` means this replaces the instance;
 the EIP/URL and all durable state survive (state is in the bucket).
 
-> **celld version bump** (if you want a newer celld than the pinned
-> `v0.2.0`): add `-var celld_version=vX.Y.Z`. Two rules from the last
-> bump — v0.2.0+ needs no `--internal-listen` because our listener is
-> loopback-only behind Caddy; and **never mix versions in one fleet**
-> (replication objects aren't backward-readable). Since this is a
-> single node, `terraform apply` replacing it is a clean full
-> replacement. If you ever run >1 node, replace them all.
+> **celld version bump** (currently pinned to `v0.3.0` in
+> `variables.tf`): edit `var.celld_version` rather than passing a flag,
+> for the reason above. Rules accumulated so far — v0.2.0+ needs no
+> `--internal-listen` because our listener is loopback-only behind
+> Caddy; **never mix v0.1.x and v0.2.x+ in one fleet** (replication
+> objects aren't backward-readable); v0.2.1→v0.3.0 may roll one node at
+> a time, but going *back* to v0.2.x on a node that has run v0.3.0 can
+> lose acknowledged writes unless its shutdown log shows `node-log
+> close: sealed epoch`. Since this is a single node, `terraform apply`
+> replacing it is a clean full replacement. If you ever run >1 node,
+> replace them all.
 
 ## Step 3 — deploy the cell code to the bucket
 
@@ -248,11 +253,19 @@ jobs:
           aws-region: us-west-2
       - uses: actions/setup-node@<pinned-sha>
         with: { node-version: 22 }
-      - run: npm ci --prefix cell && npm ci   # esbuild for the bundler
+      # The cell's deps now include the @criblio framework packages from
+      # GitHub Packages, so the install needs a registry auth line —
+      # `${{ github.token }}` has read:packages for repos in the org.
+      - run: |
+          echo "//npm.pkg.github.com/:_authToken=${{ github.token }}" >> ~/.npmrc
+          npm ci && npm ci --prefix cell   # esbuild for the bundler
       - name: Deploy bundle
         run: |
+          # Keep this tag equal to var.celld_version — the fleet-version
+          # rule is about the NODE's binary, but a deploy built by a
+          # different celld is a needless variable.
           curl -fsSL -o /tmp/celld.gz \
-            "https://github.com/denoland/celld/releases/download/v0.2.0/celld-x86_64-unknown-linux-gnu.gz"
+            "https://github.com/denoland/celld/releases/download/v0.3.0/celld-x86_64-unknown-linux-gnu.gz"
           gunzip /tmp/celld.gz && chmod +x /tmp/celld
           CELLD_ESBUILD=$(command -v esbuild || echo node_modules/.bin/esbuild) \
             /tmp/celld deploy cell --bucket s3://cribl-apm-cell-test

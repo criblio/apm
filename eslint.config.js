@@ -6,7 +6,11 @@ import tseslint from 'typescript-eslint'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
 export default defineConfig([
-  globalIgnores(['dist']),
+  // `.terraform/` holds Terraform's own cache, including a full clone of
+  // the framework repo (cell/infra pins the celld-fleet module by git
+  // ref). Linting vendored source fails the build on someone else's
+  // rules — and it's gitignored, but eslint doesn't read .gitignore.
+  globalIgnores(['dist', '**/.terraform/']),
   {
     files: ['**/*.{ts,tsx}'],
     extends: [
