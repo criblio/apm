@@ -12,10 +12,13 @@
 # pointed at the same bucket.
 
 module "fleet" {
-  # Sibling checkout, matching how the app consumes the framework's
-  # npm packages (`file:../cribl-search-app-framework/...`). Pin a git
-  # ref here once the module lands on the framework's master.
-  source = "../../../cribl-search-app-framework/infra/celld-fleet"
+  # Pinned to a framework commit, not a sibling checkout: the app
+  # stopped consuming the framework from `file:../` when it moved to
+  # GitHub Packages, so there is no longer any guarantee a checkout is
+  # next to this one — and `terraform init` on a fresh machine (or in
+  # CI) has to resolve without one. The repo is public, so https needs
+  # no credentials. Bump the ref deliberately, like a dependency.
+  source = "git::https://github.com/criblio/cribl-search-app-framework.git//infra/celld-fleet?ref=4ecc2d7f76b8d66cdbddfae74bad6b6307c00a40"
 
   # Drives "apm-cell-node" for every named resource and the default
   # SSM prefix /apm-cell — both must keep their existing values, or
@@ -29,6 +32,12 @@ module "fleet" {
   caddy_version        = var.caddy_version
   ssm_parameter_prefix = var.ssm_parameter_prefix
 
+  # celld v0.3.0 knobs. Both are pinned rather than left to the
+  # module/celld defaults so a future default change can't move this
+  # node's durability or failure timing without showing up in a plan.
+  celld_durability       = var.celld_durability
+  celld_handler_budget_s = var.celld_handler_budget_s
+
   # The security group's description is a create-time argument and the
   # group's name is derived from cell_name, so letting the module's
   # generic wording apply would be a same-name destroy/create that
@@ -36,8 +45,7 @@ module "fleet" {
   security_group_description = "Investigator cell: HTTPS in (Cribl webhooks + platform proxy), no SSH (use SSM Session Manager)."
 
   # Secrets: SSM SecureStrings under the prefix, created out-of-band
-  # and never in Terraform state. Boot fails loudly on a missing one,
-  # so this list is exactly what the real agent loop needs.
+  # and never in Terraform state.
   secret_env_keys = [
     "WEBHOOK_BEARER",
     "UI_BEARER",
@@ -45,6 +53,30 @@ module "fleet" {
     "LLM_API_KEY",
     "CRIBL_CLIENT_ID",
     "CRIBL_CLIENT_SECRET",
+  ]
+
+  # Which of those are worth refusing to boot over. All six exist in
+  # SSM today, so this changes nothing about the current node — it
+  # decides what happens to the NEXT one if a parameter is missing.
+  #
+  # Required: UI_BEARER gates every UI route (bearerOk() treats unset
+  # as closed, so the node would come up serving 401 to the app — up
+  # and unusable is worse than not up); TICKET_SECRET gates the WS
+  # transport the transcript streams over; LLM_API_KEY gates the agent
+  # loop, and an investigator that can't reach a model has nothing to
+  # offer.
+  #
+  # Deliberately optional: WEBHOOK_BEARER only guards /alerts/fire,
+  # and the coordinator PULLS firing alerts from $vt_results now
+  # rather than waiting to be pushed, so autonomous investigation
+  # survives its absence. CRIBL_CLIENT_ID/SECRET are checked at use
+  # (criblBearer returns an explanatory reason), which surfaces in the
+  # transcript instead of costing the whole node. Absent keys are
+  # warned about and listed in /etc/celld/missing-secrets.
+  required_secret_keys = [
+    "UI_BEARER",
+    "TICKET_SECRET",
+    "LLM_API_KEY",
   ]
 
   # Non-secret agent-loop config. These land in state — secrets never

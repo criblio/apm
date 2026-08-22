@@ -11,10 +11,13 @@ the framework's `infra/celld-fleet` (extracted from this stack in PRs
 `cell_name = "apm-cell"`, the bucket, the SSM prefix, and the two env
 inputs (`secret_env_keys` for SSM SecureStrings, `plain_env` for
 non-secret values). The provider and the S3 backend stay in this root.
-The module is consumed as a **sibling checkout**
-(`../../../cribl-search-app-framework/infra/celld-fleet`), matching how
-the app consumes the framework's npm packages — so a divergent local
-framework checkout changes your plan. Keep it at `.framework-sha`.
+The module is consumed as a **pinned git ref** on the framework's
+master (`git::https://…//infra/celld-fleet?ref=<sha>`). The repo is
+public, so this resolves with no credentials. It used to be a sibling
+checkout pinned by `.framework-sha`; that record retired when the app
+moved to GitHub Packages, and a path source would have made
+`terraform init` depend on an adjacent clone. Bump the `ref` the way
+you'd bump a dependency.
 
 The `moved` blocks at the bottom of `main.tf` record the state
 migration from the pre-module addresses into `module.fleet.*`. Leave
@@ -33,10 +36,10 @@ terraform output                        # cell_url, public_ip, instance_id, buck
 terraform plan -var bucket_name=cribl-apm-cell-test   # expect: No changes
 ```
 
-`terraform init` resolves the module from the sibling framework
-checkout, so clone `criblio/cribl-search-app-framework` next to this
-repo first. After changing anything under the module's directory, re-run
-`terraform init -upgrade` before planning.
+`terraform init` fetches the module from GitHub at the pinned ref — no
+framework clone needed. After moving that `ref` in `main.tf`, re-run
+`terraform init -upgrade` before planning, or Terraform keeps using the
+module it already cached.
 
 Then confirm the cell is serving and run the smoke suite:
 
@@ -96,12 +99,26 @@ The real agent loop adds three more: `LLM_API_KEY`, `CRIBL_CLIENT_ID`,
 `main.tf`, and the instance reads exactly that list at boot into
 `CELLD_VAR_*` (root-only env file).
 
-**Boot now fails on any missing one.** The pre-module template skipped
-the LLM/Cribl keys when `llm_base_url` was empty (a stub-agent
-fallback); the module reads `secret_env_keys` unconditionally. All six
-exist in the test account, so this is a no-op there — but if you ever
-want a stub-mode node, shorten `secret_env_keys` rather than clearing
-`llm_base_url`.
+**Only three of the six abort the boot** — the ones named in
+`required_secret_keys`:
+
+| Secret | Missing ⇒ | Why |
+|---|---|---|
+| `UI_BEARER` | **boot aborts** | Gates every UI route, and `bearerOk()` treats unset as *closed*. Without it the node comes up 401-ing the app — up and unusable, which is worse than not up. |
+| `TICKET_SECRET` | **boot aborts** | Gates the WS tickets the transcript streams over. |
+| `LLM_API_KEY` | **boot aborts** | Gates the agent loop; an investigator that can't reach a model has nothing to offer. |
+| `WEBHOOK_BEARER` | warns | Only guards `POST /alerts/fire`. The coordinator *pulls* firing alerts from `$vt_results` now, so autonomous investigation still runs. |
+| `CRIBL_CLIENT_ID` / `CRIBL_CLIENT_SECRET` | warns | Checked at use — the cell reports "not configured" in the transcript instead of costing you the node. |
+
+Skipped keys are warned about in `/var/log/apm-cell-init.log` and
+listed one per line in `/etc/celld/missing-secrets`. Check both when a
+feature reports itself unconfigured on a node you thought was fully
+provisioned. All six exist in the test account, so this changes nothing
+about the current node — it decides what happens to the next one.
+
+Note SSM rejects an empty `SecureString`, so "set it blank to disable"
+isn't available; omit the parameter (now non-fatal for the optional
+three) or drop the key from `secret_env_keys`.
 
 Rotate by updating the parameter and replacing the instance
 (`terraform apply -replace=module.fleet.aws_instance.cell` — note the
@@ -114,6 +131,15 @@ cd cell/infra
 terraform init
 terraform apply -var bucket_name=<globally-unique-bucket>
 ```
+
+`bucket_name` is the only input without a default. In particular the
+agent-loop config (`llm_base_url`, `llm_model`, `cribl_base_url`,
+`cribl_dataset`) now **defaults to the live staging values** rather
+than being passed as `-var` flags from a runbook. All four render into
+`user_data`, and `user_data_replace_on_change = true`, so an apply that
+forgot a flag would replace the node and quietly bring it back in stub
+mode (empty `llm_base_url` ⇒ no agent loop, no error). Config the node
+can't run without belongs where a bare `terraform apply` finds it.
 
 **No DNS setup required.** The hostname is derived from the Elastic IP
 via [sslip.io](https://sslip.io) — EIP `54.71.34.177` becomes
@@ -165,12 +191,12 @@ answers 502 — that is a missing deploy, not broken infra.
   from dnf. AL2023 has no `caddy` package (`Unable to find a match:
   caddy`), which silently left the first apply with no TLS. Version is
   pinned in `var.caddy_version`.
-- **celld is pinned to v0.2.0** (`var.celld_version`). v0.2.0 splits
+- **celld is pinned to v0.3.0** (`var.celld_version`). v0.2.0 split
   the public listener from a new internal peer/operator listener; our
   public listener is loopback-only behind Caddy, so no
-  `--internal-listen` is needed. It also drops `CELLD_WORKERS`,
+  `--internal-listen` is needed. It also dropped `CELLD_WORKERS`,
   `CELLD_MAX_COHOSTED`, `CELLD_MAX_CPU_PERCENT`, `CELLD_VALIDATE`, and
-  renames `CELLD_HIBERNATIONS` → `CELLD_EVICTIONS`; v0.2.0 validates
+  renamed `CELLD_HIBERNATIONS` → `CELLD_EVICTIONS`; celld validates
   every variable at startup and refuses to boot on an unknown one, so
   keep the module's `user_data.sh.tftpl` env block in sync with
   `celld --help` (it lives in the framework repo now, so that edit is a
@@ -178,6 +204,28 @@ answers 502 — that is a missing deploy, not broken infra.
   A fleet must never mix v0.1.0 and v0.2.0 nodes — v0.2.0 writes
   compacted block-format replication objects a v0.1.0 reader cannot
   restore. Upgrade by replacing all nodes, never rolling.
+- **v0.3.0 durability: `CELLD_DURABILITY` is pinned to `fleet`**
+  (`var.celld_durability`). v0.3.0 added a replicated write-behind log
+  and moved the default write-ack posture from `bucket` to `fleet`.
+  That reads like a durability regression on a single-node fleet but
+  isn't: with no peers, celld "behaves exactly like sync-to-bucket —
+  no peers means no record, no shipper, and bucket-proven acks", and it
+  starts using peers the moment one joins. It's pinned explicitly, not
+  left to the default, so a future celld default change can't move this
+  node's durability without showing up in a plan. Set `bucket` to
+  force bucket-proven acks on every write regardless of peers.
+- **Downgrading off v0.3.0 is one-way-ish.** v0.2.1→v0.3.0 can roll a
+  node at a time, but do NOT start a v0.2.x binary on a node that has
+  run v0.3.0 unless its shutdown log shows `node-log close: sealed
+  epoch` — v0.2.x can't read the replicated log, and the downgrade can
+  lose acknowledged writes. Roll forward instead.
+- **`CELLD_HANDLER_BUDGET_S` is pinned at celld's default, 300**
+  (`var.celld_handler_budget_s`). Blowing this budget kills the celld
+  *process*, not just the offending isolate, so every session on the
+  node dies with it. cell-harness 0.3.0's bounded watchdog exists
+  because of exactly that: a turn whose tool overran the budget used to
+  be retried forever, restarting the node every ~240s. Keep in-cell
+  work well inside the budget rather than raising it.
 - **Terraform state lives in the fleet bucket**
   (`s3://cribl-apm-cell-test/terraform/cell-infra.tfstate`), with
   S3-native locking (`use_lockfile`) and bucket versioning as the
