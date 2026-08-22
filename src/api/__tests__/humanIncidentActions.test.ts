@@ -5,7 +5,7 @@
  * through the pinned incidentEventCommitQuery shape.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { setCurrentDataset } from '@cribl/app-utils/dataset';
+import { setCurrentDataset } from '@criblio/app-utils/dataset';
 
 const ran: string[] = [];
 vi.mock('../cribl', () => ({

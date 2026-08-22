@@ -2,7 +2,7 @@
  * Dedup + short-TTL cache for the fast metrics store.
  *
  * The implementation now lives in the shared framework
- * (`@cribl/app-utils/metrics`) alongside the metrics client it wraps.
+ * (`@criblio/app-utils/metrics`) alongside the metrics client it wraps.
  * This module re-exports it so existing imports (`./metricsCache`) keep
  * working, and to centralize the browser-safe subpath (the framework
  * root barrel pulls the provisioner → `node:fs`; the `./metrics` subpath
@@ -19,4 +19,4 @@ export {
   cachedQueryInstant,
   cachedQueryRange,
   clearMetricsCache,
-} from '@cribl/app-utils/metrics';
+} from '@criblio/app-utils/metrics';

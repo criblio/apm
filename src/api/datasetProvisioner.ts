@@ -1,7 +1,7 @@
 /**
  * APM-specific dataset reconciliation. Defines what the app
  * expects on the `otel` dataset and delegates the read/diff/patch
- * shape to @cribl/app-utils.
+ * shape to @criblio/app-utils.
  *
  * Two pieces:
  *
@@ -32,8 +32,8 @@ import {
   type DatasetRule,
   type RulesetRuleStatus,
   type RulesetRuleResult,
-} from '@cribl/app-utils/dataset-provisioner';
-import type { HttpClient } from '@cribl/app-utils/provisioner';
+} from '@criblio/app-utils/dataset-provisioner';
+import type { HttpClient } from '@criblio/app-utils/provisioner';
 
 // ────────────────────────────────────────────────────────────────
 // Expected state — APM/otel specifics

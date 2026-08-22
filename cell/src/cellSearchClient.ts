@@ -8,8 +8,8 @@
  * per client with the same field check featureDetect.ts uses.
  */
 import type { SearchClient } from '../../src/api/searchClient';
-import { kqlDatasetId } from '@cribl/app-utils/kql';
-import { metricsQueryPath, type MetricsTransport } from '@cribl/app-utils/metrics';
+import { kqlDatasetId } from '@criblio/app-utils/kql';
+import { metricsQueryPath, type MetricsTransport } from '@criblio/app-utils/metrics';
 import type { CriblClient } from './criblClient';
 
 /**

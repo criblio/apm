@@ -13,8 +13,5 @@
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250705.0",
     "typescript": "^5.5.0"
-  },
-  "dependencies": {
-    "@earendil-works/pi-ai": "^0.84.1"
   }
 }

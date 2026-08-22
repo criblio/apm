@@ -1,7 +1,7 @@
 /**
  * Settings UI for the dataset acceleration provisioner.
  *
- * Mirrors the visual shape of the shared @cribl/app-utils
+ * Mirrors the visual shape of the shared @criblio/app-utils
  * ProvisioningPanel (used for saved searches) but reconciles a
  * different set of resources: the otel dataset's `dataset-ruleset`
  * extend expression that flattens service_name / status_code, and
@@ -19,7 +19,7 @@
  *     builders pick up the new state on the next call.
  */
 import { useCallback, useEffect, useState } from 'react';
-import { createBrowserHttpClient } from '@cribl/app-utils/provisioner';
+import { createBrowserHttpClient } from '@criblio/app-utils/provisioner';
 import {
   apply as applyDatasetProvisioning,
   getStatus as getDatasetStatus,

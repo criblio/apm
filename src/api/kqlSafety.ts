@@ -1,6 +1,6 @@
 /** APM policy wrapper around the shared Cribl KQL safety boundary. */
 
-import { KqlSafetyError } from '@cribl/app-utils/kql';
+import { KqlSafetyError } from '@criblio/app-utils/kql';
 
 export {
   KqlSafetyError,
@@ -13,7 +13,7 @@ export {
   kqlInteger,
   kqlStringLiteral,
   kqlTime,
-} from '@cribl/app-utils/kql';
+} from '@criblio/app-utils/kql';
 
 /** OpenTelemetry trace identifier policy remains an APM domain concern. */
 export function kqlTraceId(value: string): string {

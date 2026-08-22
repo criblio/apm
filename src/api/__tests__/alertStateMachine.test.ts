@@ -10,7 +10,7 @@
  * to make sure the machine composes correctly across cycles.
  */
 import { describe, it, expect } from 'vitest';
-import { setCurrentDataset } from '@cribl/app-utils/dataset';
+import { setCurrentDataset } from '@criblio/app-utils/dataset';
 import * as Q from '../queries';
 import {
   FIRE_AFTER,

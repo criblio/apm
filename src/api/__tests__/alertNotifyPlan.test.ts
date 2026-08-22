@@ -4,7 +4,7 @@
  * when it does it must fire the investigator-cell webhook target.
  */
 import { afterEach, describe, expect, it } from 'vitest';
-import { setCurrentDataset } from '@cribl/app-utils/dataset';
+import { setCurrentDataset } from '@criblio/app-utils/dataset';
 import {
   getProvisioningPlan,
   CELL_WEBHOOK_TARGET_ID,

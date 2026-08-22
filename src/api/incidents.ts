@@ -12,7 +12,7 @@
  * the list + lookup) updates on the next fold cadence (≤5 min).
  * Callers should update local state optimistically and say so.
  */
-import { getCurrentDataset } from '@cribl/app-utils/dataset';
+import { getCurrentDataset } from '@criblio/app-utils/dataset';
 import { runQuery } from './cribl';
 import {
   INCIDENT_APP_PRODUCER,

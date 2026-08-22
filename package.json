@@ -1,7 +1,7 @@
 {
   "name": "apm",
   "private": true,
-  "version": "0.14.0",
+  "version": "0.14.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -28,7 +28,10 @@
     "@capra/core": "^1.5.0",
     "@capra/icons": "^1.6.0",
     "@capra/theme": "^1.2.0",
-    "@cribl/app-utils": "file:../cribl-search-app-framework/packages/app-utils",
+    "@criblio/agent-protocol": "^0.2.0",
+    "@criblio/app-utils": "^0.5.1",
+    "@criblio/cell-harness": "^0.3.0",
+    "@criblio/cell-workspace": "^0.1.1",
     "d3-array": "^3.2.4",
     "d3-force": "^3.0.0",
     "d3-scale": "^4.0.2",
@@ -39,11 +42,11 @@
     "highlight.js": "^11.12.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
-    "react-router-dom": "^7.14.0"
+    "react-router-dom": "^7.18.2"
   },
   "devDependencies": {
     "@capra/dx-tokens-postcss-plugin": "^0.3.0",
-    "@cribl/app-tooling": "file:../cribl-search-app-framework/packages/app-tooling",
+    "@criblio/app-tooling": "^0.2.0",
     "@eslint/js": "^9.39.4",
     "@playwright/test": "^1.59.1",
     "@types/d3-array": "^3.2.2",
@@ -75,7 +78,7 @@
     "node": ">=22.13.0"
   },
   "displayName": "Cribl APM",
-  "description": "Application performance monitoring on top of Cribl Search — traces, logs, and metrics from the OpenTelemetry demo.",
+  "description": "Application performance monitoring on top of Cribl Search \u2014 traces, logs, and metrics from the OpenTelemetry demo.",
   "author": "Clint Sharp",
   "cribl": {
     "type": "app",

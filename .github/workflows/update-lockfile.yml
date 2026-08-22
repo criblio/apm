@@ -1,0 +1,39 @@
+name: Update lockfile
+
+# Regenerate package-lock.json on a branch, in CI, where GITHUB_TOKEN
+# can read the @criblio packages from GitHub Packages. Useful when a
+# local environment has no registry token yet (the lockfile needs the
+# registry's resolved URLs + integrity hashes), or for framework
+# version bumps from a machine without npm auth.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: read
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          registry-url: https://npm.pkg.github.com
+      - name: Regenerate package-lock.json
+        env:
+          NODE_AUTH_TOKEN: ${{ github.token }}
+        run: npm install --package-lock-only
+      - name: Commit and push if changed
+        run: |
+          set -euo pipefail
+          if git diff --quiet package-lock.json; then
+            echo "lockfile unchanged"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add package-lock.json
+          git commit -m "chore: regenerate package-lock.json (update-lockfile workflow)"
+          git push

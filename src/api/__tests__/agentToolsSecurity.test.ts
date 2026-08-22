@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import { setCurrentDataset } from '@cribl/app-utils/dataset';
+import { setCurrentDataset } from '@criblio/app-utils/dataset';
 import { executeToolCall, requiresApproval } from '../agentTools';
 
 beforeAll(() => setCurrentDataset('otel'));

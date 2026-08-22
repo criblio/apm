@@ -32,9 +32,21 @@ variable "instance_type" {
 }
 
 variable "celld_version" {
-  description = "celld release tag to install. A fleet must never mix v0.1.0 and v0.2.0 nodes (block-format replication objects are not backward-readable) — upgrade by replacing every node, not rolling."
+  description = "celld release tag to install. A fleet must never mix v0.1.0 and v0.2.0 nodes (block-format replication objects are not backward-readable) — upgrade by replacing every node, not rolling. v0.2.1→v0.3.0 can roll one node at a time, but going BACK to a v0.2.x binary on a node that has run v0.3.0 can lose acknowledged writes unless its shutdown log shows `node-log close: sealed epoch` — v0.2.x cannot read the replicated log."
   type        = string
-  default     = "v0.2.0"
+  default     = "v0.3.0"
+}
+
+variable "celld_durability" {
+  description = "Write-ack posture (celld v0.3.0+). `fleet` acks once a follower has fsynced and tiers to S3 behind; `bucket` waits for S3 on every write. `fleet` is safe on this single-node fleet — with no peers celld behaves exactly like sync-to-bucket (bucket-proven acks) and upgrades itself if a peer joins — so it keeps v0.2.0's guarantee while dropping write latency and Class A op count. Pinned rather than defaulted so a celld default change can't move it silently."
+  type        = string
+  default     = "fleet"
+}
+
+variable "celld_handler_budget_s" {
+  description = "Per-request JS handler budget in seconds (celld default 300). Exceeding it kills the celld PROCESS, not just the isolate, so every session on the node dies — this is the budget cell-harness 0.3.0's bounded watchdog stops retrying a turn against. Kept at the default; pinned for visibility."
+  type        = number
+  default     = 300
 }
 
 variable "caddy_version" {
@@ -52,24 +64,33 @@ variable "ssm_parameter_prefix" {
 # ── Real agent-loop config (non-secret; passed to the module as
 #    plain_env. The matching secrets — LLM_API_KEY, CRIBL_CLIENT_ID,
 #    CRIBL_CLIENT_SECRET — live in SSM and are named in the module's
-#    secret_env_keys). ──
+#    secret_env_keys).
+#
+#    These defaults are the LIVE staging values, deliberately. They
+#    used to be empty and supplied as `-var` flags from the runbook,
+#    but every one of them renders into user_data under
+#    `user_data_replace_on_change = true`: an apply that forgot a flag
+#    would REPLACE the node and bring it back in stub mode (empty
+#    llm_base_url ⇒ no agent loop) with no error. Config the node
+#    can't run without belongs where a bare `terraform apply` finds
+#    it. ──
 
 variable "llm_base_url" {
-  description = "OpenAI-compatible endpoint base for the agent loop (e.g. https://openrouter.ai/api/v1)."
+  description = "OpenAI-compatible endpoint base for the agent loop. Empty ⇒ the payload's stub agent instead of the real loop."
   type        = string
-  default     = ""
+  default     = "https://openrouter.ai/api/v1"
 }
 
 variable "llm_model" {
-  description = "Model id sent to the endpoint."
+  description = "Model id sent to the endpoint. Text-only — see the cell's LLM_VISION note; declaring vision on a text-only model is a hard API error on most providers."
   type        = string
   default     = "deepseek/deepseek-v4-flash-0731"
 }
 
 variable "cribl_base_url" {
-  description = "Cribl workspace base URL the cell runs searches/metrics against and commits investigation events to. Required for the real loop."
+  description = "Cribl workspace base URL the cell runs searches/metrics against and commits investigation events to. Required for the real loop (and for the coordinator's $vt_results alert poll)."
   type        = string
-  default     = ""
+  default     = "https://main-objective-shirley-sho21r7.cribl-staging.cloud"
 }
 
 variable "cribl_dataset" {

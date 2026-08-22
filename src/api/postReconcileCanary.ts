@@ -29,9 +29,9 @@
  * page button to re-run the canary on demand. The Node side just
  * passes a Node-backed HttpClient.
  */
-import type { HttpClient } from '@cribl/app-utils/provisioner';
-import { getCurrentDataset } from '@cribl/app-utils/dataset';
-import { runSearchJob } from '@cribl/app-utils/search-job';
+import type { HttpClient } from '@criblio/app-utils/provisioner';
+import { getCurrentDataset } from '@criblio/app-utils/dataset';
+import { runSearchJob } from '@criblio/app-utils/search-job';
 import {
   generatedEventContractCanaryRead,
   generatedEventContractCanarySend,

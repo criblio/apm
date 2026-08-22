@@ -79,6 +79,8 @@ npm run smoke
 | `DISABLED` | `"true"` drops all new triggers (local kill switch) |
 | `LLM_BASE_URL` | OpenAI-compatible endpoint base (absent ⇒ stub agent) |
 | `LLM_API_KEY` / `LLM_MODEL` | Endpoint key + model id |
+| `LLM_VISION` | `"true"` ⇒ the model takes image input, so attached screenshots are forwarded. Off here: the pinned model is text-only, and pi-ai silently DROPS images for an undeclared model while most providers hard-fail image parts sent to a text-only one. APM's UI doesn't attach images. |
+| `TURN_BUDGET` | Per-message turn cap for interactive sessions (default 12) |
 | `CRIBL_BASE_URL` | Cribl workspace base URL |
 | `CRIBL_CLIENT_ID` / `CRIBL_CLIENT_SECRET` | Machine OAuth (search tools, KV kill switch, event commits) |
 | `CRIBL_DATASET` | Telemetry dataset (default `otel`) |

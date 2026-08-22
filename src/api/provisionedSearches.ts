@@ -28,9 +28,9 @@
  * change the provisioner must be re-run to pick up the new
  * baked-in values. The ROADMAP caveats section covers this.
  */
-import type { ProvisionedSearch, SeedLookup } from '@cribl/app-utils/provisioner';
+import type { ProvisionedSearch, SeedLookup } from '@criblio/app-utils/provisioner';
 import * as Q from './queries';
-import { getSearchCadenceCron, getSearchCadence } from '@cribl/app-utils/cadence';
+import { getSearchCadenceCron, getSearchCadence } from '@criblio/app-utils/cadence';
 import { getMetricsEmit } from './metricsEmit';
 import { getServerInvestigations } from './serverInvestigations';
 import type { BackfillEmitter } from './metricsBackfill';

@@ -26,7 +26,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import * as Q from '../queries';
 import { validateQuery } from '../provisionGuard';
-import { setCurrentDataset } from '@cribl/app-utils/dataset';
+import { setCurrentDataset } from '@criblio/app-utils/dataset';
 import { setLowVolumeMode, getLowVolumeMode } from '../lowVolumeMode';
 
 beforeAll(() => {
