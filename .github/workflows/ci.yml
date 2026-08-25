@@ -19,7 +19,7 @@ jobs:
       # (@criblio scope, routed by the committed .npmrc); the action
       # writes the auth line from registry-token at install time. The
       # .framework-sha pin era ended with the packages being published.
-      - uses: criblio/cribl-search-app-framework/.github/actions/release-build@7ef8eb4693afeafe707b5c26a998892c36c3c13e
+      - uses: criblio/cribl-search-app-framework/.github/actions/release-build@9520170e2b4bd2088b5ba8b5b410c4f11a0f42bc
         with:
           registry-token: ${{ github.token }}
       - name: Retain the exact tested candidate
