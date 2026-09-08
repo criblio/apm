@@ -153,18 +153,21 @@ skills:
       | Messaging destination | `tostring(attributes['messaging.destination.name'])` |
       | Exception type | inside `events` array, each event has `attributes['exception.type']` |
 
-      ### Metric field mappings (for generic_metrics records)
+      ### Metric field mappings
 
-      Metrics have a DIFFERENT shape — resource attributes are flattened to the
-      top level rather than nested under `resource.attributes`:
+      Use `run_metrics_query` first. Native OTLP metrics are stored in Cribl
+      Metrics and queried with PromQL; names and labels are Prometheus-normalized
+      with underscores (for example `http_server_duration_milliseconds` and
+      `service_name`). Use catalog discovery before guessing a name.
 
-      | Concept | Expression |
-      |---|---|
-      | Metric name | `_metric` |
-      | Metric value | `_value` |
-      | Service name | `tostring(['service.name'])`  (top-level, bracket-quoted) |
-      | Host name | `tostring(['host.name'])` |
-      | K8s pod | `tostring(['k8s.pod.name'])` |
+      Older deployments can also expose `generic_metrics` records to KQL. Those
+      records may be normalized (`_metric` + `_value`) or wide-column (the
+      metric name is a top-level bracket-quoted field). A compatible KQL value is:
+
+      `iff(tostring(_metric)=="<name>", toreal(_value), toreal(['<name>']))`
+
+      Legacy resource attributes are top-level, such as
+      `tostring(['service.name'])` and `tostring(['k8s.pod.name'])`.
 
       ### Log field mappings (for log records + span events with body)
 
