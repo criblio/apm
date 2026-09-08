@@ -17,7 +17,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
       # Framework packages are public on npmjs; no registry token or
       # framework checkout is required.
-      - uses: criblio/cribl-search-app-framework/.github/actions/release-build@72dc8f437e425549d1e8237223dc17e8e7250619
+      - uses: criblio/cribl-search-app-framework/.github/actions/release-build@4faddbb61ea6b756ea341e3b64147c74d6230f4a
       - name: Retain the exact tested candidate
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
