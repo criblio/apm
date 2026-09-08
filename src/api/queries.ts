@@ -265,6 +265,11 @@ function mf(metric: string): string {
   return kqlBracketField(metric);
 }
 
+/** Metric value across both legacy normalized rows and wide-column rows. */
+function metricValue(metric: string): string {
+  return `iff(tostring(_metric)==${kqlStringLiteral(metric)}, toreal(_value), toreal(${mf(metric)}))`;
+}
+
 /** All distinct service names. */
 export function services(opts?: QueryOpts): string {
   return `${spansBase()}
@@ -571,15 +576,17 @@ export function alertEvaluator(): string {
   // build time so toggling requires a re-provision (the alert
   // search bakes in its KQL at scheduled-search creation).
   const lowVol = getLowVolumeMode();
+  const lowVolPredicate =
+    'curr_errors >= 2 and curr_err_pct >= 1 and (prev_errors < 1 or curr_err_pct >= prev_err_pct * 3)';
   const lowVolArm = lowVol
-    ? 'curr_errors >= 2 and curr_err_pct >= 1, "error_rate",\n               '
+    ? `${lowVolPredicate}, "error_rate",\n               `
     : '';
   const lowVolBoolArm = lowVol
-    ? 'or (curr_errors >= 2 and curr_err_pct >= 1)\n               '
+    ? `or (${lowVolPredicate})\n               `
     : '';
 
-  // curr_* are computed DIRECTLY from spans over the search's
-  // earliest window (-15m), NOT from home_service_summary's -1h
+  // curr_* are computed from spans over the search's earliest
+  // window (-15m), NOT from home_service_summary's -1h
   // $vt_results. Why: a 7-min flag-on burst on a low-traffic
   // service was getting diluted by 53 minutes of healthy traffic
   // in the -1h window, dropping the error rate below the 1%
@@ -588,10 +595,15 @@ export function alertEvaluator(): string {
   // the -1h lookup so the alert evaluator still compares against
   // a longer healthy reference.
   return `${spansBase()}
-    | extend svc=tostring(resource.attributes['service.name']),
-             is_error=(tostring(status.code)=="2")
-    | summarize curr_requests=toreal(count()),
-                curr_errors=toreal(countif(is_error)) by svc
+    | extend svc=tostring(resource.attributes['service.name'])
+    | summarize curr_requests=toreal(count()) by svc
+    // Apply the same actionable-error rules as the previous window.
+    // Comparing raw current errors with a filtered baseline makes steady
+    // propagation/caller-fault noise look like a fresh regression.
+    | join kind=leftouter (
+        ${filteredErrorsBranch('')}
+      ) on svc
+    | extend curr_errors=toreal(coalesce(filtered_errors, tolong(0)))
     // Silent-service driver rows: a fully-down service emits NO spans,
     // so it has no summarize row — which made the "silent" arm
     // structurally unreachable AND froze its alert state machine
@@ -650,8 +662,8 @@ export function alertEvaluator(): string {
     // above: the baseline (prevWindowSummary) computes p95 with the
     // >30s streaming-span filter applied, so the current side must
     // match or services with idle-wait roots (accounting) would show
-    // a fake 10x. The request/error counts above stay unfiltered —
-    // changing them would silently shift months of threshold tuning.
+    // a fake 10x. Request counts above stay unfiltered; errors use the
+    // same actionable-error filter as the baseline.
     | join kind=leftouter (
         ${spansBase()}
         | extend svc=tostring(resource.attributes['service.name']),
@@ -693,9 +705,9 @@ export function alertEvaluator(): string {
     //      service just broke" from low-volume background noise.
     // Tradeoff: silences chaos scenarios on ultra-low-volume
     // services (llmRateLimit / recommendationCache product-reviews).
-    // The low-volume-mode setting (P1.2) re-enables an older arm
-    // for those — opt-in only since it costs precision on noisier
-    // workloads.
+    // The low-volume-mode setting (P1.2) re-enables a sensitive arm
+    // for those, but still requires a clean baseline or a 3x increase
+    // so steady background noise does not become a permanent alert.
     // Service-level p95 regression arm (the P2 detection gap, found
     // 2026-08-18): the per-op latency arm's 250ms floor sat above
     // real regressions on fast services — recommendationCacheFailure
@@ -900,10 +912,9 @@ export function investigationEvents(limit = 200, service?: string): string {
 /**
  * Trigger query for the server-side investigator. Selects the firing
  * alert events in the search's window (run with `earliest=-15m`) and
- * projects exactly the fields the cell's `FiringAlert` / seed builder
- * need. The `criblapm__alert_notify` scheduled search runs this; when
- * it returns rows, its notification target POSTs them to the cell's
- * `/alerts/fire`, which dedupes on `event_id`. Canaries excluded.
+ * projects both the legacy APM-cell fields and GoatFarm's generic
+ * trigger vocabulary. This keeps rollback possible while selecting the
+ * registered APM agent on GoatFarm. Canaries excluded.
  */
 export function alertNotify(): string {
   return `${datasetClause()}
@@ -913,7 +924,10 @@ export function alertNotify(): string {
     | where isnull(is_canary) or tostring(is_canary) != "true"
     | summarize _time=max(_time)
       by event_id, alert_id, svc, signal_type, curr_error_rate, fire_count
-    | project event_id, alert_id, svc, signal_type, curr_error_rate, fire_count, _time
+    | project agent="apm-investigator", eventId=tostring(event_id),
+              subject=tostring(alert_id), group=strcat("apm:", tostring(svc), ":", tostring(signal_type)),
+              summary=strcat("Investigate the firing ", tostring(signal_type), " alert for service ", tostring(svc), "."),
+              event_id, alert_id, svc, signal_type, curr_error_rate, fire_count, _time
     | sort by _time desc
     | limit 50`;
 }
@@ -2675,8 +2689,9 @@ export function metricSampleRecords(limit: number = 500): string {
  */
 export function metricServices(metricName: string): string {
   return `${metricsBase()}
-    | where isnotnull(${mf(metricName)})
-    | extend svc=tostring(['service.name'])
+    | extend metric_value=${metricValue(metricName)},
+             svc=tostring(['service.name'])
+    | where isnotnull(metric_value)
     | where isnotempty(svc)
     | summarize by svc
     | sort by svc asc`;
@@ -2718,8 +2733,8 @@ export interface MetricSeriesParams {
  * `max(field)` (client computes the delta), and `pN` goes through
  * `percentile`.
  */
-function metricAggExpr(metric: string, agg: MetricSeriesParams['agg']): string {
-  const field = `toreal(${mf(metric)})`;
+function metricAggExpr(agg: MetricSeriesParams['agg']): string {
+  const field = 'metric_value';
   switch (agg) {
     case 'count':
       return 'count()';
@@ -2770,7 +2785,7 @@ export function metricTimeSeries(params: MetricSeriesParams): string {
   const svcFilter = params.service
     ? `| where svc == ${kqlStringLiteral(params.service)}`
     : '';
-  const aggExpr = metricAggExpr(params.metric, params.agg);
+  const aggExpr = metricAggExpr(params.agg);
   const bin = kqlInteger(params.binSeconds, { min: 1, max: 86_400 });
   // Group-by: append a dimension column to the summarize. Dimension
   // values are accessed via bracket-quoted syntax (resource attributes
@@ -2780,8 +2795,9 @@ export function metricTimeSeries(params: MetricSeriesParams): string {
     : '';
   const groupBy = params.groupBy ? ', grp' : '';
   return `${metricsBase()}
-    | where isnotnull(${mf(params.metric)})
-    | extend svc=tostring(['service.name'])${groupExt}
+    | extend metric_value=${metricValue(params.metric)},
+             svc=tostring(['service.name'])${groupExt}
+    | where isnotnull(metric_value)
     ${svcFilter}
     | summarize val=${aggExpr}
       by bucket=bin(_time, ${bin}s)${groupBy}
@@ -2795,7 +2811,8 @@ export function metricTimeSeries(params: MetricSeriesParams): string {
  */
 export function metricSampleRow(metricName: string): string {
   return `${metricsBase()}
-    | where isnotnull(${mf(metricName)})
+    | extend metric_value=${metricValue(metricName)}
+    | where isnotnull(metric_value)
     | limit 1`;
 }
 
@@ -2840,13 +2857,14 @@ export function serviceMetricLatest(
 ): string {
   const s = kqlStringLiteral(service);
   return `${metricsBase()}
-    | where isnotnull(${mf(metric)})
-    | extend svc=tostring(['service.name']),
+    | extend metric_value=${metricValue(metric)},
+             svc=tostring(['service.name']),
              dep=tostring(['k8s.deployment.name'])
+    | where isnotnull(metric_value)
     | where svc == ${s} or dep == ${s}
     | sort by _time desc
     | limit 1
-    | project val=toreal(${mf(metric)})`;
+    | project val=metric_value`;
 }
 
 /**
@@ -2862,13 +2880,14 @@ export function serviceMetricDelta(
 ): string {
   const s = kqlStringLiteral(service);
   return `${metricsBase()}
-    | where isnotnull(${mf(metric)})
-    | extend svc=tostring(['service.name']),
+    | extend metric_value=${metricValue(metric)},
+             svc=tostring(['service.name']),
              dep=tostring(['k8s.deployment.name']),
              pod=tostring(['k8s.pod.name']),
              container=tostring(['k8s.container.name'])
+    | where isnotnull(metric_value)
     | where svc == ${s} or dep == ${s}
-    | summarize d=max(toreal(${mf(metric)}))-min(toreal(${mf(metric)}))
+    | summarize d=max(metric_value)-min(metric_value)
       by pod, container
     | summarize delta=sum(d)`;
 }
@@ -2888,7 +2907,7 @@ export function serviceMetricTimeSeries(
 ): string {
   const s = kqlStringLiteral(service);
   const bin = kqlInteger(binSeconds, { min: 1, max: 86_400 });
-  const field = `toreal(${mf(metric)})`;
+  const field = 'metric_value';
   let aggExpr: string;
   if (agg === 'p95') {
     aggExpr = `percentile(${field}, 95)`;
@@ -2898,9 +2917,10 @@ export function serviceMetricTimeSeries(
     aggExpr = `avg(${field})`;
   }
   return `${metricsBase()}
-    | where isnotnull(${mf(metric)})
-    | extend svc=tostring(['service.name']),
+    | extend metric_value=${metricValue(metric)},
+             svc=tostring(['service.name']),
              dep=tostring(['k8s.deployment.name'])
+    | where isnotnull(metric_value)
     | where svc == ${s} or dep == ${s}
     | summarize val=${aggExpr} by bucket=bin(_time, ${bin}s)
     | sort by bucket asc`;
@@ -2986,11 +3006,13 @@ export function serviceMetricsBatch(
   if (metrics.length === 0 || metrics.length > 100) {
     throw new Error('serviceMetricsBatch requires between 1 and 100 metrics');
   }
-  const whereClause = metrics.map((m) => `isnotnull(${mf(m)})`).join(' or ');
+  const normalizedClause = metrics.map((m) => `metric_name==${kqlStringLiteral(m)}`).join(' or ');
+  const wideClause = metrics.map((m) => `isnotnull(${mf(m)})`).join(' or ');
   return `${metricsBase()}
-    | where ${whereClause}
-    | extend svc=tostring(['service.name']),
+    | extend metric_name=tostring(_metric),
+             svc=tostring(['service.name']),
              dep=tostring(['k8s.deployment.name'])
+    | where (${normalizedClause}) or (${wideClause})
     | where svc == ${s} or dep == ${s}
     | extend bucket=bin(_time, ${bin}s)
     | sort by bucket asc`;

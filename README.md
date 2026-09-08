@@ -61,9 +61,9 @@ the unit you drill into from the Alerts page.
 
 ### 5. (Optional) Turn on server-side investigations
 
-With an investigator cell deployed, every fired alert gets an
-autonomous AI investigation — root cause, evidence, and remediation,
-written back to the incident. See
+With shared GoatTown configured, every fired alert gets an
+autonomous AI investigation. APM correlates the resulting root cause,
+evidence, remediation, and transcript with the incident. See
 **[docs/server-side-investigations.md](docs/server-side-investigations.md)**
 for setup; without it, everything above still works and the
 **Investigate** page runs interactively in your browser session.
@@ -89,9 +89,9 @@ for setup; without it, everything above still works and the
 - **Errors** — error-class rollup with noise filtering.
 - **Investigate** — the AI investigator: seed a symptom (or launch
   from an alert or incident) and it walks the data — and optionally
-  the service's source code — to a root cause. Runs server-side when
-  the [investigator cell](docs/server-side-investigations.md) is
-  deployed, in-browser otherwise.
+  the service's source code — to a root cause. Runs in GoatFarm when
+  [server-side investigations](docs/server-side-investigations.md) are
+  configured, in-browser otherwise.
 
 ## Notes
 
