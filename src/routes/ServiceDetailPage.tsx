@@ -667,42 +667,52 @@ export default function ServiceDetailPage() {
   const protocolRows: MetricsCardRow[] = [
     {
       label: 'HTTP client p95',
-      metric: ['http.client.request.duration', 'http.client.duration'],
+      metric: [
+        'http_client_duration_milliseconds',
+        'http_client_request_duration_seconds',
+        'http.client.request.duration',
+        'http.client.duration',
+      ],
       fetch: 'latest',
       agg: 'p95',
       format: fmtMs,
     },
     {
       label: 'HTTP server p95',
-      metric: ['http.server.request.duration', 'http.server.duration'],
+      metric: [
+        'http_server_duration_milliseconds',
+        'http_server_request_duration_seconds',
+        'http.server.request.duration',
+        'http.server.duration',
+      ],
       fetch: 'latest',
       agg: 'p95',
       format: fmtMs,
     },
     {
       label: 'gRPC client p95',
-      metric: 'rpc.client.duration',
+      metric: ['rpc_client_duration_milliseconds', 'rpc_client_duration_seconds', 'rpc.client.duration'],
       fetch: 'latest',
       agg: 'p95',
       format: fmtMs,
     },
     {
       label: 'gRPC server p95',
-      metric: 'rpc.server.duration',
+      metric: ['rpc_server_duration_milliseconds', 'rpc_server_duration_seconds', 'rpc.server.duration'],
       fetch: 'latest',
       agg: 'p95',
       format: fmtMs,
     },
     {
       label: 'DB query p95',
-      metric: 'db.client.operation.duration',
+      metric: ['db_client_operation_duration_seconds', 'db.client.operation.duration'],
       fetch: 'latest',
       agg: 'p95',
       format: fmtMs,
     },
     {
       label: 'DB connections',
-      metric: 'db.client.connection.count',
+      metric: ['db_client_connection_count', 'db.client.connection.count'],
       fetch: 'latest',
       agg: 'max',
       format: fmtInt,
@@ -720,28 +730,28 @@ export default function ServiceDetailPage() {
     // JVM
     {
       label: 'JVM memory used',
-      metric: 'jvm.memory.used',
+      metric: ['jvm_memory_used_bytes', 'jvm.memory.used'],
       fetch: 'latest',
       agg: 'max',
       format: fmtBytes,
     },
     {
       label: 'JVM GC duration p95',
-      metric: 'jvm.gc.duration',
+      metric: ['jvm_gc_duration_seconds', 'jvm.gc.duration'],
       fetch: 'latest',
       agg: 'p95',
       format: fmtMs,
     },
     {
       label: 'JVM threads',
-      metric: 'jvm.thread.count',
+      metric: ['jvm_thread_count', 'jvm.thread.count'],
       fetch: 'latest',
       agg: 'max',
       format: fmtInt,
     },
     {
       label: 'JVM CPU',
-      metric: 'jvm.cpu.recent_utilization',
+      metric: ['jvm_cpu_recent_utilization_ratio', 'jvm.cpu.recent_utilization'],
       fetch: 'latest',
       agg: 'max',
       format: fmtPct,
@@ -750,14 +760,17 @@ export default function ServiceDetailPage() {
     // Python cpython runtime
     {
       label: 'Python memory',
-      metric: 'process.runtime.cpython.memory',
+      metric: ['process_runtime_cpython_memory_bytes', 'process.runtime.cpython.memory'],
       fetch: 'latest',
       agg: 'max',
       format: fmtBytes,
     },
     {
       label: 'Python CPU',
-      metric: 'process.runtime.cpython.cpu.utilization',
+      metric: [
+        'process_runtime_cpython_cpu_utilization_ratio',
+        'process.runtime.cpython.cpu.utilization',
+      ],
       fetch: 'latest',
       agg: 'max',
       format: fmtPct,
@@ -765,14 +778,14 @@ export default function ServiceDetailPage() {
     },
     {
       label: 'Python GC cycles',
-      metric: 'process.runtime.cpython.gc_count',
+      metric: ['process_runtime_cpython_gc_count_total', 'process.runtime.cpython.gc_count'],
       fetch: 'delta',
       agg: 'max',
       format: fmtInt,
     },
     {
       label: 'Python threads',
-      metric: 'process.runtime.cpython.thread_count',
+      metric: ['process_runtime_cpython_thread_count', 'process.runtime.cpython.thread_count'],
       fetch: 'latest',
       agg: 'max',
       format: fmtInt,
@@ -780,7 +793,7 @@ export default function ServiceDetailPage() {
     // Generic process (covers Go / Node / anything that sets these)
     {
       label: 'Process CPU',
-      metric: 'process.cpu.utilization',
+      metric: ['process_cpu_utilization_ratio', 'process.cpu.utilization'],
       fetch: 'latest',
       agg: 'max',
       format: fmtPct,
@@ -788,7 +801,7 @@ export default function ServiceDetailPage() {
     },
     {
       label: 'Process memory',
-      metric: 'process.memory.usage',
+      metric: ['process_memory_usage_bytes', 'process.memory.usage'],
       fetch: 'latest',
       agg: 'max',
       format: fmtBytes,
@@ -805,7 +818,7 @@ export default function ServiceDetailPage() {
   const infraRows: MetricsCardRow[] = [
     {
       label: 'Restarts in window',
-      metric: 'k8s.container.restarts',
+      metric: ['k8s_container_restarts', 'k8s.container.restarts'],
       fetch: 'delta',
       agg: 'max',
       format: fmtInt,
@@ -814,7 +827,7 @@ export default function ServiceDetailPage() {
     },
     {
       label: 'Container ready',
-      metric: 'k8s.container.ready',
+      metric: ['k8s_container_ready', 'k8s.container.ready'],
       fetch: 'latest',
       agg: 'avg',
       format: (v) => (v >= 1 ? 'yes' : 'no'),
@@ -823,7 +836,7 @@ export default function ServiceDetailPage() {
     },
     {
       label: 'Pod phase',
-      metric: 'k8s.pod.phase',
+      metric: ['k8s_pod_phase', 'k8s.pod.phase'],
       fetch: 'latest',
       agg: 'max',
       // OTel k8s pod phase values: 1=pending, 2=running, 3=succeeded,
@@ -841,7 +854,7 @@ export default function ServiceDetailPage() {
     },
     {
       label: 'Memory limit',
-      metric: 'k8s.container.memory_limit',
+      metric: ['k8s_container_memory_limit_bytes', 'k8s.container.memory_limit'],
       fetch: 'latest',
       agg: 'max',
       format: fmtBytes,
@@ -849,7 +862,7 @@ export default function ServiceDetailPage() {
     },
     {
       label: 'Memory request',
-      metric: 'k8s.container.memory_request',
+      metric: ['k8s_container_memory_request_bytes', 'k8s.container.memory_request'],
       fetch: 'latest',
       agg: 'max',
       format: fmtBytes,
@@ -857,7 +870,7 @@ export default function ServiceDetailPage() {
     },
     {
       label: 'CPU limit',
-      metric: 'k8s.container.cpu_limit',
+      metric: ['k8s_container_cpu_limit', 'k8s.container.cpu_limit'],
       fetch: 'latest',
       agg: 'max',
       format: (v) => `${v.toFixed(2)} cores`,
