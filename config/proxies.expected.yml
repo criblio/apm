@@ -1,22 +1,27 @@
 # Cribl APM external-domain manifest.
 #
-# The only external dependency is the server-side investigator cell:
+# The only external dependency is the shared GoatTown service:
 # the UI polls it for investigation transcripts (feature-flagged, off
 # by default). The platform proxy rewrites the app's fetch() to this
 # domain into a same-origin call and injects the bearer from encrypted
-# KV (`cellToken` = the cell's UI_BEARER), since the iframe can't set
+# KV (`sharedCellToken` = the installation UI token), since the iframe can't set
 # an Authorization header itself.
 #
-# The domain is the deployed cell's public host (an EIP-derived
-# sslip.io name behind Caddy TLS). It is pinned here and in
+# The stable shared-service domain is pinned here and in
 # config/proxies.expected.yml; the release tooling fails the build if
 # the packaged manifest ever diverges from the pinned one.
-54-71-34-177.sslip.io:
-  timeout: 30000
+goattown-shared.lab.cribl.io:
+  timeout: 60000
   paths:
     allowlist:
       - /investigations
+      - /configurations
       - /config
+      - /admin/claim-sessions
   headers:
     inject:
-      Authorization: "'Bearer ' + kv.cellToken"
+      Authorization: "'Bearer ' + kv.sharedCellToken"
+    allowlist:
+      - accept
+      - content-type
+      - x-goattown-user

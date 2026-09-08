@@ -21,13 +21,18 @@ import { useStreamFilterEnabled } from '../hooks/useStreamFilter';
 import { useLowVolumeMode } from '../hooks/useLowVolumeMode';
 import { useServerInvestigations } from '../hooks/useServerInvestigations';
 import { setServerInvestigations, getServerInvestigations } from '../api/serverInvestigations';
-import { setCellBaseUrl, getCellBaseUrl, pushCellRepos } from '../api/investigationTransport';
+import {
+  getCellBaseUrl,
+  pushCellRepos,
+  SHARED_GOATTOWN_BASE_URL,
+} from '../api/investigationTransport';
 import { kvGet, kvPut } from '../api/kvstore';
 import {
   ensureCellWebhookTarget,
   ensureAlertNotification,
   removeAlertNotification,
 } from '../api/cellProvisioning';
+import { stageApmInvestigatorConfiguration } from '../api/goatTownProvisioning';
 import type { HttpClient } from '../api/provisioner';
 import type { SourceRepo } from '../api/investigationTransport';
 import type { ProvisioningExtraStep } from '@criblio/app-utils/provisioning-panel';
@@ -65,12 +70,12 @@ export default function SettingsPage() {
   const [lowVolumeSaving, setLowVolumeSaving] = useState(false);
   const currentServerInvestigations = useServerInvestigations();
   const [serverInvestigationsSaving, setServerInvestigationsSaving] = useState(false);
-  const [cellUrl, setCellUrl] = useState('');
-  const [cellUrlSaving, setCellUrlSaving] = useState(false);
   const [cellToken, setCellToken] = useState('');
+  const [cellTokenConfigured, setCellTokenConfigured] = useState(false);
   const [cellTokenSaving, setCellTokenSaving] = useState(false);
   const [cellWebhookBearer, setCellWebhookBearer] = useState('');
   const [cellWebhookBearerSaving, setCellWebhookBearerSaving] = useState(false);
+  const [goatTownConfigurationStaging, setGoatTownConfigurationStaging] = useState(false);
   const [sourceRepos, setSourceRepos] = useState<SourceRepo[]>([]);
   const [sourceReposSaving, setSourceReposSaving] = useState(false);
   const [cadenceSaving, setCadenceSaving] = useState(false);
@@ -92,22 +97,18 @@ export default function SettingsPage() {
       if (typeof s?.serverInvestigations === 'boolean') {
         setServerInvestigations(s.serverInvestigations);
       }
-      if (typeof s?.cellUrl === 'string') {
-        setCellUrl(s.cellUrl);
-      }
       if (Array.isArray(s?.sourceRepos)) {
         setSourceRepos(s.sourceRepos as SourceRepo[]);
       }
     }).catch(() => {});
-    // The cell token is a top-level KV key (proxies.yml reads it as
-    // `kv.cellToken`), stored raw so the proxy injects it verbatim.
-    kvGet<string>('cellToken')
-      .then((t) => { if (typeof t === 'string') setCellToken(t); })
+    // Installation tokens are write-only. The sentinel only controls UI state;
+    // proxies.yml reads the secret directly from `kv.sharedCellToken`.
+    kvGet<string>('sharedCellTokenSet')
+      .then((value) => setCellTokenConfigured(value === 'true'))
       .catch(() => {});
-    // The cell's WEBHOOK_BEARER (its /alerts/fire bearer). Stored in KV
-    // so browser provisioning can create the webhook target — the same
-    // secret the CLI reads from CELL_WEBHOOK_BEARER.
-    kvGet<string>('cellWebhookBearer')
+    // The installation webhook token is stored separately from the UI token
+    // so browser provisioning can create the Cribl notification target.
+    kvGet<string>('goatTownWebhookToken')
       .then((t) => { if (typeof t === 'string') setCellWebhookBearer(t); })
       .catch(() => {});
     listTraceOriginators()
@@ -200,7 +201,7 @@ export default function SettingsPage() {
       setFlash(
         next
           ? 'Server-side investigations on. Re-provision below to create the alert trigger.'
-          : 'Server-side investigations off. New investigations stop within ~a minute; re-provision below to remove the alert trigger.',
+          : 'Server-side investigations off. Re-provision below to remove the alert trigger and stop new runs.',
       );
       setTimeout(() => setFlash(null), 6000);
     } catch (err) {
@@ -211,67 +212,21 @@ export default function SettingsPage() {
     }
   }
 
-  async function handleCellUrlSave() {
-    if (cellUrlSaving) return;
-    setCellUrlSaving(true);
-    setError(null);
-    try {
-      const trimmed = cellUrl.trim().replace(/\/$/, '');
-      setCellUrl(trimmed);
-      setCellBaseUrl(trimmed || null);
-      await saveAppSettings({ cellUrl: trimmed });
-      setFlash(
-        trimmed
-          ? `Cell URL saved. Must match the domain in config/proxies.yml, or the platform proxy blocks it.`
-          : 'Cell URL cleared — using the packaged default.',
-      );
-      setTimeout(() => setFlash(null), 6000);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setCellUrlSaving(false);
-    }
-  }
-
-  async function handleGenerateCellToken() {
-    if (cellTokenSaving) return;
-    setCellTokenSaving(true);
-    setError(null);
-    try {
-      // 32 random bytes as hex — same shape as `openssl rand -hex 32`,
-      // which is what the cell deploy expects for UI_BEARER.
-      const bytes = new Uint8Array(32);
-      crypto.getRandomValues(bytes);
-      const token = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
-      // Stored raw (kvPut passes strings through unquoted) so the
-      // proxy's `kv.cellToken` injects exactly this value.
-      await kvPut('cellToken', token);
-      setCellToken(token);
-      setFlash('Cell token generated and saved. Copy it into the cell deploy as UI_BEARER (see below), then restart the cell.');
-      setTimeout(() => setFlash(null), 12000);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setCellTokenSaving(false);
-    }
-  }
-
   async function handleSaveCellToken() {
     if (cellTokenSaving) return;
     const token = cellToken.trim();
-    if (!token) {
-      setError('Enter a token to save, or generate one.');
+    if (!token.startsWith('gt_i1_')) {
+      setError('Enter the installation UI token issued by shared GoatTown.');
       return;
     }
     setCellTokenSaving(true);
     setError(null);
     try {
-      // Stored raw so the proxy's `kv.cellToken` injects it verbatim.
-      // Manual entry lets you paste a token already set on the cell as
-      // UI_BEARER (e.g. `openssl rand -hex 32`) instead of generating.
-      await kvPut('cellToken', token);
-      setCellToken(token);
-      setFlash('Cell token saved. It must match the cell’s UI_BEARER exactly.');
+      await kvPut('sharedCellToken', token);
+      await kvPut('sharedCellTokenSet', 'true');
+      setCellToken('');
+      setCellTokenConfigured(true);
+      setFlash('Shared GoatTown installation token saved.');
       setTimeout(() => setFlash(null), 8000);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -283,18 +238,16 @@ export default function SettingsPage() {
   async function handleSaveCellWebhookBearer() {
     if (cellWebhookBearerSaving) return;
     const token = cellWebhookBearer.trim();
-    if (!token) {
-      setError('Enter the cell’s webhook bearer to save.');
+    if (!token.startsWith('gt_w1_')) {
+      setError('Enter the installation webhook token issued by shared GoatTown.');
       return;
     }
     setCellWebhookBearerSaving(true);
     setError(null);
     try {
-      // Must match the cell's WEBHOOK_BEARER (its /alerts/fire bearer).
-      // Used by "Provision" below to create the webhook notification target.
-      await kvPut('cellWebhookBearer', token);
+      await kvPut('goatTownWebhookToken', token);
       setCellWebhookBearer(token);
-      setFlash('Cell webhook bearer saved. Re-run Provision to (re)create the webhook target.');
+      setFlash('Shared GoatTown webhook token saved. Re-run Provision to update the alert target.');
       setTimeout(() => setFlash(null), 8000);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -352,10 +305,10 @@ export default function SettingsPage() {
   }
 
   // Runs on the shared ProvisioningPanel's "Apply", after the search
-  // reconcile — the SAME cell-trigger wiring scripts/provision.ts does,
+  // reconcile — the SAME GoatTown trigger wiring scripts/provision.ts does,
   // so UI and CLI provisioning are identical. When server investigations
   // is off it tears the notification down; when on it ensures the webhook
-  // target (needs the Cell URL + webhook bearer above) and binds the
+  // target (needs the installation webhook token above) and binds the
   // alert-notify notification.
   async function handleProvisionCellTrigger(
     http: HttpClient,
@@ -368,6 +321,25 @@ export default function SettingsPage() {
     }
     const url = getCellBaseUrl();
     const bearer = cellWebhookBearer.trim();
+    try {
+      const registration = await stageApmInvestigatorConfiguration(url, currentDataset);
+      steps.push({
+        label: `APM configuration revision staged (${registration.skills} skills)`,
+        ok: !registration.hasConflicts,
+        detail:
+          `Revision ${registration.revisionId}; ${registration.changes} proposed change(s). ` +
+          (registration.hasConflicts
+            ? 'Resolve conflicts, review, and activate it in GoatTown.'
+            : 'Review and activate it in GoatTown.'),
+      });
+    } catch (err) {
+      steps.push({
+        label: 'APM configuration staging: failed',
+        ok: false,
+        detail: err instanceof Error ? err.message : String(err),
+      });
+      return steps;
+    }
     if (url && bearer) {
       const t = await ensureCellWebhookTarget(http, { cellUrl: url, bearer });
       steps.push({ label: `Webhook target: ${t} (${url})`, ok: true });
@@ -375,7 +347,7 @@ export default function SettingsPage() {
       steps.push({
         label: 'Webhook target: skipped',
         ok: false,
-        detail: 'Set the Cell URL and Cell webhook bearer above — the alert trigger cannot fire without it.',
+        detail: 'Set the shared GoatTown webhook token above; the alert trigger cannot fire without it.',
       });
     }
     const n = await ensureAlertNotification(http);
@@ -393,6 +365,25 @@ export default function SettingsPage() {
       });
     }
     return steps;
+  }
+
+  async function handleStageGoatTownConfiguration() {
+    if (goatTownConfigurationStaging) return;
+    setGoatTownConfigurationStaging(true);
+    setError(null);
+    try {
+      const result = await stageApmInvestigatorConfiguration(getCellBaseUrl(), currentDataset);
+      setFlash(
+        `GoatTown revision ${result.revisionId} staged with ${result.changes} proposed change(s). ` +
+        `In GoatTown, open Configurations, load producer cribl-apm, review the diff, and activate it.` +
+        (result.hasConflicts ? ' Resolve the reported conflicts before activation.' : ''),
+      );
+      setTimeout(() => setFlash(null), 15_000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setGoatTownConfigurationStaging(false);
+    }
   }
 
   async function handleStreamFilterToggle(next: boolean) {
@@ -690,12 +681,10 @@ export default function SettingsPage() {
         <h2 className={s.sectionTitle}>Server-side investigations</h2>
         <p className={s.sectionHelp}>
           When enabled, firing alerts trigger an autonomous Investigator
-          run on the server-side investigator cell — no browser needed.
+          run in GoatTown — no browser needed.
           The Alerts page then shows investigation badges and lets you
-          drill into the finished transcript. Requires a deployed
-          investigator cell (see
-          docs/research/server-investigations/design.md); without one,
-          leave this off.
+          drill into the finished transcript. Stage the configuration below,
+          then approve it in GoatTown before enabling the alert trigger.
         </p>
 
         <label className={s.toggleRow}>
@@ -717,62 +706,54 @@ export default function SettingsPage() {
         </label>
 
         <div className={s.field} style={{ marginTop: 16 }}>
-          <label className={s.label} htmlFor="cell-url-input">
-            Cell URL
-          </label>
-          <input
-            id="cell-url-input"
-            className={s.input}
-            type="text"
-            value={cellUrl}
-            onChange={(e) => setCellUrl(e.target.value)}
-            placeholder="https://54-71-34-177.sslip.io"
-            spellCheck={false}
-            autoCapitalize="none"
-            autoComplete="off"
-          />
+          <div className={s.label}>GoatTown agent configuration</div>
           <div className={s.fieldHelp}>
-            Base URL of the deployed investigator cell. Leave blank to use
-            the packaged default. Must match the domain declared in
-            config/proxies.yml — the platform proxy only forwards fetches
-            to declared domains.
+            Validate and stage this app&apos;s <code>goattown.config.yaml</code> as
+            an immutable revision. This does not activate the agent. In GoatTown,
+            open <strong>Configurations</strong>, load producer <code>cribl-apm</code>,
+            review the diff, and activate it explicitly.
           </div>
           <div className={s.actions} style={{ marginTop: 8 }}>
             <button
               type="button"
               className={s.primaryBtn}
-              onClick={() => void handleCellUrlSave()}
-              disabled={cellUrlSaving}
+              onClick={() => void handleStageGoatTownConfiguration()}
+              disabled={goatTownConfigurationStaging || !cellTokenConfigured}
             >
-              {cellUrlSaving ? 'Saving…' : 'Save cell URL'}
+              {goatTownConfigurationStaging ? 'Staging…' : 'Stage GoatTown revision'}
             </button>
+            {flash && <span className={s.successFlash}>{flash}</span>}
+          </div>
+        </div>
+
+        <div className={s.field} style={{ marginTop: 16 }}>
+          <div className={s.label}>Shared GoatTown service</div>
+          <div className={s.fieldHelp}>
+            <code>{SHARED_GOATTOWN_BASE_URL}</code>. Enrollment and tokens are
+            installation-scoped; sessions and configuration are isolated from
+            other Workspaces by the shared service.
           </div>
         </div>
 
         <div className={s.field} style={{ marginTop: 16 }}>
           <label className={s.label} htmlFor="cell-token-input">
-            Cell token (shared bearer)
+            Shared GoatTown installation token
           </label>
           <input
             id="cell-token-input"
             className={s.input}
-            type="text"
+            type="password"
             value={cellToken}
             onChange={(e) => setCellToken(e.target.value)}
-            placeholder="Paste a token or generate one"
+            placeholder={cellTokenConfigured ? 'Configured - paste a new token to replace it' : 'Paste the gt_i1_ installation token'}
             spellCheck={false}
             autoComplete="off"
             autoCapitalize="none"
           />
           <div className={s.fieldHelp}>
-            The shared secret the platform proxy injects as the cell's
-            <code> Authorization</code> bearer, stored raw in the app KV store
-            (read by proxies.yml as <code>kv.cellToken</code>). Either{' '}
-            <strong>paste</strong> a token already set on the cell as its{' '}
-            <code>UI_BEARER</code> and click Save, or <strong>Generate</strong>{' '}
-            a random one and set that same value on the cell. The two must
-            match <em>exactly</em>, or the cell rejects every request as
-            unauthorized.
+            Paste the one-time UI token issued during shared GoatTown enrollment.
+            It is stored write-only for the platform proxy as{' '}
+            <code>kv.sharedCellToken</code> and is never read back into the app.
           </div>
           <div className={s.actions} style={{ marginTop: 8 }}>
             <button
@@ -781,40 +762,31 @@ export default function SettingsPage() {
               onClick={() => void handleSaveCellToken()}
               disabled={cellTokenSaving || !cellToken.trim()}
             >
-              {cellTokenSaving ? 'Saving…' : 'Save token'}
-            </button>
-            <button
-              type="button"
-              className={s.secondaryBtn}
-              onClick={() => void handleGenerateCellToken()}
-              disabled={cellTokenSaving}
-            >
-              {cellToken ? 'Generate new' : 'Generate'}
+              {cellTokenSaving ? 'Saving…' : cellTokenConfigured ? 'Replace token' : 'Save token'}
             </button>
           </div>
         </div>
 
         <div className={s.field} style={{ marginTop: 16 }}>
           <label className={s.label} htmlFor="cell-webhook-bearer-input">
-            Cell webhook bearer (alert trigger)
+            Shared GoatTown webhook token (alert trigger)
           </label>
           <input
             id="cell-webhook-bearer-input"
             className={s.input}
-            type="text"
+            type="password"
             value={cellWebhookBearer}
             onChange={(e) => setCellWebhookBearer(e.target.value)}
-            placeholder="Paste the cell’s WEBHOOK_BEARER"
+            placeholder="Paste the gt_w1_ webhook token"
             spellCheck={false}
             autoComplete="off"
             autoCapitalize="none"
           />
           <div className={s.fieldHelp}>
-            The cell’s <code>WEBHOOK_BEARER</code> (its <code>/alerts/fire</code>{' '}
-            bearer — distinct from the UI token above). Stored in the app KV
+            The installation-scoped webhook token for <code>/alerts/fire</code>,
+            distinct from the UI token above. Stored in the app KV
             store so <strong>Provision</strong> below can create the webhook
-            notification target that fires the cell when alerts fire. Must
-            match the cell exactly, or the trigger is rejected as unauthorized.
+            notification target that starts an investigation when alerts fire.
           </div>
           <div className={s.actions} style={{ marginTop: 8 }}>
             <button

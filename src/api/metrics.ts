@@ -13,6 +13,19 @@
  * pulls the provisioner → `node:fs` and breaks in browser code. The
  * framework subpath `@criblio/app-utils/metrics` is browser-safe.
  *
+ * This module used to carry its own NDJSON parser and its own browser
+ * metrics catalog, because app-utils ≤0.8.2 rejected the framing recent
+ * Cribl builds emit (inline samples under an `isFinished:false` /
+ * `status:"running"` header) and only used the engine catalog API when a
+ * caller wired one explicitly. app-utils 0.8.3 fixed both upstream — and
+ * more thoroughly than the local copies did: the parser now also detects a
+ * body truncated between complete JSON lines (`totalEventCount` vs rows
+ * received) and reports outcomes as a typed `MetricsQueryError`
+ * (`query-failed` / `invalid-response` / `incomplete-response` /
+ * `cancelled`) instead of a bare `Error`. Callers that only ever
+ * `catch`-and-degrade are unaffected; anything that wants to tell a failed
+ * query from a broken response can now switch on `err.code`.
+ *
  * NOTE: read-time aggregations verified live (2026-07-23): `rate`,
  * `sum by`, `topk`, `histogram_quantile`, scalar math. `label_replace`
  * and vector `or` are NOT supported (core PromQL only). The write path
@@ -22,17 +35,18 @@
  */
 export {
   METRICS_DATASET,
-  runMetricsQuery,
-  queryRange,
-  queryInstant,
-  listMetricMetadata,
+  MetricsQueryError,
   listLabels,
-  listSeries,
+  listMetricMetadata,
   listSearchDatasets,
-  type MetricsQueryOptions,
+  listSeries,
+  queryInstant,
+  queryRange,
+  runMetricsQuery,
+  type MetricMetadata,
   type MetricSample,
   type MetricSeries,
-  type MetricMetadata,
+  type MetricsQueryOptions,
   type SearchDatasetInfo,
 } from '@criblio/app-utils/metrics';
 
@@ -41,6 +55,8 @@ export {
  * points across a relative lookback like `-15m` / `-24h` / `-7d`, so
  * metric line charts get useful resolution without over-fetching.
  * Falls back to 60s when the range can't be parsed.
+ *
+ * Stays local: the framework has no opinion on chart resolution.
  */
 export function stepForRange(range: string, targetBuckets = 60): number {
   const m = /^-(\d+)([smhd])$/.exec(range.trim());

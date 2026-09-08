@@ -23,3 +23,14 @@ test('APM app shell renders on Cribl Cloud', async ({ page }) => {
   await expect(apm.getByText('Services', { exact: true }).first()).toBeVisible();
   await expect(apm.getByText('Investigate', { exact: true }).first()).toBeVisible();
 });
+
+test('APM settings exposes GoatTown configuration staging', async ({ page }) => {
+  await gotoApm(page, '/configuration');
+  const apm = apmFrame(page);
+
+  await expect(apm.getByRole('heading', { name: 'Server-side investigations' })).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(apm.getByRole('button', { name: 'Stage GoatTown revision' })).toBeVisible();
+  await expect(apm.getByText('producer', { exact: false }).filter({ hasText: 'cribl-apm' })).toBeVisible();
+});

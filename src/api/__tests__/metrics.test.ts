@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { stepForRange } from '../metrics';
+import { MetricsQueryError, runMetricsQuery, stepForRange } from '../metrics';
 
 describe('stepForRange', () => {
   it('targets ~60 buckets across a relative range', () => {
@@ -21,5 +21,42 @@ describe('stepForRange', () => {
     expect(stepForRange('now')).toBe(60);
     expect(stepForRange('-1w')).toBe(60);
     expect(stepForRange('')).toBe(60);
+  });
+});
+
+/**
+ * The NDJSON framing contract moved into @criblio/app-utils 0.8.3, which
+ * unit-tests it directly (`metrics-response.test.ts`). These stay as
+ * consumer-side guards on the two behaviours APM actually depends on, so a
+ * framework regression fails here rather than silently emptying a chart.
+ */
+describe('metrics NDJSON compatibility', () => {
+  const sample = '{"_kind":"sample","svc":"checkout","_time":123,"_value":7}';
+
+  it('accepts responses with inline rows while the header still says running', async () => {
+    const body = `{"isFinished":false,"totalEventCount":1,"job":{"id":"mq-1","status":"running"}}\n${sample}\n`;
+    await expect(runMetricsQuery('up', { transport: async () => body })).resolves.toEqual([{
+      _time: 123,
+      _value: 7,
+      labels: { svc: 'checkout' },
+    }]);
+  });
+
+  it('keeps accepting completed responses and bare sample streams', async () => {
+    for (const body of [`{"isFinished":true,"totalEventCount":1,"job":{"status":"completed"}}\n${sample}`, sample]) {
+      await expect(runMetricsQuery('up', { transport: async () => body })).resolves.toHaveLength(1);
+    }
+  });
+
+  it('rejects explicit terminal failure states', async () => {
+    await expect(runMetricsQuery('up', {
+      transport: async () => '{"isFinished":false,"job":{"id":"mq-2","status":"failed"}}',
+    })).rejects.toMatchObject({ code: 'query-failed' });
+  });
+
+  it('reports a truncated body instead of silently returning short data', async () => {
+    await expect(runMetricsQuery('up', {
+      transport: async () => `{"isFinished":false,"totalEventCount":2,"job":{"status":"running"}}\n${sample}`,
+    })).rejects.toBeInstanceOf(MetricsQueryError);
   });
 });

@@ -23,7 +23,8 @@ silent because the metric layer hides what the UI shows).
 Concretely: every default filter rule in
 `src/api/errorFilter.ts` should have a corresponding `where` /
 `countif` clause in the metric queries that drive alerts —
-`Q.serviceSummary()` and `Q.prevWindowSummary()`. The
+`Q.serviceSummary()`, `Q.prevWindowSummary()`, and the current-window
+branch of `Q.alertEvaluator()`. The
 classifier inputs (`trace_origin`, `has_error_child`,
 semconv status codes) need to be available on the metric
 side, which means projecting them in the same way the live

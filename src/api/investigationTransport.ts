@@ -14,8 +14,8 @@
  * `applyLoopEvent` reducer the client Investigator uses — so a
  * replayed transcript renders identically to a live one.
  *
- * The cell base URL is resolved from `getCellBaseUrl()`; the
- * matching `config/proxies.yml` domain + `kv.cellToken` header
+ * The GoatTown base URL is resolved from `getCellBaseUrl()`; the
+ * matching `config/proxies.yml` domain + `kv.sharedCellToken` header
  * injection land with the UI wiring PR once the cell host is known.
  */
 import type { LoopEvent } from '@criblio/app-utils/agent-loop';
@@ -30,6 +30,7 @@ import type {
   SourceRepo,
   WireLoopEvent,
 } from '@criblio/agent-protocol';
+import { APM_INVESTIGATOR_AGENT } from './goatTownProvisioning';
 
 // The wire shapes now come from @criblio/agent-protocol — the same
 // module the cell imports, so the two sides can no longer drift (this
@@ -60,7 +61,15 @@ export function wireEventToLoopEvent(ev: WireLoopEvent): LoopEvent | null {
       return {
         kind: 'toolCall',
         turnId: ev.turnId,
-        call: { id: ev.call.id, function: ev.call.function },
+        call: {
+          id: ev.call.id,
+          function: {
+            ...ev.call.function,
+            name: ev.call.function.name === 'report_findings'
+              ? 'present_investigation_summary'
+              : ev.call.function.name,
+          },
+        },
         needsApproval: ev.needsApproval,
       };
     case 'toolResult':
@@ -68,6 +77,13 @@ export function wireEventToLoopEvent(ev: WireLoopEvent): LoopEvent | null {
       // through); the framework LoopEvent types it as ToolResultUi.
       // The cell produced it from the real executors, so the shape is
       // already correct — narrow it here.
+      //
+      // This used to also rewrite GoatTown's `kind: 'report'` into the
+      // summary shape, because the framework transcript had no report
+      // card and fell back to JSON.stringify. app-utils 0.8.6 renders
+      // `report` natively (through the same `reportToSummary` mapping
+      // that was lifted from this module), so the wire kind now reaches
+      // the transcript unchanged and renders identically.
       return {
         kind: 'toolResult',
         turnId: ev.turnId,
@@ -88,26 +104,23 @@ export function wireEventToLoopEvent(ev: WireLoopEvent): LoopEvent | null {
 }
 
 /**
- * The cell's public host. MUST match the domain declared in
+ * Shared GoatTown's public host. MUST match the domain declared in
  * `config/proxies.yml` — the platform proxy only forwards fetches to
- * declared domains, and injects the `cellToken` bearer there. If the
- * cell is redeployed under a new host, update this default (or the
- * `cellUrl` app setting) and proxies.yml together.
+ * declared domains and injects the installation token there.
  */
-const DEFAULT_CELL_BASE_URL = 'https://54-71-34-177.sslip.io';
+export const SHARED_GOATTOWN_BASE_URL = 'https://goattown-shared.lab.cribl.io';
+export const GOATTOWN_OWNER = 'cribl-apm';
 
 let cellBaseUrlOverride: string | null = null;
 
-/** Set the cell base URL from the `cellUrl` app setting (hydrated at
- *  boot). Null/empty clears the override, restoring the default. */
+/** Test/development override. Production uses the package-pinned shared host. */
 export function setCellBaseUrl(url: string | null | undefined): void {
   cellBaseUrlOverride = url && url.trim() ? url.trim().replace(/\/$/, '') : null;
 }
 
 /**
- * Resolve the investigator cell's base URL: the `cellUrl` app setting
- * if set, else a host global / build env, else the pinned default
- * that matches proxies.yml.
+ * Resolve GoatTown's base URL: an explicit test/development override, then a
+ * host global/build env, then the package-pinned shared service.
  */
 export function getCellBaseUrl(): string {
   if (cellBaseUrlOverride) return cellBaseUrlOverride;
@@ -115,8 +128,16 @@ export function getCellBaseUrl(): string {
   return (
     w.CRIBL_APM_CELL_URL ??
     (import.meta.env?.VITE_APM_CELL_URL as string | undefined) ??
-    DEFAULT_CELL_BASE_URL
+    SHARED_GOATTOWN_BASE_URL
   ).replace(/\/$/, '');
+}
+
+function goatTownHeaders(init?: HeadersInit): Headers {
+  const headers = new Headers(init);
+  // Shared GoatTown requires an owner claim on UI routes. APM intentionally
+  // uses one installation-wide owner so responders share incident sessions.
+  headers.set('x-goattown-user', GOATTOWN_OWNER);
+  return headers;
 }
 
 async function getJson<T>(url: string, signal?: AbortSignal): Promise<T> {
@@ -124,7 +145,10 @@ async function getJson<T>(url: string, signal?: AbortSignal): Promise<T> {
   // fetch proxy injects the cell bearer via proxies.yml
   // `headers.inject`. Setting it here would be stripped anyway (the
   // proxy always strips `authorization` from the original request).
-  const resp = await fetch(url, { signal, headers: { accept: 'application/json' } });
+  const resp = await fetch(url, {
+    signal,
+    headers: goatTownHeaders({ accept: 'application/json' }),
+  });
   if (!resp.ok) {
     throw new Error(`investigator cell ${resp.status}: ${await resp.text()}`);
   }
@@ -136,10 +160,38 @@ export async function fetchInvestigationStatus(
   signal?: AbortSignal,
 ): Promise<InvestigationStatusResponse> {
   const base = getCellBaseUrl();
+  await claimUnownedInvestigations(base, signal);
   return getJson<InvestigationStatusResponse>(
     `${base}/investigations/${encodeURIComponent(id)}/status`,
     signal,
   );
+}
+
+/** Read the latest report_findings headline from a persisted transcript.
+ * Interactive GoatTown sessions remain idle and intentionally keep the status
+ * response's conclusion null, so incident summaries must read the report card. */
+export async function fetchInvestigationReportHeadline(
+  id: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  const base = getCellBaseUrl();
+  await claimUnownedInvestigations(base, signal);
+  const data = await getJson<EventsResponse>(
+    `${base}/investigations/${encodeURIComponent(id)}/events?since=0`,
+    signal,
+  );
+  for (let i = data.frames.length - 1; i >= 0; i -= 1) {
+    const ev = data.frames[i].ev;
+    if (ev.kind !== 'toolResult' || !ev.result.ui || typeof ev.result.ui !== 'object') continue;
+    const ui = ev.result.ui as { kind?: unknown; headline?: unknown; conclusion?: unknown };
+    if (ui.kind === 'report' && typeof ui.headline === 'string') return ui.headline;
+    if (ui.kind === 'summary' && typeof ui.conclusion === 'string') return ui.conclusion;
+  }
+  return '';
+}
+
+async function claimUnownedInvestigations(base: string, signal?: AbortSignal): Promise<void> {
+  await postJson<{ ok: boolean }>(`${base}/admin/claim-sessions`, {}, signal);
 }
 
 export interface SubscribeOptions {
@@ -231,7 +283,7 @@ async function postJson<T>(url: string, body: unknown, signal?: AbortSignal): Pr
   const resp = await fetch(url, {
     method: 'POST',
     signal,
-    headers: { accept: 'application/json', 'content-type': 'application/json' },
+    headers: goatTownHeaders({ accept: 'application/json', 'content-type': 'application/json' }),
     body: JSON.stringify(body ?? {}),
   });
   if (!resp.ok) {
@@ -259,9 +311,14 @@ export async function createInvestigation(
   signal?: AbortSignal,
 ): Promise<{ id: string; title?: string }> {
   const base = getCellBaseUrl();
+  const title = `APM: ${(input.title ?? input.prompt).replace(/\s+/g, ' ').trim()}`.slice(0, 80);
   return postJson<{ id: string; title?: string }>(
     `${base}/investigations`,
-    input,
+    {
+      ...input,
+      title,
+      agent: APM_INVESTIGATOR_AGENT,
+    },
     signal,
   );
 }
@@ -336,14 +393,56 @@ export async function listInvestigations(
   signal?: AbortSignal,
 ): Promise<InvestigationSummary[]> {
   const base = getCellBaseUrl();
-  const params = new URLSearchParams();
-  if (query.q) params.set('q', query.q);
-  if (query.limit != null) params.set('limit', String(query.limit));
-  if (query.before != null) params.set('before', String(query.before));
-  const qs = params.toString();
-  const data = await getJson<{ investigations: InvestigationSummary[] }>(
-    `${base}/investigations${qs ? `?${qs}` : ''}`,
-    signal,
-  );
-  return data.investigations ?? [];
+  // Alert-triggered sessions have no browser owner. Adopt them into APM's
+  // installation-wide owner before listing so every responder can see them.
+  await claimUnownedInvestigations(base, signal);
+  const wanted = Math.max(1, Math.min(100, query.limit ?? 30));
+  const matches: InvestigationSummary[] = [];
+  let before = query.before;
+  let scanned = 0;
+  while (matches.length < wanted && scanned < 500) {
+    const params = new URLSearchParams({
+      limit: '100',
+      agent: APM_INVESTIGATOR_AGENT,
+    });
+    if (query.q) params.set('q', query.q);
+    if (before != null) params.set('before', String(before));
+    const data = await getJson<{ investigations: InvestigationSummary[] }>(
+      `${base}/investigations?${params.toString()}`,
+      signal,
+    );
+    const page = data.investigations ?? [];
+    scanned += page.length;
+    matches.push(...page.filter((row) =>
+      row.title.startsWith('APM: ') || row.incidentKey.startsWith('apm:'),
+    ));
+    if (page.length < 100) break;
+    const next = page.at(-1)?.createdAt;
+    if (next == null || next === before) break;
+    before = next;
+  }
+  return matches.slice(0, wanted);
+}
+
+/** Read several index pages for alert/incident correlation. The server caps
+ * each request at 100 rows; callers that need a time window must not silently
+ * treat the first global page as complete. */
+export async function listRecentInvestigations(
+  maxRows = 500,
+  signal?: AbortSignal,
+): Promise<InvestigationSummary[]> {
+  const rows: InvestigationSummary[] = [];
+  let before: number | undefined;
+  while (rows.length < maxRows) {
+    const page = await listInvestigations({
+      limit: Math.min(100, maxRows - rows.length),
+      before,
+    }, signal);
+    rows.push(...page);
+    if (page.length < 100) break;
+    const next = page.at(-1)?.createdAt;
+    if (next == null || next === before) break;
+    before = next;
+  }
+  return rows;
 }
