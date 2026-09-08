@@ -143,12 +143,23 @@ async function wireCellTrigger(
       `(${registration.changes} change(s), ${registration.skills} skills` +
       `${registration.hasConflicts ? ', conflicts require review' : ''}) — activate in GoatTown`,
     );
-  } else {
+  } else if (flagExplicit) {
+    // Same rule as the webhook target below: an explicit enable without the
+    // token is a real misconfiguration, so fail loudly. An inferred-on run is
+    // routine — the configuration was staged by the prior explicit enable, and
+    // hard-exiting there breaks every deploy that legitimately has no
+    // installation token, CI's shared validation workspace included.
     console.error(
       '✗ serverInvestigations is on but GOATTOWN_UI_TOKEN is not set — ' +
         'the shared installation UI token is required to stage the APM investigator.',
     );
     process.exit(1);
+  } else {
+    console.warn(
+      '▶ APM configuration: GOATTOWN_UI_TOKEN not set — leaving the staged ' +
+        'investigator configuration untouched. Set it to re-stage after changing ' +
+        'the preamble, tools, or skills.',
+    );
   }
   if (cellUrl && bearer) {
     const t = await ensureCellWebhookTarget(http, { cellUrl, bearer });
