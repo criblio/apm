@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createInvestigation,
   fetchInvestigationReportHeadline,
+  fetchInvestigationStatus,
   GOATTOWN_OWNER,
   SHARED_GOATTOWN_BASE_URL,
   listInvestigations,
@@ -169,7 +170,6 @@ describe('GoatTown compatibility', () => {
   it('reads an interactive report headline from persisted transcript events', async () => {
     setCellBaseUrl('https://goattown.example');
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true, claimed: 0 })))
       .mockResolvedValueOnce(new Response(JSON.stringify({
         protocolVersion: 1,
         status: 'idle',
@@ -192,7 +192,18 @@ describe('GoatTown compatibility', () => {
 
     await expect(fetchInvestigationReportHeadline('inv-1'))
       .resolves.toBe('Checkout retries caused the spike');
-    expect(String(fetchMock.mock.calls[1][0])).toContain('/investigations/inv-1/events?since=0');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/investigations/inv-1/events?since=0');
+  });
+
+  it('reads status directly without a session-claim mutation', async () => {
+    setCellBaseUrl('https://goattown.example');
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: 'inv-1', status: 'idle' })));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(fetchInvestigationStatus('inv-1')).resolves.toMatchObject({ status: 'idle' });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0][0])).toBe('https://goattown.example/investigations/inv-1/status');
+    expect(fetchMock.mock.calls[0][1].method).toBeUndefined();
   });
 
   it('filters shared GoatTown sessions and scans past a full unrelated page', async () => {
@@ -220,15 +231,14 @@ describe('GoatTown compatibility', () => {
       concludedAt: null,
     };
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true, claimed: 1 })))
       .mockResolvedValueOnce(new Response(JSON.stringify({ investigations: unrelated })))
       .mockResolvedValueOnce(new Response(JSON.stringify({ investigations: [apm] })));
     vi.stubGlobal('fetch', fetchMock);
 
     await expect(listInvestigations({ limit: 30 })).resolves.toEqual([apm]);
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-    expect(String(fetchMock.mock.calls[0][0])).toContain('/admin/claim-sessions');
-    expect(String(fetchMock.mock.calls[1][0])).toContain('agent=apm-investigator');
-    expect(String(fetchMock.mock.calls[2][0])).toContain('before=901');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[0][0])).toContain('agent=apm-investigator');
+    expect(String(fetchMock.mock.calls[1][0])).toContain('before=901');
+    expect(fetchMock.mock.calls.every(([, init]) => !init?.method || init.method === 'GET')).toBe(true);
   });
 });

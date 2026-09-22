@@ -160,7 +160,6 @@ export async function fetchInvestigationStatus(
   signal?: AbortSignal,
 ): Promise<InvestigationStatusResponse> {
   const base = getCellBaseUrl();
-  await claimUnownedInvestigations(base, signal);
   return getJson<InvestigationStatusResponse>(
     `${base}/investigations/${encodeURIComponent(id)}/status`,
     signal,
@@ -175,7 +174,6 @@ export async function fetchInvestigationReportHeadline(
   signal?: AbortSignal,
 ): Promise<string> {
   const base = getCellBaseUrl();
-  await claimUnownedInvestigations(base, signal);
   const data = await getJson<EventsResponse>(
     `${base}/investigations/${encodeURIComponent(id)}/events?since=0`,
     signal,
@@ -188,10 +186,6 @@ export async function fetchInvestigationReportHeadline(
     if (ui.kind === 'summary' && typeof ui.conclusion === 'string') return ui.conclusion;
   }
   return '';
-}
-
-async function claimUnownedInvestigations(base: string, signal?: AbortSignal): Promise<void> {
-  await postJson<{ ok: boolean }>(`${base}/admin/claim-sessions`, {}, signal);
 }
 
 export interface SubscribeOptions {
@@ -393,9 +387,8 @@ export async function listInvestigations(
   signal?: AbortSignal,
 ): Promise<InvestigationSummary[]> {
   const base = getCellBaseUrl();
-  // Alert-triggered sessions have no browser owner. Adopt them into APM's
-  // installation-wide owner before listing so every responder can see them.
-  await claimUnownedInvestigations(base, signal);
+  // The connected-app credential scopes history; reading must not claim
+  // or administer sessions before listing them.
   const wanted = Math.max(1, Math.min(100, query.limit ?? 30));
   const matches: InvestigationSummary[] = [];
   let before = query.before;
