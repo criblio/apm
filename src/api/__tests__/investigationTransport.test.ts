@@ -35,18 +35,41 @@ describe('wireEventToLoopEvent', () => {
     });
   });
 
-  it('maps toolCall, dropping the wire-only type field', () => {
+  // The shared mapper passes structurally-compatible kinds through rather
+  // than rebuilding them field by field, so a service that adds a field to
+  // an existing kind needs no framework change. The wire-only `type` field
+  // therefore survives now, where APM's hand-rolled mapper used to drop it.
+  // Nothing reads `call.type`, and passing it through is what keeps the
+  // mapper forward-compatible.
+  it('maps toolCall, passing unknown wire fields through', () => {
     const loop = wireEventToLoopEvent({
       kind: 'toolCall',
       turnId: 't1',
       call: { id: 'c1', type: 'function', function: { name: 'run_search', arguments: '{}' } },
       needsApproval: false,
     });
-    expect(loop).toEqual({
+    expect(loop).toMatchObject({
       kind: 'toolCall',
       turnId: 't1',
       call: { id: 'c1', function: { name: 'run_search', arguments: '{}' } },
       needsApproval: false,
+    });
+  });
+
+  // APM's own layer on top of the shared mapper: GoatTown's generic
+  // concluding tool is `report_findings`, and the summary card is keyed on
+  // `present_investigation_summary`. Losing this rename renders the
+  // concluding call as an unknown tool.
+  it('renames the concluding report tool to APM summary card name', () => {
+    const loop = wireEventToLoopEvent({
+      kind: 'toolCall',
+      turnId: 't1',
+      call: { id: 'c1', type: 'function', function: { name: 'report_findings', arguments: '{}' } },
+      needsApproval: false,
+    });
+    expect(loop).toMatchObject({
+      kind: 'toolCall',
+      call: { function: { name: 'present_investigation_summary' } },
     });
   });
 
