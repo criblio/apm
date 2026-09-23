@@ -36,6 +36,10 @@ test('APM settings exposes GoatTown connected-app setup', async ({ page }) => {
   await expect(apm.getByText('goattownEmbedToken', { exact: true })).toBeVisible();
 
   await apm.getByLabel('GoatTown connected-app token').fill('gt_i1_legacy-installation-token');
-  await apm.getByRole('button', { name: /save token/i }).click();
+  // One button, two labels: "Save token" before a token is stored and
+  // "Replace token" once one is. The shared validation workspace is normally
+  // already connected, so matching only the first label passed against a
+  // fresh tenant and failed in CI every time.
+  await apm.getByRole('button', { name: /(save|replace) token/i }).click();
   await expect(apm.getByText(/connected-app token in the form gt_a1_/i)).toBeVisible();
 });
