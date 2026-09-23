@@ -15,7 +15,7 @@
  * replayed transcript renders identically to a live one.
  *
  * The GoatTown base URL is resolved from `getCellBaseUrl()`; the
- * matching `config/proxies.yml` domain + `kv.sharedCellToken` header
+ * matching `config/proxies.yml` domain + `kv.goattownEmbedToken` header
  * injection land with the UI wiring PR once the cell host is known.
  */
 import type { LoopEvent } from '@criblio/app-utils/agent-loop';
@@ -106,10 +106,9 @@ export function wireEventToLoopEvent(ev: WireLoopEvent): LoopEvent | null {
 /**
  * Shared GoatTown's public host. MUST match the domain declared in
  * `config/proxies.yml` — the platform proxy only forwards fetches to
- * declared domains and injects the installation token there.
+ * declared domains and injects APM's connected-app token there.
  */
 export const SHARED_GOATTOWN_BASE_URL = 'https://goattown-shared.lab.cribl.io';
-export const GOATTOWN_OWNER = 'cribl-apm';
 
 let cellBaseUrlOverride: string | null = null;
 
@@ -132,11 +131,20 @@ export function getCellBaseUrl(): string {
   ).replace(/\/$/, '');
 }
 
-function goatTownHeaders(init?: HeadersInit): Headers {
+async function currentUserId(): Promise<string> {
+  try {
+    const getCriblUser = (window as unknown as {
+      getCriblUser?: () => Promise<{ id?: unknown }>;
+    }).getCriblUser;
+    const user = typeof getCriblUser === 'function' ? await getCriblUser() : null;
+    if (typeof user?.id === 'string' && user.id) return user.id;
+  } catch { /* surface the actionable error below */ }
+  throw new Error('GoatTown requires a signed-in Cribl user, but getCriblUser() returned no id.');
+}
+
+async function goatTownHeaders(init?: HeadersInit): Promise<Headers> {
   const headers = new Headers(init);
-  // Shared GoatTown requires an owner claim on UI routes. APM intentionally
-  // uses one installation-wide owner so responders share incident sessions.
-  headers.set('x-goattown-user', GOATTOWN_OWNER);
+  headers.set('x-goattown-user', await currentUserId());
   return headers;
 }
 
@@ -147,7 +155,7 @@ async function getJson<T>(url: string, signal?: AbortSignal): Promise<T> {
   // proxy always strips `authorization` from the original request).
   const resp = await fetch(url, {
     signal,
-    headers: goatTownHeaders({ accept: 'application/json' }),
+    headers: await goatTownHeaders({ accept: 'application/json' }),
   });
   if (!resp.ok) {
     throw new Error(`investigator cell ${resp.status}: ${await resp.text()}`);
@@ -160,7 +168,6 @@ export async function fetchInvestigationStatus(
   signal?: AbortSignal,
 ): Promise<InvestigationStatusResponse> {
   const base = getCellBaseUrl();
-  await claimUnownedInvestigations(base, signal);
   return getJson<InvestigationStatusResponse>(
     `${base}/investigations/${encodeURIComponent(id)}/status`,
     signal,
@@ -175,7 +182,6 @@ export async function fetchInvestigationReportHeadline(
   signal?: AbortSignal,
 ): Promise<string> {
   const base = getCellBaseUrl();
-  await claimUnownedInvestigations(base, signal);
   const data = await getJson<EventsResponse>(
     `${base}/investigations/${encodeURIComponent(id)}/events?since=0`,
     signal,
@@ -188,10 +194,6 @@ export async function fetchInvestigationReportHeadline(
     if (ui.kind === 'summary' && typeof ui.conclusion === 'string') return ui.conclusion;
   }
   return '';
-}
-
-async function claimUnownedInvestigations(base: string, signal?: AbortSignal): Promise<void> {
-  await postJson<{ ok: boolean }>(`${base}/admin/claim-sessions`, {}, signal);
 }
 
 export interface SubscribeOptions {
@@ -283,7 +285,7 @@ async function postJson<T>(url: string, body: unknown, signal?: AbortSignal): Pr
   const resp = await fetch(url, {
     method: 'POST',
     signal,
-    headers: goatTownHeaders({ accept: 'application/json', 'content-type': 'application/json' }),
+    headers: await goatTownHeaders({ accept: 'application/json', 'content-type': 'application/json' }),
     body: JSON.stringify(body ?? {}),
   });
   if (!resp.ok) {
@@ -338,28 +340,14 @@ export async function sendInvestigationMessage(
   );
 }
 
-/**
- * Push the provisioned default source repos to the cell. Autonomous
- * (alert-fired) investigations read this list — the alert webhook
- * carries no repos and the cell can't read the app-settings KV, so this
- * is how the Settings repos reach an alert-fired run. Interactive
- * investigations still thread their repos at create time; this only
- * feeds the autonomous path. Called on Settings Save and by
- * `scripts/provision.ts` (UI == CLI).
- */
-export async function pushCellRepos(
-  repos: SourceRepo[],
-  signal?: AbortSignal,
-): Promise<{ count: number }> {
+/** Verify the proxy credential and requested agent without creating a session. */
+export async function verifyGoatTownConnection(signal?: AbortSignal): Promise<void> {
   const base = getCellBaseUrl();
-  return postJson<{ count: number }>(`${base}/config/repos`, { repos }, signal);
-}
-
-/** Read the provisioned default repos currently stored on the cell. */
-export async function getCellRepos(signal?: AbortSignal): Promise<SourceRepo[]> {
-  const base = getCellBaseUrl();
-  const data = await getJson<{ repos: SourceRepo[] }>(`${base}/config/repos`, signal);
-  return data.repos ?? [];
+  await getJson<{ investigations: InvestigationSummary[] }>(`${base}/investigations?limit=1`, signal);
+  const catalog = await getJson<{ agents?: Array<{ slug?: unknown }> }>(`${base}/agents`, signal);
+  if (!catalog.agents?.some((agent) => agent.slug === APM_INVESTIGATOR_AGENT)) {
+    throw new Error(`GoatTown connected, but agent "${APM_INVESTIGATOR_AGENT}" is not available.`);
+  }
 }
 
 /** Stop an in-progress investigation. The cell aborts the running turn
@@ -393,9 +381,6 @@ export async function listInvestigations(
   signal?: AbortSignal,
 ): Promise<InvestigationSummary[]> {
   const base = getCellBaseUrl();
-  // Alert-triggered sessions have no browser owner. Adopt them into APM's
-  // installation-wide owner before listing so every responder can see them.
-  await claimUnownedInvestigations(base, signal);
   const wanted = Math.max(1, Math.min(100, query.limit ?? 30));
   const matches: InvestigationSummary[] = [];
   let before = query.before;

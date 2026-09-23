@@ -133,32 +133,20 @@ async function wireCellTrigger(
   }
   const cellUrl = process.env.GOATTOWN_URL ?? 'https://goattown-shared.lab.cribl.io';
   const bearer = process.env.GOATTOWN_WEBHOOK_TOKEN;
-  const uiBearer = process.env.GOATTOWN_UI_TOKEN;
-  if (cellUrl && uiBearer) {
+  const adminBearer = process.env.GOATTOWN_ADMIN_TOKEN;
+  if (cellUrl && adminBearer) {
     const registration = await stageApmInvestigatorConfiguration(cellUrl, getCurrentDataset(), {
-      authorization: `Bearer ${uiBearer}`,
+      authorization: `Bearer ${adminBearer}`,
     });
     console.log(
       `▶ APM configuration: staged revision ${registration.revisionId} ` +
       `(${registration.changes} change(s), ${registration.skills} skills` +
       `${registration.hasConflicts ? ', conflicts require review' : ''}) — activate in GoatTown`,
     );
-  } else if (flagExplicit) {
-    // Same rule as the webhook target below: an explicit enable without the
-    // token is a real misconfiguration, so fail loudly. An inferred-on run is
-    // routine — the configuration was staged by the prior explicit enable, and
-    // hard-exiting there breaks every deploy that legitimately has no
-    // installation token, CI's shared validation workspace included.
-    console.error(
-      '✗ serverInvestigations is on but GOATTOWN_UI_TOKEN is not set — ' +
-        'the shared installation UI token is required to stage the APM investigator.',
-    );
-    process.exit(1);
   } else {
-    console.warn(
-      '▶ APM configuration: GOATTOWN_UI_TOKEN not set — leaving the staged ' +
-        'investigator configuration untouched. Set it to re-stage after changing ' +
-        'the preamble, tools, or skills.',
+    console.log(
+      '▶ APM configuration: left to the GoatTown tenant console. ' +
+        'Set GOATTOWN_ADMIN_TOKEN only when this deploy is authorized to stage revisions.',
     );
   }
   if (cellUrl && bearer) {
@@ -215,12 +203,12 @@ async function wireCellTrigger(
   }
   if (repos.length === 0) {
     console.log('▶ Source repos: GOATTOWN_REPOS_JSON has no valid repos — leaving GoatTown config untouched.');
-  } else if (cellUrl && uiBearer) {
+  } else if (cellUrl && adminBearer) {
     const resp = await fetch(`${cellUrl.replace(/\/$/, '')}/config/repos`, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        authorization: `Bearer ${uiBearer}`,
+        authorization: `Bearer ${adminBearer}`,
         'x-goattown-user': 'cribl-apm',
       },
       body: JSON.stringify({ repos }),
@@ -231,7 +219,7 @@ async function wireCellTrigger(
       console.error(`✗ Source repos → cell failed (${resp.status}): ${(await resp.text()).slice(0, 160)}`);
     }
   } else {
-    console.log('▶ Source repos: GOATTOWN_REPOS_JSON set but GOATTOWN_UI_TOKEN missing — skipped push.');
+    console.log('▶ Source repos: GOATTOWN_REPOS_JSON set but GOATTOWN_ADMIN_TOKEN missing — skipped push.');
   }
 }
 

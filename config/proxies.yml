@@ -4,7 +4,7 @@
 # the UI polls it for investigation transcripts (feature-flagged, off
 # by default). The platform proxy rewrites the app's fetch() to this
 # domain into a same-origin call and injects the bearer from encrypted
-# KV (`sharedCellToken` = the installation UI token), since the iframe can't set
+# KV (`goattownEmbedToken` = this app's connected-app token), since the iframe can't set
 # an Authorization header itself.
 #
 # The stable shared-service domain is pinned here and in
@@ -15,12 +15,11 @@ goattown-shared.lab.cribl.io:
   paths:
     allowlist:
       - /investigations
-      - /configurations
-      - /config
-      - /admin/claim-sessions
+      - /agents
+      - /protocol
   headers:
     inject:
-      Authorization: "'Bearer ' + kv.sharedCellToken"
+      authorization: "'Bearer ' + kv.goattownEmbedToken"
     allowlist:
       - accept
       - content-type

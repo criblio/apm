@@ -9,12 +9,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createInvestigation,
   fetchInvestigationReportHeadline,
-  GOATTOWN_OWNER,
   SHARED_GOATTOWN_BASE_URL,
   listInvestigations,
   setCellBaseUrl,
   wireEventToLoopEvent,
   isTerminalStatus,
+  verifyGoatTownConnection,
   type WireLoopEvent,
 } from '../investigationTransport';
 afterEach(() => {
@@ -107,6 +107,10 @@ describe('isTerminalStatus', () => {
 });
 
 describe('GoatTown compatibility', () => {
+  const stubUser = () => vi.stubGlobal('window', {
+    getCriblUser: vi.fn().mockResolvedValue({ id: 'member-123' }),
+  });
+
   it('defaults to the shared GoatTown service', () => {
     expect(SHARED_GOATTOWN_BASE_URL).toBe('https://goattown-shared.lab.cribl.io');
   });
@@ -148,6 +152,7 @@ describe('GoatTown compatibility', () => {
   });
 
   it('selects the registered APM agent for interactive sessions', async () => {
+    stubUser();
     setCellBaseUrl('https://goatfarm.example');
     const fetchMock = vi.fn().mockResolvedValue(new Response(
       JSON.stringify({ id: 'inv-1' }),
@@ -163,13 +168,13 @@ describe('GoatTown compatibility', () => {
       title: 'APM: Investigate checkout',
       agent: 'apm-investigator',
     });
-    expect(new Headers(init.headers).get('x-goattown-user')).toBe(GOATTOWN_OWNER);
+    expect(new Headers(init.headers).get('x-goattown-user')).toBe('member-123');
   });
 
   it('reads an interactive report headline from persisted transcript events', async () => {
+    stubUser();
     setCellBaseUrl('https://goattown.example');
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true, claimed: 0 })))
       .mockResolvedValueOnce(new Response(JSON.stringify({
         protocolVersion: 1,
         status: 'idle',
@@ -192,10 +197,11 @@ describe('GoatTown compatibility', () => {
 
     await expect(fetchInvestigationReportHeadline('inv-1'))
       .resolves.toBe('Checkout retries caused the spike');
-    expect(String(fetchMock.mock.calls[1][0])).toContain('/investigations/inv-1/events?since=0');
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/investigations/inv-1/events?since=0');
   });
 
   it('filters shared GoatTown sessions and scans past a full unrelated page', async () => {
+    stubUser();
     setCellBaseUrl('https://goatfarm.example');
     const unrelated = Array.from({ length: 100 }, (_, index) => ({
       id: `other-${index}`,
@@ -220,15 +226,28 @@ describe('GoatTown compatibility', () => {
       concludedAt: null,
     };
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true, claimed: 1 })))
       .mockResolvedValueOnce(new Response(JSON.stringify({ investigations: unrelated })))
       .mockResolvedValueOnce(new Response(JSON.stringify({ investigations: [apm] })));
     vi.stubGlobal('fetch', fetchMock);
 
     await expect(listInvestigations({ limit: 30 })).resolves.toEqual([apm]);
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-    expect(String(fetchMock.mock.calls[0][0])).toContain('/admin/claim-sessions');
-    expect(String(fetchMock.mock.calls[1][0])).toContain('agent=apm-investigator');
-    expect(String(fetchMock.mock.calls[2][0])).toContain('before=901');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[0][0])).toContain('agent=apm-investigator');
+    expect(String(fetchMock.mock.calls[1][0])).toContain('before=901');
+  });
+
+  it('tests the connected-app credential and required agent', async () => {
+    stubUser();
+    setCellBaseUrl('https://goattown.example');
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ investigations: [] })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ agents: [{ slug: 'apm-investigator' }] })));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(verifyGoatTownConnection()).resolves.toBeUndefined();
+    expect(fetchMock.mock.calls.map((call) => String(call[0]))).toEqual([
+      'https://goattown.example/investigations?limit=1',
+      'https://goattown.example/agents',
+    ]);
   });
 });

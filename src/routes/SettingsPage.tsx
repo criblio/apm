@@ -23,8 +23,8 @@ import { useServerInvestigations } from '../hooks/useServerInvestigations';
 import { setServerInvestigations, getServerInvestigations } from '../api/serverInvestigations';
 import {
   getCellBaseUrl,
-  pushCellRepos,
   SHARED_GOATTOWN_BASE_URL,
+  verifyGoatTownConnection,
 } from '../api/investigationTransport';
 import { kvGet, kvPut } from '../api/kvstore';
 import {
@@ -32,7 +32,6 @@ import {
   ensureAlertNotification,
   removeAlertNotification,
 } from '../api/cellProvisioning';
-import { stageApmInvestigatorConfiguration } from '../api/goatTownProvisioning';
 import type { HttpClient } from '../api/provisioner';
 import type { SourceRepo } from '../api/investigationTransport';
 import type { ProvisioningExtraStep } from '@criblio/app-utils/provisioning-panel';
@@ -73,9 +72,12 @@ export default function SettingsPage() {
   const [cellToken, setCellToken] = useState('');
   const [cellTokenConfigured, setCellTokenConfigured] = useState(false);
   const [cellTokenSaving, setCellTokenSaving] = useState(false);
+  const [goatTownConnection, setGoatTownConnection] = useState<{
+    kind: 'checking' | 'connected' | 'error';
+    message: string;
+  } | null>(null);
   const [cellWebhookBearer, setCellWebhookBearer] = useState('');
   const [cellWebhookBearerSaving, setCellWebhookBearerSaving] = useState(false);
-  const [goatTownConfigurationStaging, setGoatTownConfigurationStaging] = useState(false);
   const [sourceRepos, setSourceRepos] = useState<SourceRepo[]>([]);
   const [sourceReposSaving, setSourceReposSaving] = useState(false);
   const [cadenceSaving, setCadenceSaving] = useState(false);
@@ -101,11 +103,9 @@ export default function SettingsPage() {
         setSourceRepos(s.sourceRepos as SourceRepo[]);
       }
     }).catch(() => {});
-    // Installation tokens are write-only. The sentinel only controls UI state;
-    // proxies.yml reads the secret directly from `kv.sharedCellToken`.
-    kvGet<string>('sharedCellTokenSet')
-      .then((value) => setCellTokenConfigured(value === 'true'))
-      .catch(() => {});
+    // Test unconditionally: GoatTown's console can deliver the credential
+    // directly to KV without setting any app-local sentinel.
+    void testGoatTownConnection(true);
     // The installation webhook token is stored separately from the UI token
     // so browser provisioning can create the Cribl notification target.
     kvGet<string>('goatTownWebhookToken')
@@ -215,23 +215,46 @@ export default function SettingsPage() {
   async function handleSaveCellToken() {
     if (cellTokenSaving) return;
     const token = cellToken.trim();
-    if (!token.startsWith('gt_i1_')) {
-      setError('Enter the installation UI token issued by shared GoatTown.');
+    if (!/^gt_a1_[A-Za-z0-9_-]{43}$/.test(token)) {
+      setGoatTownConnection({
+        kind: 'error',
+        message: 'Enter a connected-app token in the form gt_a1_ followed by 43 characters.',
+      });
       return;
     }
     setCellTokenSaving(true);
     setError(null);
     try {
-      await kvPut('sharedCellToken', token);
-      await kvPut('sharedCellTokenSet', 'true');
+      await kvPut('goattownEmbedToken', token);
       setCellToken('');
-      setCellTokenConfigured(true);
-      setFlash('Shared GoatTown installation token saved.');
-      setTimeout(() => setFlash(null), 8000);
+      setGoatTownConnection({ kind: 'checking', message: 'Token saved. Testing GoatTown…' });
+      await testGoatTownConnection();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setCellTokenConfigured(false);
+      setGoatTownConnection({
+        kind: 'error',
+        message: `Could not save or verify the token: ${err instanceof Error ? err.message : String(err)}`,
+      });
     } finally {
       setCellTokenSaving(false);
+    }
+  }
+
+  async function testGoatTownConnection(silent = false) {
+    if (!silent) setGoatTownConnection({ kind: 'checking', message: 'Testing GoatTown connection…' });
+    try {
+      await verifyGoatTownConnection();
+      setCellTokenConfigured(true);
+      setGoatTownConnection({
+        kind: 'connected',
+        message: 'Connected. GoatTown accepted this app credential and the APM Investigator is available.',
+      });
+    } catch (err) {
+      setCellTokenConfigured(false);
+      setGoatTownConnection({
+        kind: 'error',
+        message: `Not connected: ${err instanceof Error ? err.message : String(err)}`,
+      });
     }
   }
 
@@ -282,20 +305,7 @@ export default function SettingsPage() {
         .filter((r) => r.url);
       await saveAppSettings({ sourceRepos: cleaned });
       setSourceRepos(cleaned);
-      // Push the list to the cell so alert-fired (autonomous)
-      // investigations get the same repos — interactive ones already
-      // thread them at create time. Best-effort: the save above is the
-      // source of truth, and `npm run provision` re-pushes regardless.
-      let cellNote = '';
-      try {
-        const { count } = await pushCellRepos(cleaned);
-        cellNote = ` Pushed ${count} to the investigator cell for alert-fired runs.`;
-      } catch (err) {
-        cellNote = ` (Could not reach the cell to update alert-fired runs: ${
-          err instanceof Error ? err.message : String(err)
-        } — re-run provisioning to retry.)`;
-      }
-      setFlash(`Source repositories saved.${cellNote}`);
+      setFlash('Source repositories saved for interactive investigations.');
       setTimeout(() => setFlash(null), 8000);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -321,25 +331,6 @@ export default function SettingsPage() {
     }
     const url = getCellBaseUrl();
     const bearer = cellWebhookBearer.trim();
-    try {
-      const registration = await stageApmInvestigatorConfiguration(url, currentDataset);
-      steps.push({
-        label: `APM configuration revision staged (${registration.skills} skills)`,
-        ok: !registration.hasConflicts,
-        detail:
-          `Revision ${registration.revisionId}; ${registration.changes} proposed change(s). ` +
-          (registration.hasConflicts
-            ? 'Resolve conflicts, review, and activate it in GoatTown.'
-            : 'Review and activate it in GoatTown.'),
-      });
-    } catch (err) {
-      steps.push({
-        label: 'APM configuration staging: failed',
-        ok: false,
-        detail: err instanceof Error ? err.message : String(err),
-      });
-      return steps;
-    }
     if (url && bearer) {
       const t = await ensureCellWebhookTarget(http, { cellUrl: url, bearer });
       steps.push({ label: `Webhook target: ${t} (${url})`, ok: true });
@@ -352,38 +343,7 @@ export default function SettingsPage() {
     }
     const n = await ensureAlertNotification(http);
     steps.push({ label: `Alert notification: ${n} (alert_notify → cell)`, ok: true });
-    // Re-push the configured source repos so alert-fired investigations
-    // check out code (interactive ones thread their own at create time).
-    try {
-      const { count } = await pushCellRepos(sourceRepos);
-      steps.push({ label: `Source repos → cell: ${count} for alert-fired runs`, ok: true });
-    } catch (err) {
-      steps.push({
-        label: 'Source repos → cell: failed',
-        ok: false,
-        detail: err instanceof Error ? err.message : String(err),
-      });
-    }
     return steps;
-  }
-
-  async function handleStageGoatTownConfiguration() {
-    if (goatTownConfigurationStaging) return;
-    setGoatTownConfigurationStaging(true);
-    setError(null);
-    try {
-      const result = await stageApmInvestigatorConfiguration(getCellBaseUrl(), currentDataset);
-      setFlash(
-        `GoatTown revision ${result.revisionId} staged with ${result.changes} proposed change(s). ` +
-        `In GoatTown, open Configurations, load producer cribl-apm, review the diff, and activate it.` +
-        (result.hasConflicts ? ' Resolve the reported conflicts before activation.' : ''),
-      );
-      setTimeout(() => setFlash(null), 15_000);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setGoatTownConfigurationStaging(false);
-    }
   }
 
   async function handleStreamFilterToggle(next: boolean) {
@@ -683,8 +643,8 @@ export default function SettingsPage() {
           When enabled, firing alerts trigger an autonomous Investigator
           run in GoatTown — no browser needed.
           The Alerts page then shows investigation badges and lets you
-          drill into the finished transcript. Stage the configuration below,
-          then approve it in GoatTown before enabling the alert trigger.
+          drill into the finished transcript. Connect this app to a GoatTown
+          tenant before starting interactive investigations.
         </p>
 
         <label className={s.toggleRow}>
@@ -706,38 +666,18 @@ export default function SettingsPage() {
         </label>
 
         <div className={s.field} style={{ marginTop: 16 }}>
-          <div className={s.label}>GoatTown agent configuration</div>
-          <div className={s.fieldHelp}>
-            Validate and stage this app&apos;s <code>goattown.config.yaml</code> as
-            an immutable revision. This does not activate the agent. In GoatTown,
-            open <strong>Configurations</strong>, load producer <code>cribl-apm</code>,
-            review the diff, and activate it explicitly.
-          </div>
-          <div className={s.actions} style={{ marginTop: 8 }}>
-            <button
-              type="button"
-              className={s.primaryBtn}
-              onClick={() => void handleStageGoatTownConfiguration()}
-              disabled={goatTownConfigurationStaging || !cellTokenConfigured}
-            >
-              {goatTownConfigurationStaging ? 'Staging…' : 'Stage GoatTown revision'}
-            </button>
-            {flash && <span className={s.successFlash}>{flash}</span>}
-          </div>
-        </div>
-
-        <div className={s.field} style={{ marginTop: 16 }}>
           <div className={s.label}>Shared GoatTown service</div>
           <div className={s.fieldHelp}>
-            <code>{SHARED_GOATTOWN_BASE_URL}</code>. Enrollment and tokens are
-            installation-scoped; sessions and configuration are isolated from
-            other Workspaces by the shared service.
+            <code>{SHARED_GOATTOWN_BASE_URL}</code>. In GoatTown&apos;s hosted console,
+            select the Workspace, then open <strong>Connections → Connected apps → Add app</strong>.
+            Use App ID <code>apm</code> and KV key <code>goattownEmbedToken</code>.
+            Copy the generated token below or choose <strong>Update app KV</strong>.
           </div>
         </div>
 
         <div className={s.field} style={{ marginTop: 16 }}>
           <label className={s.label} htmlFor="cell-token-input">
-            Shared GoatTown installation token
+            GoatTown connected-app token
           </label>
           <input
             id="cell-token-input"
@@ -745,16 +685,25 @@ export default function SettingsPage() {
             type="password"
             value={cellToken}
             onChange={(e) => setCellToken(e.target.value)}
-            placeholder={cellTokenConfigured ? 'Configured - paste a new token to replace it' : 'Paste the gt_i1_ installation token'}
+            placeholder={cellTokenConfigured ? 'Connected - paste a replacement token if needed' : 'Paste the gt_a1_ connected-app token'}
             spellCheck={false}
             autoComplete="off"
             autoCapitalize="none"
           />
           <div className={s.fieldHelp}>
-            Paste the one-time UI token issued during shared GoatTown enrollment.
+            Paste the credential issued for the APM connected app.
             It is stored write-only for the platform proxy as{' '}
-            <code>kv.sharedCellToken</code> and is never read back into the app.
+            <code>kv.goattownEmbedToken</code> and is never read back into the app.
           </div>
+          {goatTownConnection?.kind === 'error' && (
+            <StatusBanner kind="error">{goatTownConnection.message}</StatusBanner>
+          )}
+          {goatTownConnection?.kind === 'checking' && (
+            <StatusBanner kind="info">{goatTownConnection.message}</StatusBanner>
+          )}
+          {goatTownConnection?.kind === 'connected' && (
+            <div role="status" className={s.successFlash}>{goatTownConnection.message}</div>
+          )}
           <div className={s.actions} style={{ marginTop: 8 }}>
             <button
               type="button"
@@ -763,6 +712,14 @@ export default function SettingsPage() {
               disabled={cellTokenSaving || !cellToken.trim()}
             >
               {cellTokenSaving ? 'Saving…' : cellTokenConfigured ? 'Replace token' : 'Save token'}
+            </button>
+            <button
+              type="button"
+              className={s.secondaryBtn}
+              onClick={() => void testGoatTownConnection()}
+              disabled={goatTownConnection?.kind === 'checking'}
+            >
+              Test connection
             </button>
           </div>
         </div>
@@ -808,8 +765,8 @@ export default function SettingsPage() {
             telemetry service; leave it <code>*</code> for a monorepo that
             backs every service (e.g. the OTel Demo). <strong>Ref</strong> pins
             a branch, tag, or commit SHA to check out; leave it empty for the
-            default branch. Threaded into investigations you start from the
-            Investigate button, and into alert-fired ones after Save.
+            default branch. These are threaded into interactive investigations
+            started from APM.
           </div>
           {sourceRepos.length === 0 && (
             <div className={s.fieldHelp} style={{ opacity: 0.8 }}>
