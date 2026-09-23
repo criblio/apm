@@ -8,8 +8,8 @@
  *
  *  - the acting Cribl user (APM sessions are per signed-in user, not
  *    installation-wide — see the connected-app credential migration),
- *  - the `report_findings` → `present_investigation_summary` tool rename the
- *    summary card is keyed on,
+ *  - the `report_findings` → `present_investigation_summary` tool rename
+ *    that gives a concluding call its "Preparing…" state,
  *  - the `APM: ` / `apm:` recall-panel filter and its pagination,
  *  - the full session record read, which the session protocol does not cover
  *    but replay and incident summaries need,
@@ -63,9 +63,17 @@ export type InvestigationSummary = SessionSummaryRow;
 export type InvestigationStatusResponse = SessionStatusResponse;
 
 /**
- * GoatTown's generic concluding tool is `report_findings`; APM's summary
- * card is keyed on `present_investigation_summary`. Renaming on the way in
- * keeps the card without asking the service to know about APM.
+ * GoatTown's generic concluding tool is `report_findings`; the client-side
+ * investigator's equivalent is `present_investigation_summary`.
+ *
+ * The rename is NOT needed to render the finished card: the transcript
+ * dispatches a report on `ui.kind === 'report'`, which it checks before any
+ * tool-name branch, and APM's own `renderApmToolCard` keys purely on
+ * `ui.kind` too. What the rename buys is the state *before* the result
+ * arrives — with no `ui` yet, the name branch is the only thing that
+ * matches, and it renders "📋 Investigation summary — Preparing…". Without
+ * it a concluding call renders nothing until its result lands, and the
+ * summary appears abruptly. Keep it for that, not for card dispatch.
  */
 function renameConcludingTool(ev: LoopEvent): LoopEvent {
   if (ev.kind !== 'toolCall' || ev.call.function.name !== 'report_findings') return ev;
