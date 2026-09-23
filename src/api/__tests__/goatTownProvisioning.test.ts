@@ -110,7 +110,7 @@ describe('GoatTown declarative configuration', () => {
     ));
     await expect(
       stageApmInvestigatorConfiguration('https://goattown.example/', 'custom-otel'),
-    ).rejects.toThrow(/not assigned a configuration proposal scope/);
+    ).rejects.toThrow(/advertises no configuration proposal scope/);
   });
 
   it('sets no authorization header for a browser caller', async () => {

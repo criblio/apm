@@ -197,10 +197,17 @@ export async function stageApmInvestigatorConfiguration(
   const client = configurationClient(baseUrl, options);
   const scope = await readProposalScope(client, options.signal);
   if (!scope) {
+    // Two different problems produce a missing scope and they need different
+    // fixes, so name the capabilities the service actually advertises rather
+    // than guessing. A service that predates credential-assigned proposals
+    // needs deploying; a service that has them needs the app connection
+    // granted proposal rights by an administrator.
+    const protocol = await client.protocol(options.signal);
     throw new Error(
-      'This GoatTown credential is not assigned a configuration proposal scope, ' +
-      'so it cannot stage the APM investigator. A tenant administrator has to ' +
-      'grant the app connection proposal rights.',
+      `GoatTown at ${baseUrl} advertises no configuration proposal scope, so the ` +
+      'APM investigator cannot be staged. Either the service predates ' +
+      'credential-assigned proposals, or this app credential has not been granted ' +
+      `them. Advertised capabilities: ${protocol.capabilities.join(', ') || '(none)'}.`,
     );
   }
   const source = buildApmGoatTownConfiguration(dataset);
