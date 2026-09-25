@@ -1,11 +1,61 @@
+/**
+ * Stage APM's investigator configuration as a GoatTown proposal.
+ *
+ * The HTTP and policy parts now come from `@criblio/app-utils/goattown`;
+ * what stays here is the APM source tree itself — the skills, the
+ * telemetry-reader profile, and the investigator agent.
+ *
+ * Two things changed with the shared contract and both are deliberate:
+ *
+ *  - **The YAML no longer declares a producer.** The service assigns one to
+ *    each app credential and advertises it at `/protocol` as
+ *    `proposalScope.producer` with `producerInput: 'credential'`; a proposal
+ *    that declares its own is rejected with `producer_mismatch`. So the
+ *    producer is read, not written, and staging refuses outright unless the
+ *    scope says `credential` rather than guessing.
+ *  - **Activation stays human.** This validates and stores an immutable
+ *    revision; a tenant administrator reviews and activates it at the
+ *    scope's `reviewPath`.
+ */
+import {
+  GoatTownClient,
+  assertProposalOmitsProducer,
+  readProposalScope,
+  readProposalStatus,
+  stageProposal,
+  type ProposalStatus,
+  type StagedProposal,
+} from '@criblio/app-utils/goattown';
 import { buildInvestigatorSkills, goatFarmInvestigatorInstructions } from './agentContext';
 
 export const APM_INVESTIGATOR_AGENT = 'apm-investigator';
-export const APM_CONFIGURATION_PRODUCER = 'cribl-apm';
-export const APM_GOATTOWN_OWNER = 'cribl-apm';
 
-interface RegistrationOptions {
+/**
+ * Acting user for configuration work.
+ *
+ * Sessions are per signed-in Cribl user, but staging a revision is an app
+ * action rather than a person's, and the CLI provisioner has no signed-in
+ * user at all. The producer itself still comes from the credential — this is
+ * only the `x-goattown-user` claim on the configuration route.
+ */
+export const APM_CONFIGURATION_ACTOR = 'cribl-apm';
+
+export type { ProposalStatus, StagedProposal };
+
+export interface RegistrationOptions {
+  /**
+   * Bearer for non-browser callers only.
+   *
+   * The CLI provisioner runs in Node with no platform proxy in front of it,
+   * so it must present its own admin token. A browser caller passes nothing:
+   * the proxy injects APM's connected-app credential for the declared
+   * domain and strips any `authorization` the page sets, so a token shipped
+   * from the page buys nothing and leaks something. That is exactly the
+   * `kv.sharedCellToken` mistake this app has already made once.
+   */
   authorization?: string;
+  /** Acting user id. Browser callers resolve the signed-in Cribl user. */
+  userId?: () => Promise<string>;
   signal?: AbortSignal;
 }
 
@@ -14,32 +64,38 @@ export interface RegistrationResult {
   revisionId: string;
   changes: number;
   hasConflicts: boolean;
+  /** The producer the credential is assigned, shown to the human so the
+   *  review page is recognisable. */
+  producer: string;
+  /** Where a human activates the staged revision. */
+  reviewPath: string;
 }
 
-async function configurationRequest(
+/**
+ * Build a client for configuration work.
+ *
+ * `/configurations` takes `application/yaml`, so the shared client exposes
+ * `actingUser()` for exactly this and the provisioning helpers drive the
+ * route themselves. A non-browser caller's bearer rides on an injected
+ * fetch rather than being handed to the client, which has no credential
+ * concept by design.
+ */
+export function configurationClient(
   baseUrl: string,
-  action: string,
-  source: string | undefined,
-  options: RegistrationOptions,
-  params: Record<string, string> = {},
-): Promise<Record<string, unknown>> {
-  const headers: Record<string, string> = {
-    accept: 'application/json',
-    'content-type': 'application/yaml',
-    'x-goattown-user': APM_GOATTOWN_OWNER,
-  };
-  if (options.authorization) headers.authorization = options.authorization;
-  const query = new URLSearchParams({ action, ...params });
-  const response = await fetch(`${baseUrl.replace(/\/$/, '')}/configurations?${query}`, {
-    method: source === undefined ? 'GET' : 'POST',
-    headers,
-    body: source,
-    signal: options.signal,
+  options: RegistrationOptions = {},
+): GoatTownClient {
+  const { authorization } = options;
+  return new GoatTownClient({
+    baseUrl,
+    userId: options.userId ?? (async () => APM_CONFIGURATION_ACTOR),
+    fetch: authorization
+      ? (input, init) => {
+        const headers = new Headers(init?.headers);
+        headers.set('authorization', authorization);
+        return fetch(input, { ...init, headers });
+      }
+      : undefined,
   });
-  if (!response.ok) {
-    throw new Error(`GoatTown configuration ${action} failed (${response.status}): ${await response.text()}`);
-  }
-  return (await response.json()) as Record<string, unknown>;
 }
 
 function yamlString(value: string): string {
@@ -78,8 +134,9 @@ export function buildApmGoatTownConfiguration(dataset: string): string {
     body: |
 ${block(skill.body, 6)}`).join('\n');
 
+  // No `producer:` line on purpose — the service assigns it from the app
+  // credential and rejects a proposal that declares one.
   return `version: 1
-producer: ${APM_CONFIGURATION_PRODUCER}
 
 skills:
 ${skillYaml}
@@ -123,32 +180,68 @@ authorizationGrants: []
 `;
 }
 
-/** Validate and store an immutable revision. This deliberately never calls
- * activate/apply: a human reviews and activates the revision in GoatTown. */
+/**
+ * Validate and store an immutable revision.
+ *
+ * Deliberately never calls activate/apply: a human reviews and activates
+ * the revision at `reviewPath`. Validate-before-store is not belt and
+ * braces — a store writes an immutable revision, so a malformed proposal
+ * sent straight to store leaves a permanent bad revision in the tenant's
+ * history for someone to read past.
+ */
 export async function stageApmInvestigatorConfiguration(
   baseUrl: string,
   dataset: string,
   options: RegistrationOptions = {},
 ): Promise<RegistrationResult> {
-  const source = buildApmGoatTownConfiguration(dataset);
-  const skills = buildInvestigatorSkills(dataset);
-  await configurationRequest(baseUrl, 'validate', source, options);
-  const stored = await configurationRequest(baseUrl, 'store', source, options);
-  const revision = stored.revision as { id?: unknown } | undefined;
-  if (typeof revision?.id !== 'string' || !revision.id) {
-    throw new Error('GoatTown configuration store returned no revision id');
+  const client = configurationClient(baseUrl, options);
+  const scope = await readProposalScope(client, options.signal);
+  if (!scope) {
+    // Two different problems produce a missing scope and they need different
+    // fixes, so name the capabilities the service actually advertises rather
+    // than guessing. A service that predates credential-assigned proposals
+    // needs deploying; a service that has them needs the app connection
+    // granted proposal rights by an administrator.
+    const protocol = await client.protocol(options.signal);
+    throw new Error(
+      `GoatTown at ${baseUrl} advertises no configuration proposal scope, so the ` +
+      'APM investigator cannot be staged. Either the service predates ' +
+      'credential-assigned proposals, or this app credential has not been granted ' +
+      `them. Advertised capabilities: ${protocol.capabilities.join(', ') || '(none)'}.`,
+    );
   }
-  const diff = await configurationRequest(
-    baseUrl,
-    'diff',
-    undefined,
-    options,
-    { revision: revision.id },
-  );
+  const source = buildApmGoatTownConfiguration(dataset);
+  // Local guard before the round trip: the service would reject a declared
+  // producer with `producer_mismatch`, and the error is clearer from here.
+  assertProposalOmitsProducer(source);
+  const staged = await stageProposal(client, source, scope, options.signal);
   return {
-    skills: skills.length,
-    revisionId: revision.id,
-    changes: typeof diff.changes === 'number' ? diff.changes : 0,
-    hasConflicts: diff.hasConflicts === true,
+    skills: buildInvestigatorSkills(dataset).length,
+    revisionId: staged.revisionId,
+    changes: staged.changes,
+    hasConflicts: staged.hasConflicts,
+    producer: staged.producer,
+    reviewPath: staged.reviewPath,
   };
+}
+
+/**
+ * Has a human activated what we staged?
+ *
+ * Reports the tenant's active revision and the agent's presence in the live
+ * catalog separately: an active revision whose agent is missing means the
+ * activation landed but the agent did not, which is a different
+ * conversation to have with the administrator.
+ */
+export async function readApmProposalStatus(
+  baseUrl: string,
+  stagedRevisionId: string | null,
+  options: RegistrationOptions = {},
+): Promise<ProposalStatus> {
+  return readProposalStatus(
+    configurationClient(baseUrl, options),
+    stagedRevisionId,
+    APM_INVESTIGATOR_AGENT,
+    options.signal,
+  );
 }

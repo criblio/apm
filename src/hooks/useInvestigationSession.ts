@@ -91,10 +91,14 @@ export function useInvestigationSession(
   const genRef = useRef(0);
 
   const subscribe = useCallback(
-    (investigationId: string, fromSeq: number) => {
+    (investigationId: string, fromSeq: number, requestId?: string) => {
       unsubRef.current?.();
+      // `stopOnIdle` is gone: `idle` means "between turns" and is reached
+      // before the first answer as well as after the last, so stopping there
+      // could end observation before the response was written. Observation
+      // now follows the request receipt and drains through its `finalSeq`.
       unsubRef.current = subscribeInvestigation(investigationId, fromSeq, {
-        stopOnIdle: true,
+        requestId,
         onEvent: (ev, seq) => {
           seqRef.current = Math.max(seqRef.current, seq);
           setEntries((prev) => applyLoopEvent(prev, ev));
@@ -175,11 +179,13 @@ export function useInvestigationSession(
       setEntries((prev) => [...prev, userEntry(text)]);
       pendingUserRef.current.push(text);
       try {
-        await sendInvestigationMessage(id, text);
-        // The prior subscription stopped at idle; resume from where we
-        // left off so the new assistant turn streams in.
+        const { requestId } = await sendInvestigationMessage(id, text);
+        // Resume from where the previous turn left off, following this
+        // message's own receipt: several queued messages can be consumed by
+        // one response, and each carries its own receipt, so following the
+        // receipt is what makes "my message finished" answerable.
         setStatus('running');
-        subscribe(id, seqRef.current);
+        subscribe(id, seqRef.current, requestId);
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
       } finally {

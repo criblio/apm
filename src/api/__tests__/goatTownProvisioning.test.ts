@@ -6,11 +6,24 @@ import {
   goatFarmInvestigatorInstructions,
 } from '../agentContext';
 import {
-  APM_CONFIGURATION_PRODUCER,
+  APM_CONFIGURATION_ACTOR,
   APM_INVESTIGATOR_AGENT,
   buildApmGoatTownConfiguration,
   stageApmInvestigatorConfiguration,
 } from '../goatTownProvisioning';
+
+/** `/protocol` advertising a credential-assigned proposal scope. */
+const PROTOCOL = {
+  protocolVersion: 1,
+  capabilities: ['session-execution'],
+  proposalScope: {
+    appConnectionId: 'conn-1',
+    appId: 'cribl-apm',
+    producer: 'cribl-apm',
+    producerInput: 'credential',
+    reviewPath: '/configurations/review',
+  },
+};
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -29,7 +42,9 @@ describe('GoatTown declarative configuration', () => {
 
   it('generates a complete least-privileged source-tree configuration', () => {
     const source = buildApmGoatTownConfiguration('custom-otel');
-    expect(source).toContain(`producer: ${APM_CONFIGURATION_PRODUCER}`);
+    // The service assigns the producer from the app credential and rejects a
+    // proposal that declares its own with `producer_mismatch`.
+    expect(source).not.toMatch(/^producer:/m);
     expect(source).toContain(`slug: ${APM_INVESTIGATOR_AGENT}`);
     expect(source).toContain('tools: [report]');
     expect(source).toContain('tools: [cribl-read]');
@@ -51,8 +66,9 @@ describe('GoatTown declarative configuration', () => {
     );
   });
 
-  it('validates, stores, and diffs without activating', async () => {
+  it('reads the credential-assigned scope, then validates, stores, and diffs without activating', async () => {
     const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(PROTOCOL), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ valid: true }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ revision: { id: 'rev-123' } }), { status: 201 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ changes: 3, hasConflicts: false }), { status: 200 }));
@@ -63,19 +79,55 @@ describe('GoatTown declarative configuration', () => {
       'custom-otel',
     );
 
-    expect(result).toEqual({ skills: 1, revisionId: 'rev-123', changes: 3, hasConflicts: false });
+    expect(result).toEqual({
+      skills: 1,
+      revisionId: 'rev-123',
+      changes: 3,
+      hasConflicts: false,
+      producer: 'cribl-apm',
+      reviewPath: '/configurations/review',
+    });
     const urls = fetchMock.mock.calls.map((call) => String(call[0]));
     expect(urls).toEqual([
+      'https://goattown.example/protocol',
       'https://goattown.example/configurations?action=validate',
       'https://goattown.example/configurations?action=store',
       'https://goattown.example/configurations?action=diff&revision=rev-123',
     ]);
+    // Staging never activates: no agent or skill mutation is issued.
     expect(urls.every((url) => !url.includes('/agents') && !url.includes('/skills'))).toBe(true);
-    expect((fetchMock.mock.calls[0][1] as RequestInit).body).toBe(
-      (fetchMock.mock.calls[1][1] as RequestInit).body,
+    expect((fetchMock.mock.calls[1][1] as RequestInit).body).toBe(
+      (fetchMock.mock.calls[2][1] as RequestInit).body,
     );
-    expect(new Headers((fetchMock.mock.calls[0][1] as RequestInit).headers).get('x-goattown-user'))
-      .toBe('cribl-apm');
-    expect(fetchMock.mock.calls[2][1]).toMatchObject({ method: 'GET' });
+    expect(new Headers((fetchMock.mock.calls[1][1] as RequestInit).headers).get('x-goattown-user'))
+      .toBe(APM_CONFIGURATION_ACTOR);
+    expect(fetchMock.mock.calls[3][1]).toMatchObject({ method: 'GET' });
+  });
+
+  it('refuses to stage when the credential has no proposal scope', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ protocolVersion: 1, capabilities: [] }), { status: 200 }),
+    ));
+    await expect(
+      stageApmInvestigatorConfiguration('https://goattown.example/', 'custom-otel'),
+    ).rejects.toThrow(/advertises no configuration proposal scope/);
+  });
+
+  it('sets no authorization header for a browser caller', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(PROTOCOL), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ valid: true }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ revision: { id: 'rev-1' } }), { status: 201 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ changes: 0 }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await stageApmInvestigatorConfiguration('https://goattown.example/', 'otel');
+
+    // The platform proxy injects APM's connected-app credential and strips
+    // any authorization the page sets; shipping one from the browser buys
+    // nothing and leaks a long-lived secret (the kv.sharedCellToken mistake).
+    for (const call of fetchMock.mock.calls) {
+      expect(new Headers((call[1] as RequestInit)?.headers).get('authorization')).toBeNull();
+    }
   });
 });
