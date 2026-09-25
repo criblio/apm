@@ -41,5 +41,9 @@ test('APM settings exposes GoatTown connected-app setup', async ({ page }) => {
   // already connected, so matching only the first label passed against a
   // fresh tenant and failed in CI every time.
   await apm.getByRole('button', { name: /(save|replace) token/i }).click();
-  await expect(apm.getByText(/connected-app token in the form gt_a1_/i)).toBeVisible();
+  // A gt_i1_ paste is now diagnosed as an installation token rather than the
+  // requirement merely being restated. That confusion is the whole reason an
+  // operator issued only a gt_a1_ app credential gets stuck on this screen.
+  await expect(apm.getByText(/GoatTown installation token/i)).toBeVisible();
+  await expect(apm.getByText(/gt_a1_ followed by 43 characters/i)).toBeVisible();
 });
