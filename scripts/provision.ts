@@ -135,19 +135,34 @@ async function wireCellTrigger(
   // installation secret and is no longer required.
   const bearer = process.env.GOATTOWN_APP_TOKEN ?? process.env.GOATTOWN_WEBHOOK_TOKEN;
   const adminBearer = process.env.GOATTOWN_ADMIN_TOKEN;
+  // Deliberately admin-token-only. The connected-app gt_a1_ credential is
+  // write-only in KV and injected by the platform proxy; copying it into CI
+  // env to stage from here would leak it for no gain, which .env.example
+  // calls out. A CLI deploy with no admin token therefore stages nothing —
+  // the Settings page is the supported path.
   if (cellUrl && adminBearer) {
-    const registration = await stageApmInvestigatorConfiguration(cellUrl, getCurrentDataset(), {
-      authorization: `Bearer ${adminBearer}`,
-    });
-    console.log(
-      `▶ APM configuration: staged revision ${registration.revisionId} ` +
-      `(${registration.changes} change(s), ${registration.skills} skills` +
-      `${registration.hasConflicts ? ', conflicts require review' : ''}) — activate in GoatTown`,
-    );
+    // Report and continue. Staging is one step of the trigger wiring, and a
+    // proposal that cannot be staged (no grant on this credential) must not
+    // stop the notification binding that follows.
+    try {
+      const registration = await stageApmInvestigatorConfiguration(cellUrl, getCurrentDataset(), {
+        authorization: `Bearer ${adminBearer}`,
+      });
+      console.log(
+        `▶ APM configuration: staged revision ${registration.revisionId} ` +
+        `(${registration.changes} change(s), ${registration.skills} skills` +
+        `${registration.hasConflicts ? ', conflicts require review' : ''}) — ` +
+        `activate producer ${registration.producer} at ${registration.reviewPath}`,
+      );
+    } catch (err) {
+      console.error(
+        `✗ APM configuration staging failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   } else {
     console.log(
-      '▶ APM configuration: left to the GoatTown tenant console. ' +
-        'Set GOATTOWN_ADMIN_TOKEN only when this deploy is authorized to stage revisions.',
+      '▶ APM configuration: left to the Settings page, which stages it with the ' +
+        'connected-app credential from KV. Set GOATTOWN_ADMIN_TOKEN to stage from CI.',
     );
   }
   if (cellUrl && bearer) {
