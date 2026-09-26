@@ -37,6 +37,7 @@ import {
   SessionDiagnostics,
   wireEventToLoopEvent as wireEventToLoopEventBase,
   isTerminalStatus,
+  type DiagnosticSnapshot,
   type MessageImage,
   type ObserveResult,
 } from '@criblio/app-utils/goattown';
@@ -139,6 +140,34 @@ async function currentUserId(): Promise<string> {
   throw new Error('GoatTown requires a signed-in Cribl user, but getCriblUser() returned no id.');
 }
 
+/**
+ * Rolling, redacted record of what GoatTown actually returned.
+ *
+ * Module-level rather than per-session on purpose: it is a bounded ring, the
+ * client is long-lived, and the question it answers — "the answer came back
+ * empty but GoatTown looks fine, what happened?" — is asked after the fact,
+ * about whatever just ran. The recorder is wired into the client's
+ * `onDiagnostic`, so every status/events/messages/protocol call is captured
+ * without wrapping fetch.
+ *
+ * `DiagnosticEvent` carries route SHAPES with query values stripped, a
+ * failure CATEGORY rather than exception text, and the content type — which
+ * is the decisive field, because an HTML body on a JSON route is a proxy
+ * misroute rather than an empty result. Nothing here holds a credential or
+ * image bytes.
+ */
+const diagnostics = new SessionDiagnostics();
+
+/** Bounded, redacted snapshot for the Settings diagnostics disclosure. */
+export function sessionDiagnosticsSnapshot(): DiagnosticSnapshot {
+  return diagnostics.snapshot();
+}
+
+/** The same snapshot as pretty JSON, for a disclosure or a bug report. */
+export function sessionDiagnosticsText(): string {
+  return diagnostics.toText();
+}
+
 let cachedClient: GoatTownClient | null = null;
 let cachedBaseUrl = '';
 
@@ -151,7 +180,11 @@ let cachedBaseUrl = '';
 export function goatTownClient(): GoatTownClient {
   const baseUrl = getCellBaseUrl();
   if (!cachedClient || cachedBaseUrl !== baseUrl) {
-    cachedClient = new GoatTownClient({ baseUrl, userId: currentUserId });
+    cachedClient = new GoatTownClient({
+      baseUrl,
+      userId: currentUserId,
+      onDiagnostic: diagnostics.sink,
+    });
     cachedBaseUrl = baseUrl;
   }
   return cachedClient;
@@ -422,16 +455,6 @@ export async function archiveInvestigation(
   return goatTownClient().archive(id, signal);
 }
 
-/**
- * A bounded, redacted capture of what a session actually returned.
- *
- * Feeds the Settings diagnostics disclosure so "the answer was empty but
- * GoatTown looks fine" can be settled from the raw frames. Credentials and
- * image bytes are redacted by the shared recorder before anything is shown.
- */
-export function createSessionDiagnostics(limit?: number): SessionDiagnostics {
-  return new SessionDiagnostics(limit);
-}
 
 export interface ListInvestigationsQuery {
   /** Substring match on title / incident key. */
