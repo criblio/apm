@@ -1,5 +1,4 @@
 version: 1
-producer: cribl-apm
 
 skills:
   - name: cribl-apm-investigator

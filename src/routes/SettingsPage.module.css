@@ -334,3 +334,21 @@
   background: var(--cds-color-bg-muted);
   color: var(--cds-color-fg-muted);
 }
+
+/* Raw GoatTown diagnostic dump. Scrolls in its own box and wraps long route
+   shapes so the card never forces the page to scroll horizontally. */
+.rawEvents {
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  max-height: 420px;
+  overflow: auto;
+  background: var(--cds-color-bg-muted);
+  border: 1px solid var(--cds-color-border-subtle, rgba(127, 127, 127, 0.25));
+  border-radius: 4px;
+  font-family: var(--cds-font-family-mono, ui-monospace, "Source Code Pro", monospace);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--cds-color-fg-muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
