@@ -270,14 +270,17 @@ export default function SettingsPage() {
     if (!token.startsWith('gt_w1_')) {
       setError(
         token.startsWith('gt_a1_')
-          ? 'That is the connected-app credential, which cannot fire alerts — '
-            + '/alerts/fire authenticates an installation-scoped webhook secret. '
-            + 'GoatTown issues gt_w1_ webhook tokens separately from gt_a1_ app '
-            + 'credentials, so if you were only given one token you do not have this '
-            + 'one. Leave this field alone: interactive investigations work without it, '
-            + 'and only alert-fired ones need it.'
-          : 'Enter an installation webhook token (gt_w1_ …) issued by shared GoatTown. '
-            + 'This is optional — only alert-fired investigations use it.',
+          ? 'That is the connected-app credential, and GoatTown rejects it here with '
+            + '401: /alerts/fire is the one route that needs a webhook-purpose token, '
+            + 'and an app credential always resolves as ui-purpose. The gt_w1_ webhook '
+            + 'token is issued once when the GoatTown installation is enrolled and is '
+            + 'not retrievable afterwards, which is why the console does not show it. '
+            + 'If this field already has a value, leave it: that stored copy is the '
+            + 'only one. Interactive investigations do not use it at all.'
+          : 'Enter an installation webhook token (gt_w1_ …). It is issued once at '
+            + 'installation enrolment and cannot be re-read from the console, so do not '
+            + 'go looking for it there. Optional — only alert-fired investigations '
+            + 'use it.',
       );
       return;
     }
@@ -758,12 +761,15 @@ export default function SettingsPage() {
           <div className={s.fieldHelp}>
             <strong>Optional.</strong> Only alert-fired investigations need this;
             interactive ones work with the connected-app credential alone.
-            {' '}<code>/alerts/fire</code> authenticates an installation-scoped
-            secret, so GoatTown issues <code>gt_w1_</code> webhook tokens
-            separately from the <code>gt_a1_</code> app credential above — if your
-            workspace was only issued one token, it is the app credential and this
-            field stays empty. Stored in the app KV store so{' '}
-            <strong>Provision</strong> below can create the notification target.
+            {' '}<code>/alerts/fire</code> is the single GoatTown route that requires
+            a webhook-purpose token — the <code>gt_a1_</code> credential above always
+            resolves as ui-purpose and is rejected here with 401.
+            {' '}<strong>Expect the console not to show this token.</strong> The
+            {' '}<code>gt_w1_</code> webhook secret is issued once when the GoatTown
+            installation is enrolled and cannot be read back afterwards, so if this
+            field already holds a value that stored copy is the only one — leave it
+            alone. Stored in the app KV store so <strong>Provision</strong> below can
+            create the notification target.
           </div>
           <div className={s.actions} style={{ marginTop: 8 }}>
             <button
