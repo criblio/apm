@@ -228,18 +228,21 @@ plain dot syntax.
 | Messaging destination | \`tostring(attributes['messaging.destination.name'])\` |
 | Exception type | inside \`events\` array, each event has \`attributes['exception.type']\` |
 
-### Metric field mappings (for generic_metrics records)
+### Metric field mappings
 
-Metrics have a DIFFERENT shape — resource attributes are flattened to the
-top level rather than nested under \`resource.attributes\`:
+Use \`run_metrics_query\` first. Native OTLP metrics are stored in Cribl
+Metrics and queried with PromQL; names and labels are Prometheus-normalized
+with underscores (for example \`http_server_duration_milliseconds\` and
+\`service_name\`). Use catalog discovery before guessing a name.
 
-| Concept | Expression |
-|---|---|
-| Metric name | \`_metric\` |
-| Metric value | \`_value\` |
-| Service name | \`tostring(['service.name'])\`  (top-level, bracket-quoted) |
-| Host name | \`tostring(['host.name'])\` |
-| K8s pod | \`tostring(['k8s.pod.name'])\` |
+Older deployments can also expose \`generic_metrics\` records to KQL. Those
+records may be normalized (\`_metric\` + \`_value\`) or wide-column (the
+metric name is a top-level bracket-quoted field). A compatible KQL value is:
+
+\`iff(tostring(_metric)=="<name>", toreal(_value), toreal(['<name>']))\`
+
+Legacy resource attributes are top-level, such as
+\`tostring(['service.name'])\` and \`tostring(['k8s.pod.name'])\`.
 
 ### Log field mappings (for log records + span events with body)
 
@@ -1531,6 +1534,76 @@ are **not** indicative of a production problem unless they are the
   errors, say so explicitly rather than reporting "flagd is down"
   as a root cause.
 `;
+}
+
+export interface InvestigatorSkillRegistration {
+  name: string;
+  displayName: string;
+  description: string;
+  kind: 'prose';
+  body: string;
+}
+
+/**
+ * Build the required GoatTown skill containing APM's complete reference
+ * manual. GoatTown accepts 128 KB preambles, so keeping this as one skill is
+ * easier to review and avoids ordering failures between artificial chunks.
+ */
+export function buildInvestigatorSkills(datasetId: string): InvestigatorSkillRegistration[] {
+  const body = staticPreamble(datasetId)
+    .replaceAll('present_investigation_summary', 'report_findings')
+    .replaceAll(
+      'call\nthe `render_trace` tool with the `traceId`',
+      'run the full-span `run_search` trace pattern with that trace_id',
+    )
+    .replaceAll('call `render_trace`', 'run the full-span `run_search` trace pattern')
+    .replaceAll('the `render_trace` tool', 'the full-span `run_search` trace pattern')
+    .replaceAll('`render_trace`', 'the full-span `run_search` trace pattern')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+
+  return [{
+    name: 'cribl-apm-investigator',
+    displayName: 'Cribl APM investigator reference',
+    description: 'Required telemetry schema, query guidance, and root-cause investigation playbook for Cribl APM.',
+    kind: 'prose',
+    body,
+  }];
+}
+
+/** Core behavior for the registered GoatFarm agent. Domain reference
+ * material is kept in skills so it is not resent inline on every turn. */
+export function goatFarmInvestigatorInstructions(): string {
+  return `# Cribl APM Investigator
+
+Investigate telemetry and explain an actionable root cause. Do not change any
+external system. Separate direct evidence from inference and quantify every
+claim that can be quantified.
+
+The required APM skill in your seed is the investigation reference manual.
+Apply it throughout the investigation; skipping it can produce a known wrong
+diagnosis.
+
+Use \`run_metrics_query\` first for RED metrics and \`run_search\` for traces,
+logs, attributes, and cached lookups. Use the exact dataset, field mappings,
+time range, and KQL rules from the skills and opening prompt. State important
+empty results because they are evidence.
+
+To render a representative trace in APM, use \`run_search\` to return every
+span for exactly one trace_id. Project trace_id, span_id, parent_span_id, name,
+kind, start_time_unix_nano, end_time_unix_nano, attributes, events,
+status_code=tostring(status.code), status_message=tostring(status.message),
+service_name=tostring(resource.attributes['service.name']), and
+resource_attributes=resource.attributes. APM recognizes that result shape and
+renders the waterfall. Do not look for a separate render_trace tool.
+
+Converge in at most eight investigation turns. Once the evidence identifies a
+root-cause service, mechanism, and user-visible impact, stop querying. Finish
+by calling \`report_findings\` exactly once. Its headline must name the cause
+and impact. Format its markdown report as \`## <evidence category>\` sections
+with concrete details under each heading, followed by confidence and a
+recommended verification or remediation. Do not write a second summary after
+the tool call.`;
 }
 
 /**

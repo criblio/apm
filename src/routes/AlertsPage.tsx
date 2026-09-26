@@ -14,6 +14,7 @@ import { latestRunRows, listCachedIncidents, readCachedAlertHistory, type Cached
 import IncidentsSection from '../components/IncidentsSection';
 import type { IncidentSummary } from '../api/types';
 import { useServerInvestigations } from '../hooks/useServerInvestigations';
+import { listRecentInvestigations } from '../api/investigationTransport';
 import {
   indexInvestigations,
   badgeForIncident,
@@ -224,20 +225,29 @@ export default function AlertsPage() {
         void liveHistory();
       }
 
-      // TERTIARY (flag-gated): server-side investigation lifecycle
-      // events for the "Investigating…"/"Investigated" badges. Purely
-      // additive — its failure never affects the alert tables.
+      // TERTIARY (flag-gated): read the server's session index directly.
+      // GoatFarm owns session lifecycle and does not emit APM-specific
+      // dataset rows; the v1 summary contract has all fields badges need.
       if (serverInvestigations) {
-        runQuery(Q.investigationEvents(500), historyRange, 'now', 500)
+        listRecentInvestigations(500)
           .then((rows) => {
             if (!isCurrent()) return;
+            const eventType: Record<string, string> = {
+              queued: 'started',
+              running: 'started',
+              concluded: 'investigated',
+              failed: 'investigation_failed',
+              cancelled: 'investigation_failed',
+            };
             setInvestigations(rows.map((r) => ({
-              timeMs: Number(r._time) * 1000,
-              eventType: String(r.event_type ?? ''),
-              alertId: String(r.alert_id ?? ''),
-              investigationId: String(r.investigation_id ?? ''),
-              svc: String(r.svc ?? ''),
-              conclusion: String(r.conclusion ?? ''),
+              timeMs: r.concludedAt ?? r.startedAt ?? r.createdAt,
+              eventType: eventType[r.status] ?? 'started',
+              alertId: r.alertId,
+              investigationId: r.id,
+              svc: r.incidentKey.startsWith('apm:')
+                ? (r.incidentKey.split(':')[1] ?? '')
+                : (r.incidentKey.split(':')[0] ?? ''),
+              conclusion: '',
             })));
           })
           .catch(() => { /* badges are best-effort */ });

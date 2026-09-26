@@ -1,7 +1,8 @@
 /**
  * Low-volume mode toggle. When ON, the alert evaluator adds a
- * fourth detection arm with the older chaos-eval thresholds —
- * `curr_errors >= 2 AND curr_err_pct >= 1` — which catches the
+ * fourth detection arm with sensitive chaos-eval thresholds —
+ * at least two errors and a 1% rate, plus a clean baseline or 3x
+ * increase — which catches the
  * llmRateLimit / recommendationCache scenarios on services whose
  * total traffic is too thin for the production-tuned arms to
  * fire. Off by default; users in low-traffic environments

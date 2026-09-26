@@ -145,34 +145,20 @@ npm run provision          # reconcile
 npm run provision -- --dry # dry-run (show plan without applying)
 ```
 
-### Framework packages (GitHub Packages)
+### Framework packages (npmjs)
 
 The shared framework (`cribl-search-app-framework`) is consumed as
-published npm packages from **GitHub Packages** under the `@criblio`
-scope: `app-utils`, `app-tooling`, `agent-protocol`, `cell-harness`,
-`cell-workspace`. The committed `.npmrc` routes the scope; the old
-`file:../` + `.framework-sha` pin is gone (retired 2026-08-21) — no
-local framework checkout is needed to build this app.
-
-**Auth (one-time per machine):** GitHub Packages requires a token
-even for public packages. Add to `~/.npmrc`:
-
-```
-//npm.pkg.github.com/:_authToken=YOUR_TOKEN
-```
-
-where the token has `read:packages` — either a classic PAT, or the
-gh CLI's token after `gh auth refresh -h github.com -s read:packages`
-(then `gh auth token` prints it). CI needs neither: workflows pass
-`registry-token: ${{ github.token }}` to the release-build action.
+public npm packages from **npmjs** under the `@criblio` scope:
+`app-utils`, `app-tooling`, and `agent-protocol`. No registry override
+or token is required. The old `file:../` + `.framework-sha` pin and
+GitHub Packages `.npmrc` are gone; no local framework checkout is
+needed to build this app.
 
 **To bump the framework:** merge the framework change (the publish
 workflow puts any new package version in the registry on master
 push), then bump the version range in this repo's `package.json` and
 run `npm install` — a normal dependency PR. If your machine has no
-registry token, the **Update lockfile** workflow
-(`gh workflow run "Update lockfile" --ref <branch>`) regenerates
-`package-lock.json` on the branch in CI.
+special registry configuration, npm resolves them from npmjs.
 
 **Developing the framework itself** still uses a local checkout of
 `cribl-search-app-framework` (npm workspaces; `npm test -ws`). To

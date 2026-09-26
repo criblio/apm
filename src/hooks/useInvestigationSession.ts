@@ -91,16 +91,20 @@ export function useInvestigationSession(
   const genRef = useRef(0);
 
   const subscribe = useCallback(
-    (investigationId: string, fromSeq: number) => {
+    (investigationId: string, fromSeq: number, requestId?: string) => {
       unsubRef.current?.();
+      // `stopOnIdle` is gone: `idle` means "between turns" and is reached
+      // before the first answer as well as after the last, so stopping there
+      // could end observation before the response was written. Observation
+      // now follows the request receipt and drains through its `finalSeq`.
       unsubRef.current = subscribeInvestigation(investigationId, fromSeq, {
-        stopOnIdle: true,
-        onEvent: (ev, seq) => {
-          seqRef.current = Math.max(seqRef.current, seq);
-          setEntries((prev) => applyLoopEvent(prev, ev));
-        },
-        onUserMessage: (content, seq) => {
-          seqRef.current = Math.max(seqRef.current, seq);
+        requestId,
+        // The resume position comes from onCursor, not from the event
+        // callbacks: it counts every consumed frame and stays correct when
+        // observation throws part-way, which is when resuming matters most.
+        onCursor: (seq) => { seqRef.current = Math.max(seqRef.current, seq); },
+        onEvent: (ev) => setEntries((prev) => applyLoopEvent(prev, ev)),
+        onUserMessage: (content) => {
           // Dedup the echo of a message we already appended optimistically.
           if (pendingUserRef.current[0] === content) {
             pendingUserRef.current.shift();
@@ -109,6 +113,18 @@ export function useInvestigationSession(
           setEntries((prev) => [...prev, userEntry(content)]);
         },
         onStatus: (s) => setStatus(s),
+        // `stalled` is a failure, not an ending: a terminal receipt promised
+        // events through finalSeq that never arrived, so the transcript is
+        // short an answer. Say so rather than leaving the turn looking done.
+        onOutcome: (result) => {
+          if (result.reason === 'stalled') {
+            setError(
+              'GoatTown reported the turn finished but stopped sending events before '
+              + `its final sequence (${result.execution?.finalSeq ?? 'unknown'}; `
+              + `consumed ${result.cursor}). The answer may be incomplete.`,
+            );
+          }
+        },
         onError: (err) => setError(err instanceof Error ? err.message : String(err)),
       });
     },
@@ -175,11 +191,13 @@ export function useInvestigationSession(
       setEntries((prev) => [...prev, userEntry(text)]);
       pendingUserRef.current.push(text);
       try {
-        await sendInvestigationMessage(id, text);
-        // The prior subscription stopped at idle; resume from where we
-        // left off so the new assistant turn streams in.
+        const { requestId } = await sendInvestigationMessage(id, text);
+        // Resume from where the previous turn left off, following this
+        // message's own receipt: several queued messages can be consumed by
+        // one response, and each carries its own receipt, so following the
+        // receipt is what makes "my message finished" answerable.
         setStatus('running');
-        subscribe(id, seqRef.current);
+        subscribe(id, seqRef.current, requestId);
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
       } finally {

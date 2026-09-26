@@ -49,10 +49,11 @@ import {
   requiresApproval,
   type MetricsQueryUi,
   type RenderTraceUi,
+  type RunSearchUi,
   type ToolResultUi,
 } from '../api/agentTools';
 import SpanTree from '../components/SpanTree';
-import { summarizeTrace } from '../api/transform';
+import { summarizeTrace, toJaegerTraces } from '../api/transform';
 import s from './InvestigatePage.module.css';
 
 const EMPTY_SUGGESTIONS: string[] = [
@@ -276,6 +277,26 @@ function renderApmToolCard(
 ) {
   if (ui.kind === 'trace') return <TraceCard ui={ui as RenderTraceUi} />;
   if (ui.kind === 'metrics') return <MetricsToolCard ui={ui as MetricsQueryUi} />;
+  if (ui.kind === 'search') {
+    const search = ui as RunSearchUi;
+    const completeSpanRows = search.rows.length > 0 && search.rows.every((row) =>
+      typeof row.trace_id === 'string' &&
+      typeof row.span_id === 'string' &&
+      typeof row.name === 'string' &&
+      typeof row.service_name === 'string' &&
+      Number.isFinite(Number(row.start_time_unix_nano)) &&
+      Number.isFinite(Number(row.end_time_unix_nano)),
+    );
+    const traces = completeSpanRows ? toJaegerTraces(search.rows) : [];
+    if (traces.length === 1 && traces[0].spans.length > 0) {
+      return <TraceCard ui={{
+        kind: 'trace',
+        traceId: traces[0].traceID,
+        description: search.description ?? 'Representative trace',
+        trace: traces[0],
+      }} />;
+    }
+  }
   if ((ui as unknown as { kind?: string }).kind === 'code') {
     return <CodeToolCard entry={ctx?.entry as CodeToolEntry} hotLines={hotLines} />;
   }
@@ -290,14 +311,18 @@ interface LocationState {
   openingPrompt?: string;
 }
 
-/** Turn a seed into the create payload the cell expects: the question
- *  becomes the prompt, and the scope becomes the context (the cell
- *  builds the full preamble itself via buildSeedPrompt). */
+/** Turn a seed into a self-contained GoatFarm prompt. Context is also
+ * sent structurally for compatibility with the former APM cell. */
 function seedToPrompt(seed: InvestigationSeed): string {
+  const scope = [
+    seed.service ? `- Service: ${seed.service}` : '',
+    seed.operation ? `- Operation: ${seed.operation}` : '',
+    `- Time range: ${seed.earliest ?? '-15m'} to ${seed.latest ?? 'now'}`,
+  ].filter(Boolean).join('\n');
   const signals = seed.knownSignals?.length
     ? `\n\nWhat we already know:\n- ${seed.knownSignals.join('\n- ')}`
     : '';
-  return `${seed.question}${signals}`;
+  return `${seed.question}\n\nScope:\n${scope}${signals}`;
 }
 
 export default function InvestigatePage() {
@@ -383,21 +408,23 @@ function CreatingInvestigation({ seed }: { seed: InvestigationSeed }) {
   useEffect(() => {
     if (startedRef.current) return;
     startedRef.current = true;
-    const prompt = seedToPrompt(seed);
-    loadAppSettings()
-      .catch(() => null)
-      .then((settings) =>
-        createInvestigation({
+    Promise.all([
+      enrichSeed(seed),
+      loadAppSettings().catch(() => null),
+    ])
+      .then(([enriched, settings]) => {
+        const prompt = seedToPrompt(enriched);
+        return createInvestigation({
           prompt,
           context: {
-            service: seed.service,
-            earliest: seed.earliest,
-            latest: seed.latest,
+            service: enriched.service,
+            earliest: enriched.earliest,
+            latest: enriched.latest,
           },
           repos: settings?.sourceRepos,
-        }),
-      )
-      .then(({ id }) => {
+        }).then((created) => [created, prompt] as const);
+      })
+      .then(([{ id }, prompt]) => {
         // Launched from an incident → record the link on the incident's
         // event log (best-effort; the run itself is already created).
         if (seed.incidentId) {
@@ -442,13 +469,22 @@ function NewServerInvestigation() {
       setBusy(true);
       setError(null);
       try {
-        const settings = await loadAppSettings().catch(() => null);
+        const [settings, enriched] = await Promise.all([
+          loadAppSettings().catch(() => null),
+          enrichSeed({ question: text }),
+        ]);
+        const prompt = seedToPrompt(enriched);
         const { id } = await createInvestigation({
-          prompt: text,
+          prompt,
+          context: {
+            service: enriched.service,
+            earliest: enriched.earliest,
+            latest: enriched.latest,
+          },
           repos: settings?.sourceRepos,
         });
         navigate(`/investigate?investigation=${encodeURIComponent(id)}`, {
-          state: { openingPrompt: text },
+          state: { openingPrompt: prompt },
         });
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));

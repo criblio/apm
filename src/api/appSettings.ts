@@ -45,11 +45,6 @@ export interface AppSettings {
    *  default (dark). Provision-time for the trigger search (re-provision
    *  after toggling). Design: docs/research/server-investigations/design.md. */
   serverInvestigations?: boolean;
-  /** Override for the investigator cell's base URL (the UI transport
-   *  target). Must match the domain declared in config/proxies.yml, or
-   *  the platform proxy blocks it. Unset ⇒ the pinned default in
-   *  investigationTransport.ts. */
-  cellUrl?: string;
   /** Source repos the server-side agent may check out to inspect code
    *  when telemetry narrows to a service. Threaded into interactive
    *  investigations; `service: '*'`/omitted = monorepo catch-all. */

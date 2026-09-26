@@ -13,6 +13,7 @@ import {
   getServerInvestigations,
   setServerInvestigations,
 } from '../serverInvestigations';
+import { alertNotify } from '../queries';
 
 setCurrentDataset('otel');
 
@@ -36,6 +37,10 @@ describe('criblapm__alert_notify gating', () => {
     expect(n.items[0].conf.triggerType).toBe('resultsCount');
     expect(n.items[0].conf.triggerCount).toBe(0);
     expect(n.items[0].targetConfigs[0].conf.includeResults).toBe(true);
+    expect(alertNotify()).toContain('agent="apm-investigator"');
+    expect(alertNotify()).toContain('eventId=tostring(event_id)');
+    expect(alertNotify()).toContain('subject=tostring(alert_id)');
+    expect(alertNotify()).toContain('group=strcat("apm:"');
     // The default remains off so the flag genuinely gates it.
     expect(getServerInvestigations()).toBe(true);
   });

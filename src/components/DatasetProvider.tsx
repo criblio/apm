@@ -17,7 +17,6 @@ import { setLowVolumeMode } from '../api/lowVolumeMode';
 import { setMetricsRead } from '../api/metricsRead';
 import { setMetricsEmit } from '../api/metricsEmit';
 import { setServerInvestigations } from '../api/serverInvestigations';
-import { setCellBaseUrl } from '../api/investigationTransport';
 import { setSearchCadence } from '@criblio/app-utils/cadence';
 
 // Synchronous module-scope default. The framework's dataset store
@@ -63,9 +62,6 @@ export default function DatasetProvider({ children }: Props) {
           }
           if (typeof settings.serverInvestigations === 'boolean') {
             setServerInvestigations(settings.serverInvestigations);
-          }
-          if (typeof settings.cellUrl === 'string') {
-            setCellBaseUrl(settings.cellUrl);
           }
         }
       })

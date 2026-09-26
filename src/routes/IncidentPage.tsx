@@ -23,7 +23,11 @@ import * as Q from '../api/queries';
 import { serviceColor } from '../utils/spans';
 import { listCachedIncidents, readCachedAlertHistory } from '../api/panelCache';
 import { commitHumanIncidentAction, type HumanIncidentAction } from '../api/incidents';
-import { fetchInvestigationStatus, listInvestigations } from '../api/investigationTransport';
+import {
+  fetchInvestigationReportHeadline,
+  fetchInvestigationStatus,
+  listRecentInvestigations,
+} from '../api/investigationTransport';
 import { useServerInvestigations } from '../hooks/useServerInvestigations';
 import type { IncidentSummary, IncidentTimelineEntry } from '../api/types';
 import type { IncidentSeverity, IncidentStatus } from '../api/generatedEventContract';
@@ -183,7 +187,8 @@ export default function IncidentPage() {
       // incidents — investigations often conclude well after the last
       // firing transition.
       const svcOf = (inv: { incidentKey: string; alertId: string }): string => {
-        const key = inv.incidentKey.split(':')[0];
+        const parts = inv.incidentKey.split(':');
+        const key = parts[0] === 'apm' ? parts[1] : parts[0];
         if (key && key !== 'interactive') return key;
         const m = /^auto:[a-z_]+:([^:]+)/.exec(inv.alertId);
         return m?.[1] ?? '';
@@ -196,7 +201,7 @@ export default function IncidentPage() {
         idle: 'linked',
         cancelled: 'linked',
       };
-      listInvestigations({ limit: 100 })
+      listRecentInvestigations(500)
         .then(async (all) => {
           if (cancelled) return;
           const correlated = all.filter((inv) => {
@@ -210,13 +215,24 @@ export default function IncidentPage() {
             if (inv.status === 'concluded') {
               try {
                 const st = await fetchInvestigationStatus(inv.id);
-                const c = st.conclusion as { conclusion?: unknown } | null;
+                const c = st.conclusion as {
+                  conclusion?: unknown;
+                  headline?: unknown;
+                  report?: unknown;
+                } | null;
                 if (c && typeof c.conclusion === 'string') conclusion = c.conclusion;
+                else if (c && typeof c.headline === 'string') conclusion = c.headline;
+                else if (c && typeof c.report === 'string') conclusion = c.report;
               } catch { /* conclusion is a bonus, the row still renders */ }
+            }
+            if (!conclusion && (inv.status === 'concluded' || inv.status === 'idle')) {
+              try {
+                conclusion = await fetchInvestigationReportHeadline(inv.id);
+              } catch { /* report is a bonus, the row still renders */ }
             }
             return {
               timeMs: inv.concludedAt ?? inv.startedAt ?? inv.createdAt,
-              eventType: statusToEventType[inv.status] ?? 'started',
+              eventType: conclusion ? 'investigated' : (statusToEventType[inv.status] ?? 'started'),
               investigationId: inv.id,
               svc: svcOf(inv),
               signalType: '',
@@ -284,6 +300,35 @@ export default function IncidentPage() {
     }
     return ids;
   }, [events]);
+
+  useEffect(() => {
+    if (!serverInvestigations || linkedIds.size === 0) return;
+    const known = new Set(investigations.map((inv) => inv.investigationId));
+    const missing = [...linkedIds].filter((id) => !known.has(id));
+    if (missing.length === 0) return;
+    let cancelled = false;
+    void Promise.all(missing.map(async (id): Promise<InvestigationRow> => {
+      const link = events.find((event) =>
+        event.eventType === 'investigation_linked' && event.investigationId === id);
+      let conclusion = '';
+      try {
+        conclusion = await fetchInvestigationReportHeadline(id);
+      } catch { /* linked row still renders without its report */ }
+      return {
+        timeMs: link?.timeMs ?? 0,
+        eventType: conclusion ? 'investigated' : 'linked',
+        investigationId: id,
+        svc: incident?.rootService ?? '',
+        signalType: '',
+        conclusion,
+      };
+    })).then((rows) => {
+      if (cancelled) return;
+      setInvestigations((current) => [...current, ...rows.filter((row) =>
+        !current.some((existing) => existing.investigationId === row.investigationId))]);
+    });
+    return () => { cancelled = true; };
+  }, [events, incident?.rootService, investigations, linkedIds, serverInvestigations]);
 
   /** Latest lifecycle event per investigation id → its card row; then
    *  linked-but-uncorrelated runs appended as bare rows. */

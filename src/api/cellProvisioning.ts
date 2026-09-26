@@ -1,5 +1,5 @@
 /**
- * Investigator-cell provisioning steps that live OUTSIDE the generic
+ * Shared GoatTown provisioning steps that live OUTSIDE the generic
  * saved-search reconcile: the webhook notification target and the
  * alert-notify → target binding.
  *
@@ -27,9 +27,9 @@ const SEARCH_GROUP = 'default_search';
 const NOTIFICATIONS_PATH = `/m/${SEARCH_GROUP}/notifications`;
 
 export interface CellWebhookConfig {
-  /** Cell base URL, e.g. https://54-71-34-177.sslip.io */
+  /** Shared GoatTown base URL. */
   cellUrl: string;
-  /** The cell's WEBHOOK_BEARER (its /alerts/fire bearer). */
+  /** The installation-scoped webhook token for /alerts/fire. */
   bearer: string;
 }
 

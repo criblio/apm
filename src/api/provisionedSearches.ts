@@ -62,8 +62,8 @@ export type { ProvisionedSearch };
 export const CRIBLAPM_PREFIX = 'criblapm__';
 
 /** The webhook notification target the alert-notify search fires at.
- *  Created/updated by scripts/provision.ts from the CELL_URL /
- *  CELL_WEBHOOK_BEARER env when serverInvestigations is on. */
+ *  Created/updated by scripts/provision.ts from the GOATTOWN_URL /
+ *  GOATTOWN_WEBHOOK_TOKEN env when serverInvestigations is on. */
 export const CELL_WEBHOOK_TARGET_ID = 'criblapm_cell_webhook';
 
 /** Name of the workspace lookup the op-baseline search writes to.

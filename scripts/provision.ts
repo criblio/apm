@@ -43,13 +43,14 @@ import {
   getStatus as getDatasetStatus,
 } from '../src/api/datasetProvisioner.js';
 import { setSearchCadence } from '@criblio/app-utils/cadence';
-import { setCurrentDataset } from '@criblio/app-utils/dataset';
+import { getCurrentDataset, setCurrentDataset } from '@criblio/app-utils/dataset';
 import { setLowVolumeMode } from '../src/api/lowVolumeMode.js';
 import { setMetricsEmit, getMetricsEmit } from '../src/api/metricsEmit.js';
 import { getServerInvestigations, setServerInvestigations } from '../src/api/serverInvestigations.js';
 import { getMetricEmitters } from '../src/api/provisionedSearches.js';
 import { runMetricsBackfill } from '../src/api/metricsBackfill.js';
 import { makeNodeBackfillDeps } from './metricsBackfillDeps.js';
+import { stageApmInvestigatorConfiguration } from '../src/api/goatTownProvisioning.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..');
@@ -118,11 +119,10 @@ async function loadAppSettingsFromKV(http: HttpClient): Promise<void> {
  * (the same code the Settings UI uses) so CLI and UI stay identical.
  * Must run AFTER the search reconcile so alert_notify exists before its
  * notification binds. No-op when server investigations are off.
- * CELL_URL / CELL_WEBHOOK_BEARER come from the environment/.env.
+ * GOATTOWN_URL / GOATTOWN_APP_TOKEN come from the environment/.env.
  */
 async function wireCellTrigger(
   http: HttpClient,
-  flagExplicit: boolean,
   dryRun: boolean,
 ): Promise<void> {
   if (!getServerInvestigations()) return;
@@ -130,20 +130,40 @@ async function wireCellTrigger(
     console.log('▶ Cell trigger (dry-run): would ensure webhook target + alert notification');
     return;
   }
-  const cellUrl = process.env.CELL_URL;
-  const bearer = process.env.CELL_WEBHOOK_BEARER;
+  const cellUrl = process.env.GOATTOWN_URL ?? 'https://goattown-shared.lab.cribl.io';
+  // Prefer the connected-app credential; GOATTOWN_WEBHOOK_TOKEN is the legacy
+  // installation secret and is no longer required.
+  const bearer = process.env.GOATTOWN_APP_TOKEN ?? process.env.GOATTOWN_WEBHOOK_TOKEN;
+  const adminBearer = process.env.GOATTOWN_ADMIN_TOKEN;
+  if (cellUrl && adminBearer) {
+    const registration = await stageApmInvestigatorConfiguration(cellUrl, getCurrentDataset(), {
+      authorization: `Bearer ${adminBearer}`,
+    });
+    console.log(
+      `▶ APM configuration: staged revision ${registration.revisionId} ` +
+      `(${registration.changes} change(s), ${registration.skills} skills` +
+      `${registration.hasConflicts ? ', conflicts require review' : ''}) — activate in GoatTown`,
+    );
+  } else {
+    console.log(
+      '▶ APM configuration: left to the GoatTown tenant console. ' +
+        'Set GOATTOWN_ADMIN_TOKEN only when this deploy is authorized to stage revisions.',
+    );
+  }
   if (cellUrl && bearer) {
     const t = await ensureCellWebhookTarget(http, { cellUrl, bearer });
     console.log(`▶ Notification target: ${t === 'created' ? '+ create' : '~ update'} ${CELL_WEBHOOK_TARGET_ID}`);
-  } else if (flagExplicit) {
-    // An explicit enable needs the target's config; a dangling target
-    // ref would break the trigger. (When inferred-on, the target
-    // already exists from a prior enable — don't hard-exit a routine run.)
-    console.error(
-      '✗ serverInvestigations is on but CELL_URL / CELL_WEBHOOK_BEARER are not set — ' +
-        'set them in .env to provision the webhook target.',
+  } else {
+    // Not an error any more. The Settings page is the supported way to
+    // provision this target: it reads the connected-app credential that
+    // GoatTown's console delivers to KV, which the CLI cannot see (the
+    // app-scoped KV needs app context a machine token does not have). A
+    // deploy without the env var is the normal case, not a misconfiguration.
+    console.log(
+      '▶ Notification target: left to the Settings page, which provisions it ' +
+        'from the connected-app credential in KV. Set GOATTOWN_APP_TOKEN only ' +
+        'to provision it from CI.',
     );
-    process.exit(1);
   }
   // Bind alert_notify → target via the notifications resource (writing
   // it inline in the search body is silently dropped by the API).
@@ -157,15 +177,13 @@ async function wireCellTrigger(
   // app-scoped and a machine token has no app context (GET
   // /kvstore/settings/app → 400 "App context required"). So the Settings
   // page is the source of truth (it pushes to the cell on Save), and the
-  // CLI manages repos ONLY from an explicit CELL_REPOS_JSON env — the same
-  // deterministic pattern as CELL_URL / the bearers. Absent that env, the
+  // CLI manages repos ONLY from an explicit GOATTOWN_REPOS_JSON env. Absent that env, the
   // CLI never touches the cell's repo config (so a deploy can't wipe it).
-  const uiBearer = process.env.CELL_UI_BEARER;
-  const reposEnv = process.env.CELL_REPOS_JSON;
+  const reposEnv = process.env.GOATTOWN_REPOS_JSON;
   if (!reposEnv) {
     console.log(
       '▶ Source repos: left to the UI (Settings → Source repositories → Save). ' +
-        'Set CELL_REPOS_JSON to manage them from the CLI.',
+        'Set GOATTOWN_REPOS_JSON to manage them from the CLI.',
     );
     return;
   }
@@ -183,24 +201,28 @@ async function wireCellTrigger(
         .filter((r) => r.url);
     }
   } catch {
-    console.error('✗ Source repos: CELL_REPOS_JSON is not valid JSON — leaving the cell config untouched.');
+    console.error('✗ Source repos: GOATTOWN_REPOS_JSON is not valid JSON — leaving GoatTown config untouched.');
     return;
   }
   if (repos.length === 0) {
-    console.log('▶ Source repos: CELL_REPOS_JSON has no valid repos — leaving the cell config untouched.');
-  } else if (cellUrl && uiBearer) {
+    console.log('▶ Source repos: GOATTOWN_REPOS_JSON has no valid repos — leaving GoatTown config untouched.');
+  } else if (cellUrl && adminBearer) {
     const resp = await fetch(`${cellUrl.replace(/\/$/, '')}/config/repos`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${uiBearer}` },
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${adminBearer}`,
+        'x-goattown-user': 'cribl-apm',
+      },
       body: JSON.stringify({ repos }),
     });
     if (resp.ok) {
-      console.log(`▶ Source repos → cell: ${repos.length} from CELL_REPOS_JSON for alert-fired runs`);
+      console.log(`▶ Source repos → GoatTown: ${repos.length} from GOATTOWN_REPOS_JSON for alert-fired runs`);
     } else {
       console.error(`✗ Source repos → cell failed (${resp.status}): ${(await resp.text()).slice(0, 160)}`);
     }
   } else {
-    console.log('▶ Source repos: CELL_REPOS_JSON set but CELL_UI_BEARER missing — skipped push.');
+    console.log('▶ Source repos: GOATTOWN_REPOS_JSON set but GOATTOWN_ADMIN_TOKEN missing — skipped push.');
   }
 }
 
@@ -276,7 +298,7 @@ async function main(): Promise<void> {
       console.log(`▶ Provision dry-run: ${actions.length} action(s)`);
       for (const a of actions) console.log(actionLabel(a));
     }
-    await wireCellTrigger(http, flagExplicit, true);
+    await wireCellTrigger(http, true);
     // Dataset acceleration dry-run
     const status = await getDatasetStatus(http);
     console.log('▶ Dataset acceleration:');
@@ -308,7 +330,7 @@ async function main(): Promise<void> {
   // Wire (or tear down) the alert → cell trigger, AFTER the search
   // reconcile so alert_notify exists before its notification binds.
   if (getServerInvestigations()) {
-    await wireCellTrigger(http, flagExplicit, false);
+    await wireCellTrigger(http, false);
   } else if (flagExplicit) {
     // Explicit disable: remove the notification binding (the search
     // itself is removed by the reconcile above).

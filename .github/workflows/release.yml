@@ -26,11 +26,9 @@ jobs:
             echo "::error::Tag $GITHUB_REF_NAME ($TAG_VERSION) does not match package.json version ($PKG_VERSION)"
             exit 1
           fi
-      # Registry mode (see ci.yml): framework packages come from GitHub
-      # Packages; no framework clone, no SHA pin.
-      - uses: criblio/cribl-search-app-framework/.github/actions/release-build@7ef8eb4693afeafe707b5c26a998892c36c3c13e
-        with:
-          registry-token: ${{ github.token }}
+      # Framework packages are public on npmjs; no registry token or
+      # framework checkout is required.
+      - uses: criblio/cribl-search-app-framework/.github/actions/release-build@72dc8f437e425549d1e8237223dc17e8e7250619
       - name: Upgrade the shared validation workspace with the exact candidate
         env:
           CRIBL_BASE_URL: ${{ secrets.CRIBL_RELEASE_VALIDATION_BASE_URL }}

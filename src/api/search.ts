@@ -15,6 +15,13 @@ import {
   readOperationAnomaliesViaMetrics,
 } from './metricsPanels';
 import { getMetricsRead } from './metricsRead';
+import { promWindow } from './metricNames';
+import {
+  listMetricMetadata as listCriblMetricMetadata,
+  listSeries as listCriblMetricSeries,
+  queryInstant as queryCriblMetricsInstant,
+  queryRange as queryCriblMetricsRange,
+} from './metrics';
 import { applyFilterRulesToRaw, DEFAULT_FILTER_RULES } from './errorFilter';
 import * as Q from './queries';
 import { flatFieldsAvailable } from './featureDetect';
@@ -1107,6 +1114,16 @@ function discoverMetricNames(rows: Record<string, unknown>[]): MetricSummary[] {
   const metrics = new Map<string, { count: number; services: Set<string> }>();
   for (const row of rows) {
     const svc = String(row['service.name'] ?? '');
+    const normalizedName = typeof row._metric === 'string' ? row._metric : '';
+    if (normalizedName && Number.isFinite(Number(row._value))) {
+      let entry = metrics.get(normalizedName);
+      if (!entry) {
+        entry = { count: 0, services: new Set() };
+        metrics.set(normalizedName, entry);
+      }
+      entry.count++;
+      if (svc) entry.services.add(svc);
+    }
     for (const [key, val] of Object.entries(row)) {
       if (METRIC_EXCLUDE_KEYS.has(key)) continue;
       if (typeof val !== 'number') continue;
@@ -1131,11 +1148,43 @@ function discoverMetricNames(rows: Record<string, unknown>[]): MetricSummary[] {
 function parseMetricType(raw: string): MetricType {
   if (raw === 'counter') return 'counter';
   if (raw === 'gauge') return 'gauge';
-  if (raw === 'histogram') return 'histogram';
+  if (raw === 'histogram' || raw === 'hist_counter') return 'histogram';
   return 'unknown';
 }
 
 let metricNamesCache: MetricSummary[] | null = null;
+
+const PROM_METRIC_RE = /^[a-zA-Z_:][a-zA-Z0-9_:]*$/;
+const PROM_LABEL_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+
+function promLabelValue(value: string): string {
+  return JSON.stringify(value);
+}
+
+function promSelector(metric: string, service?: string): string {
+  return `${metric}${service ? `{service_name=${promLabelValue(service)}}` : ''}`;
+}
+
+function promAggQuery(params: Q.MetricSeriesParams, type: MetricType = 'unknown'): string | null {
+  if (!PROM_METRIC_RE.test(params.metric)) return null;
+  if (params.groupBy && !PROM_LABEL_RE.test(params.groupBy)) return null;
+  const selector = promSelector(params.metric, params.service);
+  const by = params.groupBy ? ` by (${params.groupBy})` : '';
+  if (type === 'histogram') {
+    const quantile = ({ p50: 0.5, p75: 0.75, p95: 0.95, p99: 0.99 } as Record<string, number>)[params.agg] ?? 0.5;
+    const labels = params.groupBy ? `le, ${params.groupBy}` : 'le';
+    return `histogram_quantile(${quantile}, sum(rate(${selector}[${Math.max(300, params.binSeconds * 2)}s])) by (${labels}))`;
+  }
+  switch (params.agg) {
+    case 'count': return `count(${selector})${by}`;
+    case 'rate': return `sum(rate(${selector}[${Math.max(60, params.binSeconds * 2)}s]))${by}`;
+    case 'p50': return `quantile(0.5, ${selector})${by}`;
+    case 'p75': return `quantile(0.75, ${selector})${by}`;
+    case 'p95': return `quantile(0.95, ${selector})${by}`;
+    case 'p99': return `quantile(0.99, ${selector})${by}`;
+    default: return `${params.agg}(${selector})${by}`;
+  }
+}
 
 /**
  * List all metric names. Tries the cached scheduled search first
@@ -1148,6 +1197,22 @@ export async function listMetrics(
   latest = 'now',
 ): Promise<MetricSummary[]> {
   if (metricNamesCache) return metricNamesCache;
+  // Native OTLP metrics now land in Cribl Metrics rather than as
+  // generic_metrics Lakehouse rows. Prefer its first-class catalog, while
+  // retaining the cached/live KQL path for older inputs.
+  try {
+    const metadata = await listCriblMetricMetadata();
+    const result = metadata.map((metric) => ({
+      name: metric.name,
+      samples: 0,
+      services: 0,
+      type: parseMetricType(metric.type),
+    })).filter((metric) => metric.name);
+    if (result.length > 0) {
+      metricNamesCache = result;
+      return result;
+    }
+  } catch { /* older workspace — use Lakehouse compatibility path */ }
   // Try the pre-computed catalog from the scheduled search cache
   try {
     const cached = await listCachedMetricCatalog();
@@ -1172,6 +1237,16 @@ export async function listMetrics(
     services: toNum(r.services),
     type: parseMetricType(String(r.metric_type ?? '')),
   })).filter((m) => m.name);
+  if (result.length === 0) {
+    try {
+      const samples = await runQuery(Q.metricSampleRecords(), earliest, latest, 500);
+      const discovered = discoverMetricNames(samples);
+      if (discovered.length > 0) {
+        metricNamesCache = discovered;
+        return discovered;
+      }
+    } catch { /* no compatible Lakehouse metric records */ }
+  }
   if (result.length > 0) metricNamesCache = result;
   return result;
 }
@@ -1183,6 +1258,17 @@ export async function listMetricServices(
   latest = 'now',
 ): Promise<string[]> {
   if (!metric) return [];
+  if (PROM_METRIC_RE.test(metric)) {
+    try {
+      const series = await listCriblMetricSeries(metric);
+      const services = new Set<string>();
+      for (const labels of series) {
+        const service = labels.service_name ?? labels['service.name'] ?? labels.k8s_deployment_name;
+        if (service) services.add(service);
+      }
+      if (services.size > 0) return [...services].sort();
+    } catch { /* older workspace — use Lakehouse compatibility path */ }
+  }
   const rows = await runQuery(Q.metricServices(metric), earliest, latest, 500);
   return rows.map((r) => String(r.svc)).filter(Boolean);
 }
@@ -1197,6 +1283,17 @@ export async function listServiceMetricNames(
   if (!service) return [];
   const cached = svcMetricCache.get(service);
   if (cached) return cached;
+  try {
+    // The catalog cannot enumerate all series by a label-only selector, and
+    // this metrics engine rejects `{service_name="..."}` without a metric
+    // name. Return the installation catalog here; the subsequent batched
+    // PromQL reads remove candidates that have no samples for this service.
+    const names = (await listCriblMetricMetadata()).map((metric) => metric.name).sort();
+    if (names.length > 0) {
+      svcMetricCache.set(service, names);
+      return names;
+    }
+  } catch { /* older workspace — use Lakehouse compatibility path */ }
   const rows = await runQuery(
     Q.serviceMetricSampleRecords(service, 200),
     earliest,
@@ -1221,6 +1318,25 @@ export async function getServiceMetricLatest(
   latest = 'now',
 ): Promise<number | undefined> {
   if (!service || !metric) return undefined;
+  if (PROM_METRIC_RE.test(metric)) {
+    try {
+      const metadata = await listCriblMetricMetadata(metric);
+      const type = parseMetricType(metadata.find((item) => item.name === metric)?.type ?? '');
+      const query = type === 'histogram'
+        ? promAggQuery({ metric, service, binSeconds: 300, agg: 'p95' }, type)
+        : `max(${promSelector(metric, service)})`;
+      let samples = query
+        ? await queryCriblMetricsInstant(query, { earliest, latest })
+        : [];
+      if (samples.length === 0) {
+        samples = await queryCriblMetricsInstant(
+          `max(${metric}{k8s_deployment_name=${promLabelValue(service)}})`,
+          { earliest, latest },
+        );
+      }
+      if (samples.length > 0 && Number.isFinite(samples[0]._value)) return samples[0]._value;
+    } catch { /* older workspace — use Lakehouse compatibility path */ }
+  }
   const rows = await runQuery(
     Q.serviceMetricLatest(service, metric),
     earliest,
@@ -1245,6 +1361,15 @@ export async function getServiceMetricDelta(
   latest = 'now',
 ): Promise<number> {
   if (!service || !metric) return 0;
+  if (PROM_METRIC_RE.test(metric)) {
+    try {
+      const samples = await queryCriblMetricsInstant(
+        `sum(increase(${promSelector(metric, service)}[${promWindow(earliest, latest)}]))`,
+        { earliest, latest },
+      );
+      if (samples.length > 0 && Number.isFinite(samples[0]._value)) return samples[0]._value;
+    } catch { /* older workspace — use Lakehouse compatibility path */ }
+  }
   const rows = await runQuery(
     Q.serviceMetricDelta(service, metric),
     earliest,
@@ -1272,6 +1397,32 @@ export async function getServiceMetricsBatch(
 ): Promise<Map<string, Array<{ t: number; v: number }>>> {
   const out = new Map<string, Array<{ t: number; v: number }>>();
   if (!service || metrics.length === 0) return out;
+  const promMetrics = metrics.filter((metric) => PROM_METRIC_RE.test(metric));
+  if (promMetrics.length > 0) {
+    try {
+      const metadata = await listCriblMetricMetadata();
+      const types = new Map(metadata.map((item) => [item.name, parseMetricType(item.type)]));
+      const results = await Promise.all(promMetrics.map(async (metric) => ({
+        metric,
+        series: await queryCriblMetricsRange(promAggQuery({
+          metric,
+          service,
+          binSeconds,
+          agg: types.get(metric) === 'histogram' ? 'p95' : 'avg',
+        }, types.get(metric)) ?? `avg(${promSelector(metric, service)})`, {
+          earliest,
+          latest,
+          step: binSeconds,
+        }),
+      })));
+      for (const { metric, series } of results) {
+        const points = series.flatMap((item) =>
+          item.points.map((point) => ({ t: point.t * 1000, v: point.v })));
+        if (points.length > 0) out.set(metric, points.sort((a, b) => a.t - b.t));
+      }
+      if (out.size > 0) return out;
+    } catch { /* older workspace — use Lakehouse compatibility path */ }
+  }
   const rows = await runQuery(
     Q.serviceMetricsBatch(service, metrics, binSeconds),
     earliest,
@@ -1281,6 +1432,12 @@ export async function getServiceMetricsBatch(
   const metricSet = new Set(metrics);
   for (const row of rows) {
     const bucket = toNum(row.bucket) * 1000;
+    const normalized = String(row._metric ?? row.metric_name ?? '');
+    if (metricSet.has(normalized) && Number.isFinite(Number(row._value))) {
+      let arr = out.get(normalized);
+      if (!arr) { arr = []; out.set(normalized, arr); }
+      arr.push({ t: bucket, v: toNum(row._value) });
+    }
     for (const [key, val] of Object.entries(row)) {
       if (!metricSet.has(key)) continue;
       if (typeof val !== 'number') continue;
@@ -1309,6 +1466,19 @@ export async function getServiceMetricSeries(
   latest = 'now',
 ): Promise<Array<{ t: number; v: number }>> {
   if (!service || !metric) return [];
+  if (PROM_METRIC_RE.test(metric)) {
+    try {
+      const metadata = await listCriblMetricMetadata(metric);
+      const type = parseMetricType(metadata.find((item) => item.name === metric)?.type ?? '');
+      const query = promAggQuery({ metric, service, binSeconds, agg }, type);
+      if (query) {
+        const series = await queryCriblMetricsRange(query, { earliest, latest, step: binSeconds });
+        const points = series.flatMap((item) =>
+          item.points.map((point) => ({ t: point.t * 1000, v: point.v })));
+        if (points.length > 0) return points.sort((a, b) => a.t - b.t);
+      }
+    } catch { /* older workspace — use Lakehouse compatibility path */ }
+  }
   const rows = await runQuery(
     Q.serviceMetricTimeSeries(service, metric, binSeconds, agg),
     earliest,
@@ -1333,6 +1503,30 @@ export async function getMetricSeries(
   earliest = '-1h',
   latest = 'now',
 ): Promise<MetricSeries> {
+  const promQuery = promAggQuery(params);
+  if (promQuery) {
+    try {
+      const metadata = await listCriblMetricMetadata(params.metric);
+      const type = parseMetricType(metadata.find((item) => item.name === params.metric)?.type ?? '');
+      const typedQuery = promAggQuery(params, type) ?? promQuery;
+      const series = await queryCriblMetricsRange(typedQuery, {
+        earliest,
+        latest,
+        step: params.binSeconds,
+      });
+      if (series.length > 0) {
+        return {
+          metric: params.metric,
+          agg: params.agg,
+          groupBy: params.groupBy,
+          groups: series.map((item) => ({
+            key: params.groupBy ? (item.labels[params.groupBy] ?? '') : '',
+            points: item.points.map((point) => ({ t: point.t * 1000, v: point.v })),
+          })),
+        };
+      }
+    } catch { /* older workspace — use Lakehouse compatibility path */ }
+  }
   const rows = await runQuery(Q.metricTimeSeries(params), earliest, latest, 5000);
 
   // Partition rows into groups by the group-by key (empty string when
@@ -1420,6 +1614,27 @@ export async function getMetricInfo(
 ): Promise<MetricInfo> {
   const empty: MetricInfo = { name: metric, type: 'unknown', dimensions: [] };
   if (!metric) return empty;
+  if (PROM_METRIC_RE.test(metric)) {
+    try {
+      const [metadata, series] = await Promise.all([
+        listCriblMetricMetadata(metric),
+        listCriblMetricSeries(metric),
+      ]);
+      const exact = metadata.find((item) => item.name === metric);
+      if (exact || series.length > 0) {
+        const dimensions = new Set<string>();
+        for (const labels of series.slice(0, 100)) {
+          for (const key of Object.keys(labels)) if (key !== '__name__') dimensions.add(key);
+        }
+        return {
+          name: metric,
+          type: parseMetricType(exact?.type ?? ''),
+          dimensions: [...dimensions].sort(),
+          unit: exact?.unit || undefined,
+        };
+      }
+    } catch { /* older workspace — use Lakehouse compatibility path */ }
+  }
   const rows = await runQuery(Q.metricSampleRow(metric), earliest, latest, 1);
   if (rows.length === 0) return empty;
 

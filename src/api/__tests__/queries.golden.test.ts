@@ -172,6 +172,17 @@ describe('queries.ts — golden snapshots + invariants', () => {
 });
 
 describe('queries.ts — June 2026 outage regressions', () => {
+  it('keeps metric reads compatible with normalized and wide records', () => {
+    const query = Q.metricTimeSeries({
+      metric: 'http.server.request.duration',
+      binSeconds: 60,
+      agg: 'p95',
+    });
+    expect(query).toContain('tostring(_metric)=="http.server.request.duration"');
+    expect(query).toContain('toreal(_value)');
+    expect(query).toContain("toreal(['http.server.request.duration'])");
+  });
+
   it('refuses to build when the dataset store is empty', () => {
     setCurrentDataset('');
     try {
@@ -198,11 +209,25 @@ describe('queries.ts — June 2026 outage regressions', () => {
     try {
       const on = Q.alertEvaluator();
       expect(on.includes('curr_errors >= 2 and curr_err_pct >= 1')).toBe(true);
+      expect(
+        on.includes(
+          'prev_errors < 1 or curr_err_pct >= prev_err_pct * 3',
+        ),
+      ).toBe(true);
       // Invariants still hold with the extra arm
       expect(validateQuery('alertEvaluator (low-vol)', on)).toEqual([]);
     } finally {
       setLowVolumeMode(false);
     }
+  });
+
+  it('uses the same filtered error population for current and baseline windows', () => {
+    const query = Q.alertEvaluator();
+    expect(query).toContain('extend counts_as_error = not(');
+    expect(query).toContain(
+      'curr_errors=toreal(coalesce(filtered_errors, tolong(0)))',
+    );
+    expect(query).not.toContain('curr_errors=toreal(countif(is_error))');
   });
 
   it('current traceOriginators builder does NOT regress the (?i) shape', () => {
