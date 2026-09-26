@@ -516,7 +516,7 @@ export default function MetricsPage() {
           <div>
             <h1 className={s.heroTitle}>Metrics</h1>
             <div className={s.heroSubtitle}>
-              OTel metric explorer backed by the <code>otel</code> dataset.
+              OTel metric explorer backed by Cribl Metrics, with Lakehouse compatibility fallback.
             </div>
           </div>
         </div>

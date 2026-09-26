@@ -1,0 +1,5 @@
+# Keep bulky investigation evidence in Git, but omit it from release/source
+# archives produced with `git archive`.
+/docs/research/investigator-spike export-ignore
+/docs/sessions/screenshots export-ignore
+/docs/session-logs export-ignore
