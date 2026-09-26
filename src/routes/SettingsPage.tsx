@@ -22,6 +22,7 @@ import { useLowVolumeMode } from '../hooks/useLowVolumeMode';
 import { useServerInvestigations } from '../hooks/useServerInvestigations';
 import { setServerInvestigations, getServerInvestigations } from '../api/serverInvestigations';
 import {
+  canFireAlerts,
   getCellBaseUrl,
   sessionDiagnosticsText,
   SHARED_GOATTOWN_BASE_URL,
@@ -57,6 +58,9 @@ const DATASET_SUGGESTIONS = [
 
 const DATASET_NAME_PATTERN = /^[a-zA-Z0-9_-]+$/;
 
+/** KV key GoatTown's console delivers APM's connected-app credential to. */
+const GOATTOWN_CREDENTIAL_KEY = 'goattownEmbedToken';
+
 export default function SettingsPage() {
   const currentDataset = useDataset();
   const currentStreamFilter = useStreamFilterEnabled();
@@ -77,8 +81,6 @@ export default function SettingsPage() {
     kind: 'checking' | 'connected' | 'error';
     message: string;
   } | null>(null);
-  const [cellWebhookBearer, setCellWebhookBearer] = useState('');
-  const [cellWebhookBearerSaving, setCellWebhookBearerSaving] = useState(false);
   const [sourceRepos, setSourceRepos] = useState<SourceRepo[]>([]);
   const [sourceReposSaving, setSourceReposSaving] = useState(false);
   const [cadenceSaving, setCadenceSaving] = useState(false);
@@ -109,11 +111,6 @@ export default function SettingsPage() {
     // Test unconditionally: GoatTown's console can deliver the credential
     // directly to KV without setting any app-local sentinel.
     void testGoatTownConnection(true);
-    // The installation webhook token is stored separately from the UI token
-    // so browser provisioning can create the Cribl notification target.
-    kvGet<string>('goatTownWebhookToken')
-      .then((t) => { if (typeof t === 'string') setCellWebhookBearer(t); })
-      .catch(() => {});
     listTraceOriginators()
       .then(setOriginators)
       .catch(() => setOriginators([]))
@@ -267,40 +264,6 @@ export default function SettingsPage() {
     }
   }
 
-  async function handleSaveCellWebhookBearer() {
-    if (cellWebhookBearerSaving) return;
-    const token = cellWebhookBearer.trim();
-    if (!token.startsWith('gt_w1_')) {
-      setError(
-        token.startsWith('gt_a1_')
-          ? 'That is the connected-app credential, and GoatTown rejects it here with '
-            + '401: /alerts/fire is the one route that needs a webhook-purpose token, '
-            + 'and an app credential always resolves as ui-purpose. The gt_w1_ webhook '
-            + 'token is issued once when the GoatTown installation is enrolled and is '
-            + 'not retrievable afterwards, which is why the console does not show it. '
-            + 'If this field already has a value, leave it: that stored copy is the '
-            + 'only one. Interactive investigations do not use it at all.'
-          : 'Enter an installation webhook token (gt_w1_ …). It is issued once at '
-            + 'installation enrolment and cannot be re-read from the console, so do not '
-            + 'go looking for it there. Optional — only alert-fired investigations '
-            + 'use it.',
-      );
-      return;
-    }
-    setCellWebhookBearerSaving(true);
-    setError(null);
-    try {
-      await kvPut('goatTownWebhookToken', token);
-      setCellWebhookBearer(token);
-      setFlash('Shared GoatTown webhook token saved. Re-run Provision to update the alert target.');
-      setTimeout(() => setFlash(null), 8000);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setCellWebhookBearerSaving(false);
-    }
-  }
-
   function updateRepo(i: number, patch: Partial<SourceRepo>) {
     setSourceRepos((prev) => prev.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
   }
@@ -337,11 +300,14 @@ export default function SettingsPage() {
   }
 
   // Runs on the shared ProvisioningPanel's "Apply", after the search
-  // reconcile — the SAME GoatTown trigger wiring scripts/provision.ts does,
-  // so UI and CLI provisioning are identical. When server investigations
-  // is off it tears the notification down; when on it ensures the webhook
-  // target (needs the installation webhook token above) and binds the
-  // alert-notify notification.
+  // reconcile. When server investigations is off it tears the notification
+  // down; when on it ensures the webhook target and binds alert-notify.
+  //
+  // This is now the only supported way to provision the target. It reads the
+  // connected-app credential GoatTown's console delivers to KV, which the CLI
+  // cannot see — the app-scoped KV needs app context that a machine token does
+  // not have. scripts/provision.ts therefore reports the target as left to
+  // Settings rather than failing.
   async function handleProvisionCellTrigger(
     http: HttpClient,
   ): Promise<ProvisioningExtraStep[]> {
@@ -352,16 +318,53 @@ export default function SettingsPage() {
       return steps;
     }
     const url = getCellBaseUrl();
-    const bearer = cellWebhookBearer.trim();
-    if (url && bearer) {
-      const t = await ensureCellWebhookTarget(http, { cellUrl: url, bearer });
-      steps.push({ label: `Webhook target: ${t} (${url})`, ok: true });
-    } else {
+    // The capability is the only correct check: it is absent unless an
+    // administrator has enabled "Allow alert firing" on this connection.
+    let mayFire = false;
+    try {
+      mayFire = await canFireAlerts();
+    } catch (err) {
       steps.push({
         label: 'Webhook target: skipped',
         ok: false,
-        detail: 'Set the shared GoatTown webhook token above; the alert trigger cannot fire without it.',
+        detail: `Could not read GoatTown capabilities: ${err instanceof Error ? err.message : String(err)}`,
       });
+      const n0 = await ensureAlertNotification(http);
+      steps.push({ label: `Alert notification: ${n0} (alert_notify → GoatTown)`, ok: true });
+      return steps;
+    }
+    if (!mayFire) {
+      steps.push({
+        label: 'Webhook target: skipped',
+        ok: false,
+        detail: 'GoatTown has not granted this app connection alert firing. '
+          + 'A tenant administrator enables it under Connections → Connected apps; '
+          + 'it is off by default because an external event can start billable work.',
+      });
+    } else {
+      // Cribl's alert fires server-side, so the target must carry a literal
+      // bearer — the webhook target schema allows only none/basic/token, with
+      // no `credentialsSecret`/`textSecret` reference (probed against the
+      // live API). So the credential is inlined here, and the API returns it
+      // in plaintext to any reader of notification targets.
+      //
+      // Given that exposure is unavoidable at this layer, the app credential
+      // is the right thing to inline rather than the installation webhook
+      // token: this one can be rotated from Connections → Connected apps
+      // (prepare replacement → finish → revoke), whereas gt_w1_ is a one-shot
+      // enrolment secret that would require re-enrolling the installation.
+      const bearer = await kvGet<string>(GOATTOWN_CREDENTIAL_KEY);
+      if (typeof bearer === 'string' && bearer.trim()) {
+        const t = await ensureCellWebhookTarget(http, { cellUrl: url, bearer: bearer.trim() });
+        steps.push({ label: `Webhook target: ${t} (${url})`, ok: true });
+      } else {
+        steps.push({
+          label: 'Webhook target: skipped',
+          ok: false,
+          detail: `No connected-app credential in kv.${GOATTOWN_CREDENTIAL_KEY}. `
+            + 'Deliver it from GoatTown\'s console, or paste it above.',
+        });
+      }
     }
     const n = await ensureAlertNotification(http);
     steps.push({ label: `Alert notification: ${n} (alert_notify → cell)`, ok: true });
@@ -745,46 +748,6 @@ export default function SettingsPage() {
               disabled={goatTownConnection?.kind === 'checking'}
             >
               Test connection
-            </button>
-          </div>
-        </div>
-
-        <div className={s.field} style={{ marginTop: 16 }}>
-          <label className={s.label} htmlFor="cell-webhook-bearer-input">
-            Shared GoatTown webhook token (alert trigger)
-          </label>
-          <input
-            id="cell-webhook-bearer-input"
-            className={s.input}
-            type="password"
-            value={cellWebhookBearer}
-            onChange={(e) => setCellWebhookBearer(e.target.value)}
-            placeholder="Paste the gt_w1_ webhook token"
-            spellCheck={false}
-            autoComplete="off"
-            autoCapitalize="none"
-          />
-          <div className={s.fieldHelp}>
-            <strong>Optional.</strong> Only alert-fired investigations need this;
-            interactive ones work with the connected-app credential alone.
-            {' '}<code>/alerts/fire</code> is the single GoatTown route that requires
-            a webhook-purpose token — the <code>gt_a1_</code> credential above always
-            resolves as ui-purpose and is rejected here with 401.
-            {' '}<strong>Expect the console not to show this token.</strong> The
-            {' '}<code>gt_w1_</code> webhook secret is issued once when the GoatTown
-            installation is enrolled and cannot be read back afterwards, so if this
-            field already holds a value that stored copy is the only one — leave it
-            alone. Stored in the app KV store so <strong>Provision</strong> below can
-            create the notification target.
-          </div>
-          <div className={s.actions} style={{ marginTop: 8 }}>
-            <button
-              type="button"
-              className={s.primaryBtn}
-              onClick={() => void handleSaveCellWebhookBearer()}
-              disabled={cellWebhookBearerSaving || !cellWebhookBearer.trim()}
-            >
-              {cellWebhookBearerSaving ? 'Saving…' : 'Save webhook bearer'}
             </button>
           </div>
         </div>

@@ -119,11 +119,10 @@ async function loadAppSettingsFromKV(http: HttpClient): Promise<void> {
  * (the same code the Settings UI uses) so CLI and UI stay identical.
  * Must run AFTER the search reconcile so alert_notify exists before its
  * notification binds. No-op when server investigations are off.
- * GOATTOWN_URL / GOATTOWN_WEBHOOK_TOKEN come from the environment/.env.
+ * GOATTOWN_URL / GOATTOWN_APP_TOKEN come from the environment/.env.
  */
 async function wireCellTrigger(
   http: HttpClient,
-  flagExplicit: boolean,
   dryRun: boolean,
 ): Promise<void> {
   if (!getServerInvestigations()) return;
@@ -132,7 +131,9 @@ async function wireCellTrigger(
     return;
   }
   const cellUrl = process.env.GOATTOWN_URL ?? 'https://goattown-shared.lab.cribl.io';
-  const bearer = process.env.GOATTOWN_WEBHOOK_TOKEN;
+  // Prefer the connected-app credential; GOATTOWN_WEBHOOK_TOKEN is the legacy
+  // installation secret and is no longer required.
+  const bearer = process.env.GOATTOWN_APP_TOKEN ?? process.env.GOATTOWN_WEBHOOK_TOKEN;
   const adminBearer = process.env.GOATTOWN_ADMIN_TOKEN;
   if (cellUrl && adminBearer) {
     const registration = await stageApmInvestigatorConfiguration(cellUrl, getCurrentDataset(), {
@@ -152,15 +153,17 @@ async function wireCellTrigger(
   if (cellUrl && bearer) {
     const t = await ensureCellWebhookTarget(http, { cellUrl, bearer });
     console.log(`▶ Notification target: ${t === 'created' ? '+ create' : '~ update'} ${CELL_WEBHOOK_TARGET_ID}`);
-  } else if (flagExplicit) {
-    // An explicit enable needs the target's config; a dangling target
-    // ref would break the trigger. (When inferred-on, the target
-    // already exists from a prior enable — don't hard-exit a routine run.)
-    console.error(
-      '✗ serverInvestigations is on but GOATTOWN_WEBHOOK_TOKEN is not set — ' +
-        'the shared installation webhook token is required to provision the target.',
+  } else {
+    // Not an error any more. The Settings page is the supported way to
+    // provision this target: it reads the connected-app credential that
+    // GoatTown's console delivers to KV, which the CLI cannot see (the
+    // app-scoped KV needs app context a machine token does not have). A
+    // deploy without the env var is the normal case, not a misconfiguration.
+    console.log(
+      '▶ Notification target: left to the Settings page, which provisions it ' +
+        'from the connected-app credential in KV. Set GOATTOWN_APP_TOKEN only ' +
+        'to provision it from CI.',
     );
-    process.exit(1);
   }
   // Bind alert_notify → target via the notifications resource (writing
   // it inline in the search body is silently dropped by the API).
@@ -295,7 +298,7 @@ async function main(): Promise<void> {
       console.log(`▶ Provision dry-run: ${actions.length} action(s)`);
       for (const a of actions) console.log(actionLabel(a));
     }
-    await wireCellTrigger(http, flagExplicit, true);
+    await wireCellTrigger(http, true);
     // Dataset acceleration dry-run
     const status = await getDatasetStatus(http);
     console.log('▶ Dataset acceleration:');
@@ -327,7 +330,7 @@ async function main(): Promise<void> {
   // Wire (or tear down) the alert → cell trigger, AFTER the search
   // reconcile so alert_notify exists before its notification binds.
   if (getServerInvestigations()) {
-    await wireCellTrigger(http, flagExplicit, false);
+    await wireCellTrigger(http, false);
   } else if (flagExplicit) {
     // Explicit disable: remove the notification binding (the search
     // itself is removed by the reconcile above).

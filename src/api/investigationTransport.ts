@@ -396,6 +396,34 @@ export async function readInvestigationLlm(
   return goatTownClient().readSessionLlm(id, signal);
 }
 
+/**
+ * Is APM's connected-app credential permitted to fire alerts?
+ *
+ * The capability is the only correct check — it is absent unless the
+ * connection is active AND a tenant administrator has enabled **Allow alert
+ * firing** on it, which is off by default including for existing connections
+ * (an external event can start billable work). Never infer permission from a
+ * token's shape, and never fall back to asking for an installation-wide
+ * webhook token: that token is a one-shot enrolment secret no console can
+ * reissue.
+ */
+export async function canFireAlerts(signal?: AbortSignal): Promise<boolean> {
+  return goatTownClient().canFireAlerts(signal);
+}
+
+/**
+ * Probe the firing path without starting work.
+ *
+ * An empty trigger list answers 202 with `accepted: 0` and starts nothing,
+ * which is what makes it a safe connection test. A 202 on its own never means
+ * an investigation began — read `accepted`, and `rejected` when present,
+ * because a row the service declines is otherwise a silent skip.
+ */
+export async function probeAlertFiring(signal?: AbortSignal): Promise<boolean> {
+  const result = await goatTownClient().fireAlerts([], signal);
+  return (result.accepted ?? 0) === 0;
+}
+
 /** Verify the proxy credential and requested agent without creating a session. */
 export async function verifyGoatTownConnection(signal?: AbortSignal): Promise<void> {
   const client = goatTownClient();
