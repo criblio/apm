@@ -88,13 +88,21 @@ export function configurationClient(
   return new GoatTownClient({
     baseUrl,
     userId: options.userId ?? (async () => APM_CONFIGURATION_ACTOR),
-    fetch: authorization
-      ? (input, init) => {
-        const headers = new Headers(init?.headers);
-        headers.set('authorization', authorization);
-        return fetch(input, { ...init, headers });
-      }
-      : undefined,
+    // Always pass a transport, and resolve `globalThis.fetch` at CALL time
+    // rather than letting the client capture it at construction.
+    //
+    // Since app-utils 0.11.0 the proposal routes go through the client's
+    // transport instead of calling the global directly, and the client
+    // snapshots `globalThis.fetch` when it is built. A test that stubs the
+    // global after construction would then be silently ignored — the stub
+    // is installed, the assertions still run, and the real fetch is used.
+    // Late binding makes stub ordering irrelevant instead of load-bearing.
+    fetch: (input, init) => {
+      if (!authorization) return globalThis.fetch(input, init);
+      const headers = new Headers(init?.headers);
+      headers.set('authorization', authorization);
+      return globalThis.fetch(input, { ...init, headers });
+    },
   });
 }
 
@@ -232,6 +240,18 @@ export async function stageApmInvestigatorConfiguration(
  * catalog separately: an active revision whose agent is missing means the
  * activation landed but the agent did not, which is a different
  * conversation to have with the administrator.
+ *
+ * **Rejects on a failed read, and callers must let that surface.** Before
+ * app-utils 0.11.0 this swallowed auth and network failures into empty
+ * results, so a 403 arrived as `{isActive: false, agentAvailable: false}` —
+ * byte-identical to "nobody has activated it yet". That sends an operator to
+ * wait on an administrator who was never going to fix it, because the real
+ * problem was the credential. A thrown `GoatTownError` is the whole point;
+ * catching it back into a neutral "not active" restores the original bug.
+ *
+ * Nothing renders this yet. Whatever wires it up should distinguish three
+ * states — activated, genuinely not activated, and could-not-read — rather
+ * than collapsing the last two.
  */
 export async function readApmProposalStatus(
   baseUrl: string,

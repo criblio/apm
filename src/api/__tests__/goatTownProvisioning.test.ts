@@ -9,6 +9,7 @@ import {
   APM_CONFIGURATION_ACTOR,
   APM_INVESTIGATOR_AGENT,
   buildApmGoatTownConfiguration,
+  configurationClient,
   stageApmInvestigatorConfiguration,
 } from '../goatTownProvisioning';
 
@@ -111,6 +112,22 @@ describe('GoatTown declarative configuration', () => {
     await expect(
       stageApmInvestigatorConfiguration('https://goattown.example/', 'custom-otel'),
     ).rejects.toThrow(/advertises no configuration proposal scope/);
+  });
+
+  // app-utils 0.11.0 moved the proposal routes onto the client's transport,
+  // and GoatTownClient snapshots globalThis.fetch when it is constructed. A
+  // stub installed after construction would then be silently ignored: the
+  // assertions still run, against the real network. Resolving the global at
+  // call time is what keeps stub ordering from being load-bearing, so pin it
+  // by stubbing AFTER the client exists.
+  it('resolves fetch at call time, not at client construction', async () => {
+    const client = configurationClient('https://goattown.example/');
+    const late = vi.fn(async () => new Response(JSON.stringify(PROTOCOL), { status: 200 }));
+    vi.stubGlobal('fetch', late);
+
+    await client.protocol();
+
+    expect(late).toHaveBeenCalled();
   });
 
   it('sets no authorization header for a browser caller', async () => {
