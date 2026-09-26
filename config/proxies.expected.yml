@@ -14,9 +14,20 @@ goattown-shared.lab.cribl.io:
   timeout: 60000
   paths:
     allowlist:
+      # Sessions: transcripts, messages, stop/cancel/close.
       - /investigations
+      # Agent catalog, and the capability/handshake document.
       - /agents
       - /protocol
+      # Configuration proposals: validate, store and diff the app's
+      # goattown.config.yaml. Removed in #171 along with the UI call sites,
+      # which is why staging failed with "Path is not allowed" rather than
+      # any GoatTown error — the proxy rejected it before it left the page.
+      - /configurations
+      # Default source repos for alert-fired (autonomous) investigations.
+      # Interactive runs thread repos at create time under /investigations;
+      # this is the only path the autonomous ones can get them from.
+      - /config/repos
   headers:
     inject:
       authorization: "'Bearer ' + kv.goattownEmbedToken"

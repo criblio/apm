@@ -79,6 +79,18 @@ export default function SettingsPage() {
   const [cellToken, setCellToken] = useState('');
   const [cellTokenConfigured, setCellTokenConfigured] = useState(false);
   const [goatTownConfigurationStaging, setGoatTownConfigurationStaging] = useState(false);
+  /**
+   * Outcome of the last staging attempt, rendered next to the button.
+   *
+   * Deliberately NOT the page-level `flash`/`error` pair. Those paint at the
+   * top of the page, hundreds of pixels above this control, and `flash`
+   * self-clears on a timer — so a staging failure was indistinguishable from
+   * the button doing nothing. This state persists until the next attempt.
+   */
+  const [goatTownStaging, setGoatTownStaging] = useState<{
+    kind: 'working' | 'ok' | 'nochange' | 'error';
+    message: string;
+  } | null>(null);
   const [cellTokenSaving, setCellTokenSaving] = useState(false);
   const [goatTownConnection, setGoatTownConnection] = useState<{
     kind: 'checking' | 'connected' | 'error';
@@ -439,18 +451,40 @@ export default function SettingsPage() {
   async function handleStageGoatTownConfiguration() {
     if (goatTownConfigurationStaging) return;
     setGoatTownConfigurationStaging(true);
-    setError(null);
+    setGoatTownStaging({
+      kind: 'working',
+      message: 'Validating the configuration and storing a revision…',
+    });
     try {
       const result = await stageApmInvestigatorConfiguration(getCellBaseUrl(), currentDataset);
-      setFlash(
-        `GoatTown revision ${result.revisionId} staged with ${result.changes} proposed change(s). ` +
-        `Open ${result.reviewPath} in GoatTown, review the diff for producer ` +
-        `${result.producer}, and activate it.` +
-        (result.hasConflicts ? ' Resolve the reported conflicts before activation.' : ''),
-      );
-      setTimeout(() => setFlash(null), 15_000);
+      const where = `Producer ${result.producer}; review at ${result.reviewPath}.`;
+      // A revision is stored on EVERY stage, including when the source already
+      // matches what is active — `changes: 0` means there is nothing to
+      // activate, not that nothing was sent. Spelling that out is the
+      // difference between trusting the result and hunting GoatTown for a
+      // revision that is sitting right there.
+      if (result.changes === 0 && !result.hasConflicts) {
+        setGoatTownStaging({
+          kind: 'nochange',
+          message:
+            `Revision ${result.revisionId} stored with no changes: this configuration already ` +
+            `matches the active one, so there is nothing to activate. ${where}`,
+        });
+      } else {
+        setGoatTownStaging({
+          kind: 'ok',
+          message:
+            `Revision ${result.revisionId} staged with ${result.changes} proposed change(s) ` +
+            `across ${result.skills} skills` +
+            `${result.hasConflicts ? '. It reports conflicts to resolve before activation' : ''}. ` +
+            `${where}`,
+        });
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setGoatTownStaging({
+        kind: 'error',
+        message: `Staging failed: ${err instanceof Error ? err.message : String(err)}`,
+      });
     } finally {
       setGoatTownConfigurationStaging(false);
     }
@@ -796,8 +830,24 @@ export default function SettingsPage() {
             >
               {goatTownConfigurationStaging ? 'Staging…' : 'Stage GoatTown revision'}
             </button>
-            {flash && <span className={s.successFlash}>{flash}</span>}
           </div>
+          {/* Say why the button is inert. A disabled control with no
+              explanation is the same dead end as a silent failure. */}
+          {!cellTokenConfigured && (
+            <div className={s.fieldHelp}>
+              Unavailable until GoatTown accepts this app&apos;s credential — the
+              connection check below must pass first.
+            </div>
+          )}
+          {(goatTownStaging?.kind === 'working' || goatTownStaging?.kind === 'nochange') && (
+            <StatusBanner kind="info">{goatTownStaging.message}</StatusBanner>
+          )}
+          {goatTownStaging?.kind === 'error' && (
+            <StatusBanner kind="error">{goatTownStaging.message}</StatusBanner>
+          )}
+          {goatTownStaging?.kind === 'ok' && (
+            <div role="status" className={s.successFlash}>{goatTownStaging.message}</div>
+          )}
         </div>
 
         <div className={s.field} style={{ marginTop: 16 }}>
