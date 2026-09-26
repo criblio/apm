@@ -30,6 +30,7 @@ import {
 } from '../api/investigationTransport';
 import { kvGet, kvPut } from '../api/kvstore';
 import { stageApmInvestigatorConfiguration } from '../api/goatTownProvisioning';
+import { pushGoatTownRepos } from '../api/investigationTransport';
 import {
   ensureCellWebhookTarget,
   ensureAlertNotification,
@@ -292,8 +293,22 @@ export default function SettingsPage() {
         .filter((r) => r.url);
       await saveAppSettings({ sourceRepos: cleaned });
       setSourceRepos(cleaned);
-      setFlash('Source repositories saved for interactive investigations.');
-      setTimeout(() => setFlash(null), 8000);
+      // Also push to GoatTown so alert-fired (autonomous) investigations get
+      // the same repos. Interactive runs thread them at create time, so app
+      // settings alone would leave only the autonomous path without code
+      // tools. Best-effort: the save above is the source of truth, and Apply
+      // re-pushes, so a transient failure here is reported, not fatal.
+      let pushNote = '';
+      try {
+        const { count } = await pushGoatTownRepos(cleaned);
+        pushNote = ` Pushed ${count} to GoatTown for alert-fired runs.`;
+      } catch (err) {
+        pushNote = ` (Could not reach GoatTown to update alert-fired runs: ${
+          err instanceof Error ? err.message : String(err)
+        } — re-provision to retry.)`;
+      }
+      setFlash(`Source repositories saved.${pushNote}`);
+      setTimeout(() => setFlash(null), 10_000);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -398,6 +413,19 @@ export default function SettingsPage() {
     }
     const n = await ensureAlertNotification(http);
     steps.push({ label: `Alert notification: ${n} (alert_notify → cell)`, ok: true });
+    // Re-push the configured repos so alert-fired investigations check out
+    // code. Interactive runs thread their own at create time; this is the only
+    // way the autonomous path gets them.
+    try {
+      const { count } = await pushGoatTownRepos(sourceRepos);
+      steps.push({ label: `Source repos → GoatTown: ${count} for alert-fired runs`, ok: true });
+    } catch (err) {
+      steps.push({
+        label: 'Source repos → GoatTown: failed',
+        ok: false,
+        detail: err instanceof Error ? err.message : String(err),
+      });
+    }
     return steps;
   }
 

@@ -9,18 +9,38 @@
  * green pipeline, because a function with no callers still passes its own unit
  * tests. The staging workflow was simply gone from the product.
  *
+ * The same migration dropped `pushCellRepos` entirely, which is why
+ * alert-fired investigations silently lost their code tools: interactive runs
+ * thread repos at create time, so only the autonomous path broke, and nothing
+ * asserted that path existed.
+ *
  * The app has no component-test stack (no jsdom, no Testing Library), and
- * adding one to assert a single wiring is not proportionate. So this asserts
- * the narrow thing that actually broke: a UI surface imports the staging
- * helper and invokes it. If someone deliberately moves staging elsewhere,
- * update the expected surface here — the point is that the removal has to be
- * a decision rather than an accident.
+ * adding one to assert a wiring is not proportionate. So this asserts the
+ * narrow thing that actually broke: a UI surface imports each helper and
+ * invokes it. If someone deliberately moves this work elsewhere, update the
+ * expected surface here — the point is that removal has to be a decision
+ * rather than an accident.
  */
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-const STAGING_EXPORT = 'stageApmInvestigatorConfiguration';
+/** Each entry: the export, the module that defines it, and how many call
+ *  sites the Settings page is expected to have. */
+const REQUIRED_WIRINGS = [
+  {
+    name: 'stageApmInvestigatorConfiguration',
+    definedIn: join('api', 'goatTownProvisioning.ts'),
+    settingsCallSites: 2,
+    why: 'the GoatTown configuration revision would never be staged',
+  },
+  {
+    name: 'pushGoatTownRepos',
+    definedIn: join('api', 'investigationTransport.ts'),
+    settingsCallSites: 2,
+    why: 'alert-fired investigations would run with no source repos',
+  },
+] as const;
 
 function sourceFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -32,25 +52,32 @@ function sourceFiles(dir: string): string[] {
   });
 }
 
-describe('GoatTown configuration staging is reachable from the product', () => {
+describe.each(REQUIRED_WIRINGS)('$name is reachable from the product', (wiring) => {
   const files = sourceFiles('src');
-  const callers = files.filter((path) => {
-    const text = readFileSync(path, 'utf8');
-    return text.includes(`import { ${STAGING_EXPORT} }`) || text.includes(`${STAGING_EXPORT}(`);
-  }).filter((path) => !path.endsWith(join('api', 'goatTownProvisioning.ts')));
 
-  it('is imported and called by a user-facing surface', () => {
-    expect(callers.length).toBeGreaterThan(0);
-    const uiCallers = callers.filter((p) => p.includes(join('src', 'routes')) || p.includes(join('src', 'components')));
-    expect(uiCallers, `no UI surface calls ${STAGING_EXPORT}; the staging workflow is unreachable`).not.toHaveLength(0);
+  it('is called by a user-facing surface', () => {
+    const uiCallers = files
+      .filter((path) => !path.endsWith(wiring.definedIn))
+      .filter((path) => path.includes(join('src', 'routes')) || path.includes(join('src', 'components')))
+      .filter((path) => readFileSync(path, 'utf8').includes(`${wiring.name}(`));
+    expect(
+      uiCallers,
+      `no UI surface calls ${wiring.name}, so ${wiring.why}`,
+    ).not.toHaveLength(0);
   });
 
-  it('is wired into the Settings page, both on Apply and as its own action', () => {
+  it('is wired into the Settings page at every expected call site', () => {
     const settings = readFileSync(join('src', 'routes', 'SettingsPage.tsx'), 'utf8');
-    expect(settings).toContain(`import { ${STAGING_EXPORT} }`);
-    // Apply (the ProvisioningPanel reconcile) and the standalone button.
-    const invocations = settings.match(new RegExp(`await ${STAGING_EXPORT}\\(`, 'g')) ?? [];
-    expect(invocations.length).toBeGreaterThanOrEqual(2);
-    expect(settings).toContain('Stage GoatTown revision');
+    expect(settings).toContain(`import { ${wiring.name} }`);
+    const invocations = settings.match(new RegExp(`await ${wiring.name}\\(`, 'g')) ?? [];
+    expect(
+      invocations.length,
+      `expected ${wiring.settingsCallSites} call site(s) for ${wiring.name}`,
+    ).toBeGreaterThanOrEqual(wiring.settingsCallSites);
   });
+});
+
+it('offers the standalone staging action in the UI', () => {
+  expect(readFileSync(join('src', 'routes', 'SettingsPage.tsx'), 'utf8'))
+    .toContain('Stage GoatTown revision');
 });
