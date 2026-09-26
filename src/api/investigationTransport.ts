@@ -462,14 +462,38 @@ export async function probeAlertFiring(signal?: AbortSignal): Promise<boolean> {
   return (result.accepted ?? 0) === 0;
 }
 
-/** Verify the proxy credential and requested agent without creating a session. */
-export async function verifyGoatTownConnection(signal?: AbortSignal): Promise<void> {
+export interface GoatTownReadiness {
+  /**
+   * Is the investigator agent in the live catalog?
+   *
+   * False means a staged configuration revision has not been activated yet.
+   * That is a normal state during first-time setup, NOT a connection failure.
+   */
+  agentAvailable: boolean;
+}
+
+/**
+ * Check the proxy credential, and separately report whether the agent exists.
+ *
+ * These two facts must stay separate. This function used to throw when the
+ * agent was missing, which made "the credential works" and "the agent is
+ * installed" a single boolean — and that created an unbreakable setup loop:
+ * the Settings page gated staging on a successful connection, a connection
+ * required the agent, and the agent could only exist once a staged revision
+ * had been activated. A new tenant could never get out of it.
+ *
+ * So a missing agent is returned, not thrown. Only a credential that cannot
+ * authenticate throws, because that is the one a human must fix before
+ * anything else can work.
+ */
+export async function verifyGoatTownConnection(
+  signal?: AbortSignal,
+): Promise<GoatTownReadiness> {
   const client = goatTownClient();
+  // Throws on a bad credential, which is the real failure.
   await client.listSessions({ limit: 1 }, signal);
   const agents = await client.listAgents(signal);
-  if (!agents.some((agent) => agent.slug === APM_INVESTIGATOR_AGENT)) {
-    throw new Error(`GoatTown connected, but agent "${APM_INVESTIGATOR_AGENT}" is not available.`);
-  }
+  return { agentAvailable: agents.some((agent) => agent.slug === APM_INVESTIGATOR_AGENT) };
 }
 
 /** Abort the running turn. The session stays resumable. */

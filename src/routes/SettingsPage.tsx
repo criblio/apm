@@ -92,8 +92,14 @@ export default function SettingsPage() {
     message: string;
   } | null>(null);
   const [cellTokenSaving, setCellTokenSaving] = useState(false);
+  /**
+   * `needs-agent` is deliberately NOT an error. The credential is good and the
+   * agent simply has not been activated yet, which is the expected state on a
+   * fresh tenant — and treating it as a failure is what made setup impossible
+   * to complete, since it disabled the very button that stages the agent.
+   */
   const [goatTownConnection, setGoatTownConnection] = useState<{
-    kind: 'checking' | 'connected' | 'error';
+    kind: 'checking' | 'connected' | 'needs-agent' | 'error';
     message: string;
   } | null>(null);
   const [sourceRepos, setSourceRepos] = useState<SourceRepo[]>([]);
@@ -264,12 +270,23 @@ export default function SettingsPage() {
   async function testGoatTownConnection(silent = false) {
     if (!silent) setGoatTownConnection({ kind: 'checking', message: 'Testing GoatTown connection…' });
     try {
-      await verifyGoatTownConnection();
+      const { agentAvailable } = await verifyGoatTownConnection();
+      // Gate on the CREDENTIAL alone. The agent cannot exist until a revision
+      // staged from this page has been activated, so gating staging on the
+      // agent's presence is a loop with no way out.
       setCellTokenConfigured(true);
-      setGoatTownConnection({
-        kind: 'connected',
-        message: 'Connected. GoatTown accepted this app credential and the APM Investigator is available.',
-      });
+      setGoatTownConnection(agentAvailable
+        ? {
+          kind: 'connected',
+          message: 'Connected. GoatTown accepted this app credential and the APM Investigator is available.',
+        }
+        : {
+          kind: 'needs-agent',
+          message: 'Credential accepted, but the APM Investigator agent is not in GoatTown\'s '
+            + 'catalog yet. Stage a revision above, then have a tenant administrator activate '
+            + 'it; this check turns green once the agent appears. Investigations cannot run '
+            + 'until then.',
+        });
     } catch (err) {
       setCellTokenConfigured(false);
       setGoatTownConnection({
@@ -835,8 +852,9 @@ export default function SettingsPage() {
               explanation is the same dead end as a silent failure. */}
           {!cellTokenConfigured && (
             <div className={s.fieldHelp}>
-              Unavailable until GoatTown accepts this app&apos;s credential — the
-              connection check below must pass first.
+              Unavailable until GoatTown accepts this app&apos;s credential. Save the
+              connected-app token below; staging needs only a working credential,
+              not an installed agent.
             </div>
           )}
           {(goatTownStaging?.kind === 'working' || goatTownStaging?.kind === 'nochange') && (
@@ -884,6 +902,9 @@ export default function SettingsPage() {
             <StatusBanner kind="error">{goatTownConnection.message}</StatusBanner>
           )}
           {goatTownConnection?.kind === 'checking' && (
+            <StatusBanner kind="info">{goatTownConnection.message}</StatusBanner>
+          )}
+          {goatTownConnection?.kind === 'needs-agent' && (
             <StatusBanner kind="info">{goatTownConnection.message}</StatusBanner>
           )}
           {goatTownConnection?.kind === 'connected' && (

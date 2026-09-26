@@ -259,7 +259,7 @@ describe('GoatTown compatibility', () => {
     expect(String(fetchMock.mock.calls[1][0])).toContain('before=901');
   });
 
-  it('tests the connected-app credential and required agent', async () => {
+  it('tests the connected-app credential and reports the agent as available', async () => {
     stubUser();
     setCellBaseUrl('https://goattown.example');
     const fetchMock = vi.fn()
@@ -267,10 +267,33 @@ describe('GoatTown compatibility', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ agents: [{ slug: 'apm-investigator' }] })));
     vi.stubGlobal('fetch', fetchMock);
 
-    await expect(verifyGoatTownConnection()).resolves.toBeUndefined();
+    await expect(verifyGoatTownConnection()).resolves.toEqual({ agentAvailable: true });
     expect(fetchMock.mock.calls.map((call) => String(call[0]))).toEqual([
       'https://goattown.example/investigations?limit=1',
       'https://goattown.example/agents',
     ]);
+  });
+
+  // The setup loop: this used to throw, so the Settings page recorded the
+  // credential as unusable and disabled the staging button — the only way to
+  // create the agent it was waiting for. A missing agent must resolve.
+  it('resolves with agentAvailable false when the agent is not installed yet', async () => {
+    stubUser();
+    setCellBaseUrl('https://goattown.example');
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ investigations: [] })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ agents: [{ slug: 'something-else' }] }))));
+
+    await expect(verifyGoatTownConnection()).resolves.toEqual({ agentAvailable: false });
+  });
+
+  it('still rejects when the credential itself is refused', async () => {
+    stubUser();
+    setCellBaseUrl('https://goattown.example');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401 }),
+    ));
+
+    await expect(verifyGoatTownConnection()).rejects.toThrow();
   });
 });
