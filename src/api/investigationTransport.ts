@@ -328,6 +328,44 @@ export function subscribeInvestigation(
   return () => controller.abort();
 }
 
+/**
+ * Push the default source repos that alert-fired investigations check out.
+ *
+ * This feeds ONLY the autonomous path. Interactive sessions thread their own
+ * repos at create time (`CreateInvestigationInput.repos` below), but an
+ * alert-fired run has no such caller: the alert webhook carries no repos, and
+ * GoatTown cannot read the app-scoped settings KV, which needs app context a
+ * service-to-service call does not have. Without this list on the service,
+ * an autonomous investigation runs with no code tools at all.
+ *
+ * The SDK models repos only as a `createSession` input, so this drives
+ * `/config/repos` through `rawRequest`. That keeps the platform proxy's
+ * credential injection, the acting-user header, and the diagnostic sink —
+ * reaching for the global `fetch` here is exactly what provisioning used to
+ * do wrong.
+ */
+export async function pushGoatTownRepos(
+  repos: SourceRepo[],
+  signal?: AbortSignal,
+): Promise<{ count: number }> {
+  const response = await goatTownClient().rawRequest('/config/repos', {
+    method: 'POST',
+    body: JSON.stringify({ repos }),
+    contentType: 'application/json',
+    signal,
+  });
+  if (!response.ok) {
+    // Body is truncated: this surfaces in Settings, and a service error page
+    // should not be pasted wholesale into the UI.
+    throw new Error(
+      `GoatTown rejected the source repos (${response.status}): ` +
+      `${(await response.text()).trim().slice(0, 200)}`,
+    );
+  }
+  const data = (await response.json()) as { count?: unknown };
+  return { count: typeof data.count === 'number' ? data.count : repos.length };
+}
+
 export interface CreateInvestigationInput {
   /** The user's opening question. */
   prompt: string;

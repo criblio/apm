@@ -29,6 +29,8 @@ import {
   verifyGoatTownConnection,
 } from '../api/investigationTransport';
 import { kvGet, kvPut } from '../api/kvstore';
+import { stageApmInvestigatorConfiguration } from '../api/goatTownProvisioning';
+import { pushGoatTownRepos } from '../api/investigationTransport';
 import {
   ensureCellWebhookTarget,
   ensureAlertNotification,
@@ -76,6 +78,19 @@ export default function SettingsPage() {
   const [serverInvestigationsSaving, setServerInvestigationsSaving] = useState(false);
   const [cellToken, setCellToken] = useState('');
   const [cellTokenConfigured, setCellTokenConfigured] = useState(false);
+  const [goatTownConfigurationStaging, setGoatTownConfigurationStaging] = useState(false);
+  /**
+   * Outcome of the last staging attempt, rendered next to the button.
+   *
+   * Deliberately NOT the page-level `flash`/`error` pair. Those paint at the
+   * top of the page, hundreds of pixels above this control, and `flash`
+   * self-clears on a timer — so a staging failure was indistinguishable from
+   * the button doing nothing. This state persists until the next attempt.
+   */
+  const [goatTownStaging, setGoatTownStaging] = useState<{
+    kind: 'working' | 'ok' | 'nochange' | 'error';
+    message: string;
+  } | null>(null);
   const [cellTokenSaving, setCellTokenSaving] = useState(false);
   const [goatTownConnection, setGoatTownConnection] = useState<{
     kind: 'checking' | 'connected' | 'error';
@@ -290,8 +305,22 @@ export default function SettingsPage() {
         .filter((r) => r.url);
       await saveAppSettings({ sourceRepos: cleaned });
       setSourceRepos(cleaned);
-      setFlash('Source repositories saved for interactive investigations.');
-      setTimeout(() => setFlash(null), 8000);
+      // Also push to GoatTown so alert-fired (autonomous) investigations get
+      // the same repos. Interactive runs thread them at create time, so app
+      // settings alone would leave only the autonomous path without code
+      // tools. Best-effort: the save above is the source of truth, and Apply
+      // re-pushes, so a transient failure here is reported, not fatal.
+      let pushNote = '';
+      try {
+        const { count } = await pushGoatTownRepos(cleaned);
+        pushNote = ` Pushed ${count} to GoatTown for alert-fired runs.`;
+      } catch (err) {
+        pushNote = ` (Could not reach GoatTown to update alert-fired runs: ${
+          err instanceof Error ? err.message : String(err)
+        } — re-provision to retry.)`;
+      }
+      setFlash(`Source repositories saved.${pushNote}`);
+      setTimeout(() => setFlash(null), 10_000);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -318,6 +347,34 @@ export default function SettingsPage() {
       return steps;
     }
     const url = getCellBaseUrl();
+    // Stage the agent configuration first. The webhook target and the alert
+    // notification only mean something once GoatTown knows about the
+    // investigator agent they trigger, so the configuration goes up with the
+    // same Apply that wires the trigger — this is the workflow the CLI's
+    // `wireCellTrigger` performs, kept identical between UI and CLI.
+    //
+    // Unlike the pre-SDK version this does NOT abort the rest on failure.
+    // Staging can now fail for a legitimate, unrelated reason (the app
+    // connection has not been granted proposal rights), and returning early
+    // there would leave alert_notify unbound as collateral damage. The step
+    // is still reported not-ok, so the failure stays visible.
+    try {
+      const registration = await stageApmInvestigatorConfiguration(url, currentDataset);
+      steps.push({
+        label: `APM configuration revision staged (${registration.skills} skills)`,
+        ok: !registration.hasConflicts,
+        detail:
+          `Revision ${registration.revisionId}; ${registration.changes} proposed change(s). ` +
+          (registration.hasConflicts ? 'Resolve conflicts, then review' : 'Review') +
+          ` and activate producer ${registration.producer} at ${registration.reviewPath}.`,
+      });
+    } catch (err) {
+      steps.push({
+        label: 'APM configuration staging: failed',
+        ok: false,
+        detail: err instanceof Error ? err.message : String(err),
+      });
+    }
     // The capability is the only correct check: it is absent unless an
     // administrator has enabled "Allow alert firing" on this connection.
     let mayFire = false;
@@ -368,7 +425,69 @@ export default function SettingsPage() {
     }
     const n = await ensureAlertNotification(http);
     steps.push({ label: `Alert notification: ${n} (alert_notify → cell)`, ok: true });
+    // Re-push the configured repos so alert-fired investigations check out
+    // code. Interactive runs thread their own at create time; this is the only
+    // way the autonomous path gets them.
+    try {
+      const { count } = await pushGoatTownRepos(sourceRepos);
+      steps.push({ label: `Source repos → GoatTown: ${count} for alert-fired runs`, ok: true });
+    } catch (err) {
+      steps.push({
+        label: 'Source repos → GoatTown: failed',
+        ok: false,
+        detail: err instanceof Error ? err.message : String(err),
+      });
+    }
     return steps;
+  }
+
+  /**
+   * Stage the agent configuration on demand.
+   *
+   * The same call Apply makes, exposed on its own because the configuration
+   * changes whenever the skills, the instructions, or the dataset change —
+   * none of which necessarily coincides with a search needing reconciliation.
+   */
+  async function handleStageGoatTownConfiguration() {
+    if (goatTownConfigurationStaging) return;
+    setGoatTownConfigurationStaging(true);
+    setGoatTownStaging({
+      kind: 'working',
+      message: 'Validating the configuration and storing a revision…',
+    });
+    try {
+      const result = await stageApmInvestigatorConfiguration(getCellBaseUrl(), currentDataset);
+      const where = `Producer ${result.producer}; review at ${result.reviewPath}.`;
+      // A revision is stored on EVERY stage, including when the source already
+      // matches what is active — `changes: 0` means there is nothing to
+      // activate, not that nothing was sent. Spelling that out is the
+      // difference between trusting the result and hunting GoatTown for a
+      // revision that is sitting right there.
+      if (result.changes === 0 && !result.hasConflicts) {
+        setGoatTownStaging({
+          kind: 'nochange',
+          message:
+            `Revision ${result.revisionId} stored with no changes: this configuration already ` +
+            `matches the active one, so there is nothing to activate. ${where}`,
+        });
+      } else {
+        setGoatTownStaging({
+          kind: 'ok',
+          message:
+            `Revision ${result.revisionId} staged with ${result.changes} proposed change(s) ` +
+            `across ${result.skills} skills` +
+            `${result.hasConflicts ? '. It reports conflicts to resolve before activation' : ''}. ` +
+            `${where}`,
+        });
+      }
+    } catch (err) {
+      setGoatTownStaging({
+        kind: 'error',
+        message: `Staging failed: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    } finally {
+      setGoatTownConfigurationStaging(false);
+    }
   }
 
   async function handleStreamFilterToggle(next: boolean) {
@@ -692,6 +811,44 @@ export default function SettingsPage() {
             </div>
           </div>
         </label>
+
+        <div className={s.field} style={{ marginTop: 16 }}>
+          <div className={s.label}>GoatTown agent configuration</div>
+          <div className={s.fieldHelp}>
+            Validate and stage this app&apos;s <code>goattown.config.yaml</code> — the
+            investigator agent, its skills, and the telemetry-reader profile — as an
+            immutable revision. This does not activate the agent: a tenant administrator
+            reviews the diff and activates it in GoatTown. Re-provisioning stages it as
+            well, so this is only needed when the configuration changes on its own.
+          </div>
+          <div className={s.actions} style={{ marginTop: 8 }}>
+            <button
+              type="button"
+              className={s.primaryBtn}
+              onClick={() => void handleStageGoatTownConfiguration()}
+              disabled={goatTownConfigurationStaging || !cellTokenConfigured}
+            >
+              {goatTownConfigurationStaging ? 'Staging…' : 'Stage GoatTown revision'}
+            </button>
+          </div>
+          {/* Say why the button is inert. A disabled control with no
+              explanation is the same dead end as a silent failure. */}
+          {!cellTokenConfigured && (
+            <div className={s.fieldHelp}>
+              Unavailable until GoatTown accepts this app&apos;s credential — the
+              connection check below must pass first.
+            </div>
+          )}
+          {(goatTownStaging?.kind === 'working' || goatTownStaging?.kind === 'nochange') && (
+            <StatusBanner kind="info">{goatTownStaging.message}</StatusBanner>
+          )}
+          {goatTownStaging?.kind === 'error' && (
+            <StatusBanner kind="error">{goatTownStaging.message}</StatusBanner>
+          )}
+          {goatTownStaging?.kind === 'ok' && (
+            <div role="status" className={s.successFlash}>{goatTownStaging.message}</div>
+          )}
+        </div>
 
         <div className={s.field} style={{ marginTop: 16 }}>
           <div className={s.label}>Shared GoatTown service</div>
