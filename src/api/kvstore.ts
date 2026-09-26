@@ -9,8 +9,41 @@
  *   DELETE CRIBL_API_URL + '/kvstore/the/path/to/key'
  *
  * The underlying storage is pack-scoped — we can write arbitrary string
- * or JSON values. Missing keys return 404; we normalize that to null.
+ * or JSON values.
+ *
+ * A missing key returns null, but "missing" is deliberately narrow: only a
+ * 404 that the KV store itself produced. An unmatched route or a rejected
+ * credential also answers 404, with the web shell's HTML rather than the
+ * store's JSON, and treating that as absence is actively destructive —
+ * `saveAppSettings` merges onto `(await loadAppSettings()) ?? {}`, so a
+ * misroute read as "nothing stored yet" replaces every persisted setting
+ * with whatever partial was being saved. Confirmed against Cribl staging: a
+ * genuinely absent key answers 404 `application/json`
+ * `{"message":"Key not found"}`, an unmatched route answers 404 `text/html`.
  */
+
+/** A KV read or write that never reached the store, as distinct from a key
+ *  that is genuinely absent. Callers may substitute defaults for absence and
+ *  must not for this. */
+export class KvStoreError extends Error {
+  readonly key: string;
+  readonly status: number;
+  readonly contentType: string | null;
+
+  constructor(message: string, key: string, status: number, contentType: string | null) {
+    super(message);
+    this.name = 'KvStoreError';
+    this.key = key;
+    this.status = status;
+    this.contentType = contentType;
+  }
+
+  /** The body was HTML, so the request fell through to the web shell instead
+   *  of reaching the KV store — a routing or auth problem, never absence. */
+  get isRoutingFailure(): boolean {
+    return (this.contentType ?? '').includes('text/html');
+  }
+}
 
 function apiUrl(): string {
   return window.CRIBL_API_URL ?? import.meta.env.VITE_CRIBL_API_URL ?? '/api/v1';
@@ -30,9 +63,33 @@ function kvUrl(key: string): string {
  */
 export async function kvGet<T = unknown>(key: string): Promise<T | null> {
   const resp = await fetch(kvUrl(key));
-  if (resp.status === 404) return null;
+  const contentType = resp.headers.get('content-type');
+  if (resp.status === 404) {
+    // Only the store's own "not found" counts as absence. Read the body to
+    // tell them apart rather than trusting the status alone.
+    const body = (await resp.text()).trim();
+    if ((contentType ?? '').includes('application/json')) {
+      let parsed: unknown;
+      try { parsed = JSON.parse(body); } catch { parsed = null; }
+      const message = (parsed as { message?: unknown } | null)?.message;
+      if (typeof message === 'string' && /key not found/i.test(message)) return null;
+    }
+    throw new KvStoreError(
+      `kvGet(${key}) got a 404 that did not come from the KV store `
+      + `(content-type ${contentType ?? 'none'}). Treating this as a missing key `
+      + 'would let a routing or auth failure look like an empty store.',
+      key,
+      404,
+      contentType,
+    );
+  }
   if (!resp.ok) {
-    throw new Error(`kvGet(${key}) failed: ${resp.status} ${await resp.text()}`);
+    throw new KvStoreError(
+      `kvGet(${key}) failed: ${resp.status}`,
+      key,
+      resp.status,
+      contentType,
+    );
   }
   const text = (await resp.text()).trim();
   if (!text) return null;
@@ -61,6 +118,13 @@ export async function kvPut<T = unknown>(key: string, value: T): Promise<void> {
     body,
   });
   if (!resp.ok) {
-    throw new Error(`kvPut(${key}) failed: ${resp.status} ${await resp.text()}`);
+    // No body in the message: a KV value can be a credential, and a failed
+    // write is diagnosable from status and content type alone.
+    throw new KvStoreError(
+      `kvPut(${key}) failed: ${resp.status}`,
+      key,
+      resp.status,
+      resp.headers.get('content-type'),
+    );
   }
 }

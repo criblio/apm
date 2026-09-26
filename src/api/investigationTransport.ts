@@ -38,6 +38,7 @@ import {
   wireEventToLoopEvent as wireEventToLoopEventBase,
   isTerminalStatus,
   type MessageImage,
+  type ObserveResult,
 } from '@criblio/app-utils/goattown';
 import { applyLoopEvent } from '@criblio/app-utils/investigator';
 import type { LoopEvent } from '@criblio/app-utils/agent-loop';
@@ -228,6 +229,24 @@ export interface SubscribeOptions {
   onExecution?: (execution: SessionExecution) => void;
   /** Called on a transport error (polling continues unless stopped). */
   onError?: (err: unknown) => void;
+  /**
+   * Called for every consumed frame, including the wire-only `userMessage`
+   * frames that never reach `onEvent`.
+   *
+   * This is the resume position. Deriving it from `onEvent` alone skips user
+   * turns, and deriving it from either callback loses the frames consumed
+   * before a throw — `onCursor` stays accurate through both.
+   */
+  onCursor?: (seq: number) => void;
+  /**
+   * How observation ended.
+   *
+   * Only `drained` means the response was fully consumed. `stalled` is a
+   * failure: a terminal receipt promised events through `finalSeq` that never
+   * arrived. Without this the caller cannot tell a completed answer from a
+   * transport failure — both simply stop producing events.
+   */
+  onOutcome?: (result: ObserveResult) => void;
   /** Follow one specific request receipt rather than the latest accepted
    *  one, so a caller can know that *its* message finished. */
   requestId?: string;
@@ -260,10 +279,16 @@ export function subscribeInvestigation(
     signal: controller.signal,
     onEvent: (ev, seq) => opts.onEvent(renameConcludingTool(ev), seq),
     onUserMessage: (content, seq) => opts.onUserMessage?.(content, seq),
+    onCursor: (seq) => opts.onCursor?.(seq),
     onStatus: (status) => opts.onStatus?.(status),
     onExecution: (execution) => opts.onExecution?.(execution),
     onError: (err) => opts.onError?.(err),
+  }).then((result) => {
+    if (!controller.signal.aborted) opts.onOutcome?.(result);
   }).catch((err) => {
+    // Since 0.9.0 the observer throws rather than retrying on 401/403 and on
+    // a malformed body, so this is now a real terminal path, not just a
+    // programming-error backstop.
     if (!controller.signal.aborted) opts.onError?.(err);
   });
 
