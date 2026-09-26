@@ -23,6 +23,7 @@ import { useServerInvestigations } from '../hooks/useServerInvestigations';
 import { setServerInvestigations, getServerInvestigations } from '../api/serverInvestigations';
 import {
   getCellBaseUrl,
+  sessionDiagnosticsText,
   SHARED_GOATTOWN_BASE_URL,
   verifyGoatTownConnection,
 } from '../api/investigationTransport';
@@ -86,6 +87,8 @@ export default function SettingsPage() {
   const [originators, setOriginators] = useState<TraceOriginatorRow[]>([]);
   const [originatorsLoading, setOriginatorsLoading] = useState(true);
   const [originatorsOpen, setOriginatorsOpen] = useState(false);
+  const [goatTownRawOpen, setGoatTownRawOpen] = useState(false);
+  const [goatTownRaw, setGoatTownRaw] = useState('');
 
   // Load persisted settings and diagnostic context on mount.
   useEffect(() => {
@@ -429,7 +432,10 @@ export default function SettingsPage() {
     },
     {
       title: 'Diagnostics',
-      items: [{ id: 'originators', label: 'Trace originators' }],
+      items: [
+        { id: 'originators', label: 'Trace originators' },
+        { id: 'goattown-raw', label: 'GoatTown raw events' },
+      ],
     },
   ];
 
@@ -1010,6 +1016,49 @@ export default function SettingsPage() {
             </tbody>
           </table>
         )}
+          </>
+        )}
+      </div>
+
+      <div id="goattown-raw" className={s.card}>
+        <button
+          type="button"
+          className={s.diagnosticToggle}
+          onClick={() => {
+            const next = !goatTownRawOpen;
+            setGoatTownRawOpen(next);
+            // Snapshot on open so the view is a stable moment rather than
+            // something that shifts while it is being read or copied.
+            if (next) setGoatTownRaw(sessionDiagnosticsText());
+          }}
+          aria-expanded={goatTownRawOpen}
+        >
+          <span className={s.sectionTitle}>GoatTown raw events</span>
+          <span className={s.diagnosticChevron} aria-hidden>
+            {goatTownRawOpen ? '▾' : '▸'}
+          </span>
+        </button>
+        {goatTownRawOpen && (
+          <>
+            <p className={s.sectionHelp}>
+              A bounded, rolling record of what the GoatTown service actually
+              returned — route shapes, status codes, content types, which event
+              collection each response carried, and the request receipt with its
+              cursor and <code>finalSeq</code>. This is what settles &ldquo;the
+              answer came back empty but GoatTown looks fine&rdquo;: an HTML
+              content type on a JSON route is a proxy misroute, and{' '}
+              <code>collection: absent</code> means that route served no events
+              at all.
+            </p>
+            <p className={s.fieldHelp}>
+              Safe to paste into a bug report. Query values, credentials and
+              image bytes are stripped by the recorder, and failures are
+              recorded as a category rather than exception text — a thrown
+              network error carries the request URL, and a URL can carry a
+              token. Empty until an investigation has run in this browser
+              session.
+            </p>
+            <pre className={s.rawEvents}>{goatTownRaw || 'No GoatTown interactions recorded yet.'}</pre>
           </>
         )}
       </div>
