@@ -28,7 +28,7 @@ jobs:
           fi
       # Framework packages are public on npmjs; no registry token or
       # framework checkout is required.
-      - uses: criblio/cribl-search-app-framework/.github/actions/release-build@56a31ab2f3f289fdfd0e65cd365a3c994b59164e
+      - uses: criblio/cribl-search-app-framework/.github/actions/release-build@7affaee009559be835639f38d446cdf71b1e7857
       - name: Upgrade the shared validation workspace with the exact candidate
         env:
           CRIBL_BASE_URL: ${{ secrets.CRIBL_RELEASE_VALIDATION_BASE_URL }}
