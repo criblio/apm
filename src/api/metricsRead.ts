@@ -1,15 +1,14 @@
 /**
  * Metrics-read gate (runtime). When ON, RED panels try the fast metrics
  * store first (via `metricsPanels.ts`) and fall back to `$vt_results` /
- * live on empty or error. OFF by default: the dual-read seam ships
- * "dark" (M2 in `docs/metrics-migration-plan.md`) so it can be flipped on
- * per-deployment once the emitters have accumulated enough history and a
- * week of side-by-side agreement holds — and flipped back off instantly
- * (KV, no re-provision) if a panel misbehaves.
+ * live on empty or error. ON by default since the metrics migration's
+ * read stage landed (`docs/metrics-migration-plan.md`, "Implemented so
+ * far"). Set `metricsRead: false` in the app's KV settings to turn it off
+ * instantly (no re-provision) if a panel misbehaves.
  *
  * Unlike `metricsEmit` (baked into scheduled-search KQL at provision
- * time), this is read per-render, so a Settings toggle takes effect
- * without re-provisioning.
+ * time), this is read per-render, so a KV change takes effect without
+ * re-provisioning.
  */
 
 let enabled = true;

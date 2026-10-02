@@ -680,10 +680,10 @@ export function getProvisioningPlan(): ProvisionedSearch[] {
 
   // ── Span-derived metric emitters (M3) ───────────────────────
   //
-  // Gated behind metricsEmit (default off). When on, these `export to
-  // metrics` scheduled searches feed the fast PromQL store, which the
-  // dark dual-read seam (metricsRead) will eventually serve RED panels
-  // from — taking those reads off the search worker pool. Additive:
+  // Gated behind metricsEmit (default on). These `export to metrics`
+  // scheduled searches feed the fast PromQL store, which metricsRead
+  // (default on) serves RED panels from — taking those reads off the
+  // search worker pool. Additive:
   // they run alongside the $vt_results caches, so turning emit on is
   // safe and reversible. See docs/metrics-migration-plan.md.
   if (getMetricsEmit()) {
