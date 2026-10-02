@@ -524,17 +524,13 @@ export function prevWindowSummary(): string {
 }
 
 /**
- * Join the latest immutable evaluator snapshot for each alert.  The previous
- * implementation joined a mutable lookup that three same-cron searches raced
- * to overwrite.  Snapshot events are append-only, and selecting the newest
- * event makes retry and queue order irrelevant.  Legacy transition rows are
- * accepted during the upgrade window; v1 evaluation rows are the steady-state
- * source of truth.
+ * The newest committed evaluator event per alert_id inside the search
+ * window (the evaluator runs at -15m, so this is the last ~3 cycles).
+ * Shared by priorAlertStateJoin() and the per-operation latency arm's
+ * no-traffic driver rows so both read prior state identically.
  */
-function priorAlertStateJoin(): string {
-  return `
-    | join kind=leftouter (
-        ${datasetClause()}
+function latestAlertEvaluationRows(): string {
+  return `${datasetClause()}
         | where ${generatedDatatypePredicate(ALERT_EVENT_DATATYPE)}
         | where isnull(is_canary) or tostring(is_canary) != "true"
         | where isnull(record_kind) or tostring(record_kind) == "evaluation"
@@ -547,7 +543,21 @@ function priorAlertStateJoin(): string {
             | where isnotempty(alert_id)
             | summarize persisted_time=max(_time) by alert_id
           ) on alert_id
-        | where _time == persisted_time
+        | where _time == persisted_time`;
+}
+
+/**
+ * Join the latest immutable evaluator snapshot for each alert.  The previous
+ * implementation joined a mutable lookup that three same-cron searches raced
+ * to overwrite.  Snapshot events are append-only, and selecting the newest
+ * event makes retry and queue order irrelevant.  Legacy transition rows are
+ * accepted during the upgrade window; v1 evaluation rows are the steady-state
+ * source of truth.
+ */
+function priorAlertStateJoin(): string {
+  return `
+    | join kind=leftouter (
+        ${latestAlertEvaluationRows()}
         | summarize persisted_evaluation_id=max(tostring(evaluation_id)),
                     persisted_status=max(tostring(alert_status)),
                     persisted_bad=max(tolong(consecutive_bad)),
@@ -555,6 +565,45 @@ function priorAlertStateJoin(): string {
                     persisted_fire_count=max(tolong(fire_count))
           by alert_id
       ) on alert_id`;
+}
+
+/**
+ * The debounce state machine shared by every evaluator arm. Expects
+ * `is_bad` and the `persisted_*` columns from priorAlertStateJoin(); emits
+ * alert_status, consecutive_bad/good, fire_count and transitioned_to.
+ * Mirrors `nextAlertState()` in alertStateMachine.ts. Both arms MUST use
+ * this one builder: the per-operation latency arm once carried a bad-only
+ * copy and could never walk firing → resolving → ok.
+ */
+function alertStateMachineKql(indent: string, fireAfter: number, clearAfter: number): string {
+  const lines = [
+    `| extend is_retry=iff(isnotnull(persisted_evaluation_id) and persisted_evaluation_id == evaluation_id, true, false),`,
+    `         prev_status=iff(isnotnull(persisted_status), persisted_status, "ok"),`,
+    `         prev_bad=iff(isnotnull(persisted_bad), persisted_bad, 0),`,
+    `         prev_good=iff(isnotnull(persisted_good), persisted_good, 0),`,
+    `         prev_fire_count=iff(isnotnull(persisted_fire_count), persisted_fire_count, 0)`,
+    `| extend new_bad=iff(is_bad, prev_bad + 1, 0),`,
+    `         new_good=iff(is_bad, 0, prev_good + 1)`,
+    `| extend alert_status=case(`,
+    `           is_bad and prev_status == "ok", "pending",`,
+    `           is_bad and prev_status == "pending" and new_bad >= ${fireAfter}, "firing",`,
+    `           is_bad and prev_status == "pending", "pending",`,
+    `           is_bad and prev_status == "firing", "firing",`,
+    `           is_bad and prev_status == "resolving", "firing",`,
+    `           not(is_bad) and prev_status == "pending", "ok",`,
+    `           not(is_bad) and prev_status == "firing", "resolving",`,
+    `           not(is_bad) and prev_status == "resolving" and new_good >= ${clearAfter}, "ok",`,
+    `           not(is_bad) and prev_status == "resolving", "resolving",`,
+    `           "ok"),`,
+    `         consecutive_bad=new_bad,`,
+    `         consecutive_good=new_good,`,
+    `         fire_count=iff(is_bad and prev_status == "pending" and new_bad >= ${fireAfter}, prev_fire_count + 1, prev_fire_count),`,
+    `         transitioned_to=case(`,
+    `           is_bad and prev_status == "pending" and new_bad >= ${fireAfter}, "firing",`,
+    `           not(is_bad) and prev_status == "resolving" and new_good >= ${clearAfter}, "resolved",`,
+    `           "")`,
+  ];
+  return lines.map((l, i) => (i === 0 ? l : indent + l)).join('\n');
 }
 
 /**
@@ -753,41 +802,69 @@ export function alertEvaluator(): string {
     | extend alert_id=strcat("auto:health:", svc),
              evaluation_id=strcat("criblapm-eval:", tostring(bin(now(), 5m)))
     ${priorAlertStateJoin()}
-    | extend is_retry=iff(isnotnull(persisted_evaluation_id) and persisted_evaluation_id == evaluation_id, true, false),
-             prev_status=iff(isnotnull(persisted_status), persisted_status, "ok"),
-             prev_bad=iff(isnotnull(persisted_bad), persisted_bad, 0),
-             prev_good=iff(isnotnull(persisted_good), persisted_good, 0),
-             prev_fire_count=iff(isnotnull(persisted_fire_count), persisted_fire_count, 0)
-    | extend new_bad=iff(is_bad, prev_bad + 1, 0),
-             new_good=iff(is_bad, 0, prev_good + 1)
-    | extend alert_status=case(
-               is_bad and prev_status == "ok", "pending",
-               is_bad and prev_status == "pending" and new_bad >= ${FIRE_AFTER}, "firing",
-               is_bad and prev_status == "pending", "pending",
-               is_bad and prev_status == "firing", "firing",
-               is_bad and prev_status == "resolving", "firing",
-               not(is_bad) and prev_status == "pending", "ok",
-               not(is_bad) and prev_status == "firing", "resolving",
-               not(is_bad) and prev_status == "resolving" and new_good >= ${CLEAR_AFTER}, "ok",
-               not(is_bad) and prev_status == "resolving", "resolving",
-               "ok"),
-             consecutive_bad=new_bad,
-             consecutive_good=new_good,
-             fire_count=iff(is_bad and prev_status == "pending" and new_bad >= ${FIRE_AFTER}, prev_fire_count + 1, prev_fire_count),
-             transitioned_to=case(
-               is_bad and prev_status == "pending" and new_bad >= ${FIRE_AFTER}, "firing",
-               not(is_bad) and prev_status == "resolving" and new_good >= ${CLEAR_AFTER}, "resolved",
-               "")
+    ${alertStateMachineKql('    ', FIRE_AFTER, CLEAR_AFTER)}
     | project svc, curr_requests, curr_errors, curr_error_rate,
               prev_requests, prev_errors, prev_error_rate,
               alert_id, evaluation_id, is_retry,
               signal_type, is_bad, is_persistent,
               alert_status, consecutive_bad, consecutive_good,
               fire_count, transitioned_to
+    // Per-operation latency arm (auto:latency:<svc>:<op>). It must emit a
+    // GOOD row (is_bad=false) for every alert it is debouncing, or a firing
+    // alert never sees the good evaluations that walk it through
+    // resolving → ok — it used to filter (where) on the bad condition, so a
+    // recovered op produced no row, its state aged out of the -15m window
+    // and no "resolved" event was ever written.
+    //
+    // Cardinality: rows are computed for every (svc, op) in the latest
+    // svc_operations run, but only COMMITTED when the op is bad now or its
+    // prior state is not ok (pending/firing/resolving) — see the emission
+    // gate below. A healthy op with no open alert writes nothing, exactly
+    // as before; an alert writes rows from its first bad cycle through the
+    // "resolved" cycle and then stops. (The health arm commits one row per
+    // service per cycle; ops outnumber services several-fold, so it is gated.)
     | union (
         dataset="$vt_results"
         | where jobName == "criblapm__svc_operations"
-        | project svc, op=name, curr_p95_us=toreal(p95_us), curr_requests=toreal(requests)
+        // Latest run only — keepLastN retains two runs, and reading both
+        // emitted two rows per op with the same alert_id/event_id.
+        | join kind=inner (
+            dataset="$vt_results"
+            | where jobName == "criblapm__svc_operations"
+            | summarize jobId=max(tostring(jobId))
+          ) on jobId
+        | project svc=tostring(svc), op=tostring(name),
+                  curr_p95_us=toreal(p95_us), curr_requests=toreal(requests)
+        | extend alert_id=strcat("auto:latency:", svc, ":", op)
+        // No-traffic driver rows: an op whose alert is still open but that
+        // has no spans in the svc_operations window has no row above, so it
+        // would freeze (and silently age out) like the pre-fix arm. Drive a
+        // curr_requests=0 row for it, which evaluates GOOD: no traffic means
+        // no latency regression, matching the health arm where a service
+        // with zero current requests is not bad on error/latency grounds.
+        // Silence itself is owned by the service-level silent /
+        // traffic_drop signals on auto:health:<svc>, not by this arm.
+        | union (
+            ${latestAlertEvaluationRows()}
+            | where tostring(alert_id) startswith "auto:latency:"
+            | summarize driver_status=max(tostring(alert_status)),
+                        svc=max(tostring(svc))
+              by alert_id
+            | where driver_status != "ok"
+            | join kind=leftanti (
+                dataset="$vt_results"
+                | where jobName == "criblapm__svc_operations"
+                | join kind=inner (
+                    dataset="$vt_results"
+                    | where jobName == "criblapm__svc_operations"
+                    | summarize jobId=max(tostring(jobId))
+                  ) on jobId
+                | extend alert_id=strcat("auto:latency:", tostring(svc), ":", tostring(name))
+                | summarize n_rows=count() by alert_id
+              ) on alert_id
+            | project svc, op="", alert_id,
+                      curr_p95_us=toreal(0), curr_requests=toreal(0)
+          )
         | lookup criblapm_op_baselines on svc, op
         | extend prev_p95_us=iff(isnotnull(p95_us), toreal(p95_us), 0.0),
                  prev_op_requests=iff(isnotnull(requests), toreal(requests), 0.0)
@@ -796,36 +873,27 @@ export function alertEvaluator(): string {
         // with 5x ratio + 500ms floor — drift over 7 min didn't
         // get there. Loosened to 3x ratio + 250ms floor with a
         // 20-span volume gate to keep the noise tolerable. Item
-        // 1e in ROADMAP.
-        | where isnotnull(prev_p95_us) and prev_p95_us > 0
-                and curr_p95_us >= prev_p95_us * 3
-                and curr_p95_us >= 250000
-                and prev_op_requests >= 20
-        | extend alert_id=strcat("auto:latency:", svc, ":", op),
+        // 1e in ROADMAP. A driver row (curr_p95_us=0, no baseline
+        // match) is always good.
+        | extend is_bad=(prev_p95_us > 0
+                         and curr_p95_us >= prev_p95_us * 3
+                         and curr_p95_us >= 250000
+                         and prev_op_requests >= 20),
                  evaluation_id=strcat("criblapm-eval:", tostring(bin(now(), 5m))),
+                 // Constant, not iff(is_bad, ..., "none"): the alert id
+                 // already names the family, and the Alerts page pairs
+                 // firing → resolved episodes on svc + signal_type.
                  signal_type="latency",
-                 is_bad=true,
                  is_persistent=false,
                  curr_errors=0.0, curr_error_rate=0.0,
                  prev_requests=prev_op_requests, prev_errors=0.0, prev_error_rate=0.0
         ${priorAlertStateJoin()}
-        | extend is_retry=iff(isnotnull(persisted_evaluation_id) and persisted_evaluation_id == evaluation_id, true, false),
-                 prev_status=iff(isnotnull(persisted_status), persisted_status, "ok"),
-                 prev_bad=iff(isnotnull(persisted_bad), persisted_bad, 0),
-                 prev_good=iff(isnotnull(persisted_good), persisted_good, 0),
-                 prev_fire_count=iff(isnotnull(persisted_fire_count), persisted_fire_count, 0)
-        | extend new_bad=prev_bad + 1, new_good=0
-        | extend alert_status=case(
-                   prev_status == "ok", "pending",
-                   prev_status == "pending" and new_bad >= ${FIRE_AFTER}, "firing",
-                   prev_status == "pending", "pending",
-                   prev_status == "firing", "firing",
-                   prev_status == "resolving", "firing",
-                   "ok"),
-                 consecutive_bad=new_bad,
-                 consecutive_good=0,
-                 fire_count=iff(prev_status == "pending" and new_bad >= ${FIRE_AFTER}, prev_fire_count + 1, prev_fire_count),
-                 transitioned_to=iff(prev_status == "pending" and new_bad >= ${FIRE_AFTER}, "firing", "")
+        ${alertStateMachineKql('        ', FIRE_AFTER, CLEAR_AFTER)}
+        // Emission gate (see cardinality note above). prev_status != "ok"
+        // keeps the good rows that drive pending → ok and the
+        // firing → resolving → ok walk; the row that resolves the alert
+        // has alert_status="ok", so the next cycle emits nothing.
+        | where is_bad or prev_status != "ok"
         | project svc, curr_requests, curr_errors, curr_error_rate,
                   prev_requests, prev_errors, prev_error_rate,
                   alert_id, evaluation_id, is_retry,
