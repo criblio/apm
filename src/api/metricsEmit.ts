@@ -6,35 +6,18 @@
  * `metricsRead.ts` and `docs/metrics-migration-plan.md`). Set
  * `metricsEmit: false` in the app's KV settings and re-provision to stop.
  *
- * Mirrors the lowVolumeMode.ts module-level-state-plus-subscribe pattern:
+ * A framework `createStore`, like lowVolumeMode.ts:
  * read at provision time by scripts/provision.ts and at page boot by
  * DatasetProvider from the app's KV settings. Because the emitter
  * KQL is baked into the scheduled search at creation, toggling requires a
  * re-provision to take effect — same contract as lowVolumeMode.
  */
 
-let enabled = true;
-const listeners = new Set<() => void>();
+import { createStore } from '@criblio/app-utils/store';
 
-export function getMetricsEmit(): boolean {
-  return enabled;
-}
+/** ON by default (owner decision): the RED panels read from the emitted store first. */
+export const metricsEmitStore = createStore(true);
 
-export function setMetricsEmit(v: boolean): void {
-  if (v === enabled) return;
-  enabled = v;
-  for (const l of listeners) {
-    try {
-      l();
-    } catch {
-      /* listener errors shouldn't block others */
-    }
-  }
-}
-
-export function subscribeMetricsEmit(fn: () => void): () => void {
-  listeners.add(fn);
-  return () => {
-    listeners.delete(fn);
-  };
-}
+export const getMetricsEmit = metricsEmitStore.get;
+export const setMetricsEmit = metricsEmitStore.set;
+export const subscribeMetricsEmit = metricsEmitStore.subscribe;

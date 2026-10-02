@@ -6,7 +6,7 @@ import MetricsBackfillPanel from '../components/MetricsBackfillPanel';
 import SettingsSetupStatus from './SettingsSetupStatus';
 import SettingsNav, { type NavGroup } from './SettingsNav';
 import { loadAppSettings, saveAppSettings } from '../api/appSettings';
-import { setCurrentDataset, useDataset } from '@criblio/app-utils/dataset';
+import { setCurrentDataset, useDataset, useDatasetLoadError } from '@criblio/app-utils/dataset';
 import { setStreamFilterEnabled } from '../api/streamFilter';
 import { setLowVolumeMode } from '../api/lowVolumeMode';
 import { setSearchCadence, CADENCE_OPTIONS, type CadenceOption } from '@criblio/app-utils/cadence';
@@ -23,7 +23,8 @@ import {
   SHARED_GOATTOWN_BASE_URL,
   verifyGoatTownConnection,
 } from '../api/investigationTransport';
-import { kvGet, kvPut } from '../api/kvstore';
+import { kvPutText } from '@criblio/app-utils/kv';
+import { kvGetText } from '../api/kvText';
 import { stageApmInvestigatorConfiguration } from '../api/goatTownProvisioning';
 import { pushGoatTownRepos } from '../api/investigationTransport';
 import {
@@ -60,6 +61,7 @@ const GOATTOWN_CREDENTIAL_KEY = 'goattownEmbedToken';
 
 export default function SettingsPage() {
   const currentDataset = useDataset();
+  const settingsLoadError = useDatasetLoadError();
   const currentStreamFilter = useStreamFilterEnabled();
   const currentLowVolume = useLowVolumeMode();
   const currentCadence = useSearchCadence();
@@ -247,7 +249,7 @@ export default function SettingsPage() {
     setCellTokenSaving(true);
     setError(null);
     try {
-      await kvPut('goattownEmbedToken', token);
+      await kvPutText(GOATTOWN_CREDENTIAL_KEY, token);
       setCellToken('');
       setGoatTownConnection({ kind: 'checking', message: 'Token saved. Testing GoatTown…' });
       await testGoatTownConnection();
@@ -432,7 +434,7 @@ export default function SettingsPage() {
       // token: this one can be rotated from Connections → Connected apps
       // (prepare replacement → finish → revoke), whereas gt_w1_ is a one-shot
       // enrolment secret that would require re-enrolling the installation.
-      const bearer = await kvGet<string>(GOATTOWN_CREDENTIAL_KEY);
+      const bearer = await kvGetText(GOATTOWN_CREDENTIAL_KEY);
       if (typeof bearer === 'string' && bearer.trim()) {
         const t = await ensureCellWebhookTarget(http, { cellUrl: url, bearer: bearer.trim() });
         steps.push({ label: `Webhook target: ${t} (${url})`, ok: true });
@@ -593,6 +595,12 @@ export default function SettingsPage() {
       </div>
 
       {error && <StatusBanner kind="error">{error}</StatusBanner>}
+      {settingsLoadError && (
+        <StatusBanner kind="error">
+          Saved settings could not be loaded, so the app is running on defaults:{' '}
+          {settingsLoadError.message}
+        </StatusBanner>
+      )}
 
       <SettingsSetupStatus />
 

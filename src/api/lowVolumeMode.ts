@@ -15,42 +15,20 @@
  * lets the operator pick which trade-off they want without us
  * choosing one default for everyone. See ROADMAP §P1.2.
  *
- * Mirrors the streamFilter.ts module-level-state-plus-subscribe
- * pattern: read at provision time by scripts/provision.ts and at
- * page boot by DatasetProvider, set via the SettingsPage toggle,
+ * A framework `createStore` (module-level value plus subscribe):
+ * read at provision time by scripts/provision.ts and at page boot
+ * by DatasetProvider, set via the SettingsPage toggle,
  * subscribed by any UI surface that should re-render when the
  * value changes (currently none — alert thresholds are baked into
  * scheduled searches at provision time, so toggling requires a
  * re-provision to take effect).
  */
 
-let enabled = false;
-const listeners = new Set<() => void>();
+import { createStore } from '@criblio/app-utils/store';
 
-export function getLowVolumeMode(): boolean {
-  return enabled;
-}
+/** OFF by default; users in low-traffic environments opt in via Settings. */
+export const lowVolumeModeStore = createStore(false);
 
-/**
- * Set the low-volume mode state and notify subscribers. No-op if
- * unchanged. Callers: DatasetProvider on KV load, SettingsPage on
- * toggle, scripts/provision.ts on settings read.
- */
-export function setLowVolumeMode(v: boolean): void {
-  if (v === enabled) return;
-  enabled = v;
-  for (const l of listeners) {
-    try {
-      l();
-    } catch {
-      /* listener errors shouldn't block others */
-    }
-  }
-}
-
-export function subscribeLowVolumeMode(fn: () => void): () => void {
-  listeners.add(fn);
-  return () => {
-    listeners.delete(fn);
-  };
-}
+export const getLowVolumeMode = lowVolumeModeStore.get;
+export const setLowVolumeMode = lowVolumeModeStore.set;
+export const subscribeLowVolumeMode = lowVolumeModeStore.subscribe;

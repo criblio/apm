@@ -16,11 +16,11 @@
  * Design: docs/research/server-investigations/design.md.
  */
 
-import { createFlagStore } from './flagStore';
+import { createStore } from '@criblio/app-utils/store';
 
 /** OFF by default — the kill-switch story depends on it. */
-const store = createFlagStore(false);
+export const serverInvestigationsStore = createStore(false);
 
-export const getServerInvestigations = store.get;
-export const setServerInvestigations = store.set;
-export const subscribeServerInvestigations = store.subscribe;
+export const getServerInvestigations = serverInvestigationsStore.get;
+export const setServerInvestigations = serverInvestigationsStore.set;
+export const subscribeServerInvestigations = serverInvestigationsStore.subscribe;

@@ -49,9 +49,11 @@
  *
  * The filter is exposed as a user setting (default on). Persisted in
  * the pack-scoped KV store alongside the dataset preference. The
- * module maintains a pub/sub so pages can re-fetch when the toggle
- * changes, using the same pattern as `dataset.ts`.
+ * module holds it in a framework `createStore` so pages can re-fetch
+ * when the toggle changes, the same mechanism as `dataset.ts`.
  */
+
+import { createStore } from '@criblio/app-utils/store';
 
 /** Minimum trace duration (μs) at which the filter even considers a trace. */
 export const STREAM_DURATION_US = 30_000_000;
@@ -72,36 +74,19 @@ export const STREAM_CHILD_RATIO = 0.1;
  */
 export const STREAM_MIN_SPAN_COUNT = 3;
 
-let enabled = true;
-const listeners = new Set<() => void>();
+/** ON by default — the long-poll noise is hidden unless the user opts out. */
+export const streamFilterStore = createStore(true);
 
-export function getStreamFilterEnabled(): boolean {
-  return enabled;
-}
+export const getStreamFilterEnabled = streamFilterStore.get;
 
 /**
  * Set the filter state and notify subscribers. Called from the
- * SettingsPage after the user toggles it and from StreamFilterProvider
+ * SettingsPage after the user toggles it and from DatasetProvider
  * on first KV load. No-op if the value hasn't changed.
  */
-export function setStreamFilterEnabled(v: boolean): void {
-  if (v === enabled) return;
-  enabled = v;
-  for (const l of listeners) {
-    try {
-      l();
-    } catch {
-      /* listener errors shouldn't block others */
-    }
-  }
-}
+export const setStreamFilterEnabled = streamFilterStore.set;
 
-export function subscribeStreamFilter(fn: () => void): () => void {
-  listeners.add(fn);
-  return () => {
-    listeners.delete(fn);
-  };
-}
+export const subscribeStreamFilter = streamFilterStore.subscribe;
 
 /**
  * Regex that matches kafka consumer operation names. When the root
@@ -148,7 +133,7 @@ export const KAFKA_CONSUMER_OP_RE = '[Cc]onsume[d]?|CONSUME[D]?';
  * deps so the next fetch rebuilds the query.
  */
 export function streamFilterKqlClause(): string {
-  if (!enabled) return '';
+  if (!streamFilterStore.get()) return '';
   return `| extend max_child_us=iff(isnull(max_non_root_dur_us), 0.0, toreal(max_non_root_dur_us))
     | where not (trace_dur_us > ${STREAM_DURATION_US} and (span_count < ${STREAM_MIN_SPAN_COUNT} or (max_child_us / trace_dur_us) < ${STREAM_CHILD_RATIO}) and not (root_op matches regex "${KAFKA_CONSUMER_OP_RE}"))`;
 }
@@ -187,7 +172,7 @@ export function streamFilterKqlClause(): string {
  *   - traceSpans (single-trace detail — show the full trace)
  */
 export function streamFilterSpanKqlClause(): string {
-  if (!enabled) return '';
+  if (!streamFilterStore.get()) return '';
   return `| where dur_us < ${STREAM_DURATION_US}`;
 }
 
