@@ -64,9 +64,10 @@ export interface AlertStateOutput {
 /**
  * Compute the next state from the prior state and the current
  * evaluation outcome. Mirrors the KQL `case()` chain in
- * `queries.ts: alertEvaluator()` for the health-alert path
- * exactly; the latency-alert path is a subset (it only ever
- * enters with `is_bad=true`).
+ * `queries.ts: alertEvaluator()` exactly. Both evaluator arms (the
+ * per-service health arm and the per-operation latency arm) render
+ * that KQL from the one `alertStateMachineKql()` builder, and both
+ * feed it good evaluations as well as bad ones.
  */
 export function nextAlertState(input: AlertStateInput): AlertStateOutput {
   const { prev_status, is_bad, new_bad, new_good } = input;

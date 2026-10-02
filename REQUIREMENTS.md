@@ -228,6 +228,14 @@ the rows the panel displays."
   per-operation. Known gap: a sustained regression normalizes into the
   rolling baseline after ~2 h; the fix is a sticky baseline frozen
   while firing.
+- Every arm runs the same state machine and must feed it good
+  evaluations, not only bad ones, or a firing alert can never resolve.
+  The per-operation latency arm (`auto:latency:<svc>:<op>`) evaluates
+  every op in the latest `svc_operations` run but only commits a row
+  when the op is bad or its alert is not `ok` (bounded writes). An op
+  with an open alert but no traffic in the window gets a synthesized
+  `curr_requests=0` row that evaluates good — no traffic is not a
+  latency regression; silence belongs to the service-level arm.
 - **State machine**: `ok → pending → firing → resolving → ok`,
   fireAfter=2, clearAfter=3, plus pending→ok (flap, no resolved event)
   and resolving→firing (relapse, no fire_count increment). Alert id is
