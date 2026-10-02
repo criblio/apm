@@ -20,6 +20,7 @@ import {
   badgeForIncident,
   type InvestigationEventRow,
 } from '../utils/investigationBadges';
+import { buildEpisodes, mapHistoryRow, type AlertEvent } from '../utils/alertEpisodes';
 import s from './AlertsPage.module.css';
 
 function toNum(v: unknown): number {
@@ -63,15 +64,6 @@ const SIGNAL_LABELS: Record<string, string> = {
   none: '—',
 };
 
-interface AlertEvent {
-  time: number;
-  eventType: string;
-  service: string;
-  signalType: string;
-  errorRate: number;
-  prevErrorRate: number;
-}
-
 /** The `criblapm__alert_history` scheduled search materializes -7d; windows
  *  within that read the cache, wider ones (-30d) go live. */
 const CACHED_HISTORY_WINDOW_MS = 7 * 86_400_000;
@@ -80,69 +72,6 @@ function historyCutoffMs(range: string): number {
   const m = /^-(\d+)([hd])$/.exec(range);
   if (!m) return 0;
   return Date.now() - Number(m[1]) * (m[2] === 'h' ? 3_600_000 : 86_400_000);
-}
-
-function mapHistoryRow(r: Record<string, unknown>): AlertEvent {
-  return {
-    time: Number(r._time) * 1000,
-    eventType: String(r.event_type ?? ''),
-    service: String(r.svc ?? ''),
-    signalType: String(r.signal_type ?? ''),
-    errorRate: Number(r.curr_error_rate ?? 0),
-    prevErrorRate: Number(r.prev_error_rate ?? 0),
-  };
-}
-
-interface AlertEpisode {
-  service: string;
-  signalType: string;
-  startTime: number;
-  endTime: number | null;
-  duration: number | null;
-  errorRate: number;
-}
-
-function buildEpisodes(events: AlertEvent[]): AlertEpisode[] {
-  const sorted = [...events].sort((a, b) => a.time - b.time);
-  const openByKey = new Map<string, { startTime: number; errorRate: number }>();
-  const episodes: AlertEpisode[] = [];
-
-  for (const ev of sorted) {
-    const key = `${ev.service}:${ev.signalType}`;
-    if (ev.eventType === 'firing') {
-      if (!openByKey.has(key)) {
-        openByKey.set(key, { startTime: ev.time, errorRate: ev.errorRate });
-      }
-    } else if (ev.eventType === 'resolved') {
-      const open = openByKey.get(key);
-      if (open) {
-        episodes.push({
-          service: ev.service,
-          signalType: ev.signalType,
-          startTime: open.startTime,
-          endTime: ev.time,
-          duration: ev.time - open.startTime,
-          errorRate: open.errorRate,
-        });
-        openByKey.delete(key);
-      }
-    }
-  }
-
-  // Still-open episodes
-  for (const [key, open] of openByKey) {
-    const [service, signalType] = key.split(':');
-    episodes.push({
-      service,
-      signalType,
-      startTime: open.startTime,
-      endTime: null,
-      duration: null,
-      errorRate: open.errorRate,
-    });
-  }
-
-  return episodes.sort((a, b) => b.startTime - a.startTime);
 }
 
 function fmtDuration(ms: number): string {
