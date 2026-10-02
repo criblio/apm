@@ -11,28 +11,11 @@
  * re-provisioning.
  */
 
-let enabled = true;
-const listeners = new Set<() => void>();
+import { createStore } from '@criblio/app-utils/store';
 
-export function getMetricsRead(): boolean {
-  return enabled;
-}
+/** ON by default (owner decision, metrics migration read stage). */
+export const metricsReadStore = createStore(true);
 
-export function setMetricsRead(v: boolean): void {
-  if (v === enabled) return;
-  enabled = v;
-  for (const l of listeners) {
-    try {
-      l();
-    } catch {
-      /* listener errors shouldn't block others */
-    }
-  }
-}
-
-export function subscribeMetricsRead(fn: () => void): () => void {
-  listeners.add(fn);
-  return () => {
-    listeners.delete(fn);
-  };
-}
+export const getMetricsRead = metricsReadStore.get;
+export const setMetricsRead = metricsReadStore.set;
+export const subscribeMetricsRead = metricsReadStore.subscribe;
