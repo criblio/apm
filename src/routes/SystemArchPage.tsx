@@ -1,4 +1,3 @@
-import { newQueryGeneration } from '../api/queryGeneration';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Button, Menu } from '@capra/core';
@@ -9,6 +8,7 @@ import IsometricGraph from '../components/IsometricGraph';
 import StatusBanner from '../components/StatusBanner';
 import ResilienceBoundary from '../components/ResilienceBoundary';
 import { PartialFailureBanner } from '@criblio/app-utils/partial-failure-banner';
+import { usePageLoad } from '@criblio/app-utils/page-load';
 import {
   getDependencies,
   listServiceSummaries,
@@ -57,8 +57,6 @@ export default function SystemArchPage() {
   const [buckets, setBuckets] = useState<ServiceBucket[]>([]);
   const [loadingDeps, setLoadingDeps] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [partialFailures, setPartialFailures] = useState<Record<string, string>>({});
-  const [retryNonce, setRetryNonce] = useState(0);
   const [dims, setDims] = useState({ w: 800, h: 600 });
   const streamFilterEnabled = useStreamFilterEnabled();
 
@@ -73,17 +71,15 @@ export default function SystemArchPage() {
     return () => ro.disconnect();
   }, []);
 
-  // Fetch dependencies + service stats + time-series. Tries the
-  // batched $vt_results cache first when the user is on -1h and
-  // the stream filter is on; falls through to live queries on
-  // cache miss or non-default range.
-  useEffect(() => {
-    newQueryGeneration(); // cancel the prior page/fetch's in-flight reads
-    let cancelled = false;
+  // Fetch dependencies + service stats + time-series through the framework
+  // page load: a new query generation per run (cancelling the previous
+  // run's reads), superseded results dropped, aborts never reported, and
+  // the previous run's panel failures kept until this run settles instead
+  // of blinking off at its start. The load settles when all four reads have.
+  const { failures: partialFailures, retry } = usePageLoad(async ({ isCurrent, fail }) => {
     const binSeconds = binSecondsFor(lookback);
     setLoadingDeps(true);
     setError(null);
-    setPartialFailures({});
 
     // Previous-window summaries always live — range-dependent,
     // not cacheable. Fires in the background and feeds traffic-
@@ -92,76 +88,48 @@ export default function SystemArchPage() {
     // well-defined prior window: skip the comparison rather than compare
     // against a guessed one (the old helper assumed 1h).
     const prev = previousWindow(lookback);
+    let pPrev: Promise<void> = Promise.resolve();
     if (!prev) {
       setPrevSummaries([]);
     } else {
-      listServiceSummaries(prev.earliest, prev.latest)
+      pPrev = listServiceSummaries(prev.earliest, prev.latest)
         .then((r) => {
-          if (!cancelled) setPrevSummaries(r);
+          if (isCurrent()) setPrevSummaries(r);
         })
-        .catch((err: unknown) => {
-          if (!cancelled) {
-            setPartialFailures((cur) => ({
-              ...cur,
-              'Prior-window comparison': err instanceof Error ? err.message : String(err),
-            }));
-          }
-        });
+        .catch((err: unknown) => fail('Prior-window comparison', err));
     }
 
-    (async () => {
-      if (cancelled) return;
+    // All three panels here (dependencies, summaries, time series) are
+    // metric-backed — read metrics-first via the source functions, each
+    // non-blocking so the graph renders as soon as edges land.
+    const pDeps = getDependencies(lookback, 'now')
+      .then((e) => {
+        if (isCurrent()) setEdges(e);
+      })
+      .catch((err) => {
+        if (isCurrent()) {
+          setError(err instanceof Error ? err.message : String(err));
+          setEdges([]);
+        }
+      })
+      .finally(() => {
+        if (isCurrent()) setLoadingDeps(false);
+      });
 
-      // All three panels here (dependencies, summaries, time series) are
-      // metric-backed — read metrics-first via the source functions, each
-      // non-blocking so the graph renders as soon as edges land.
-      const pDeps = getDependencies(lookback, 'now')
-        .then((e) => {
-          if (!cancelled) setEdges(e);
-        })
-        .catch((err) => {
-          if (!cancelled) {
-            setError(err instanceof Error ? err.message : String(err));
-            setEdges([]);
-          }
-        })
-        .finally(() => {
-          if (!cancelled) setLoadingDeps(false);
-        });
+    const pSummaries = listServiceSummaries(lookback, 'now')
+      .then((r) => {
+        if (isCurrent()) setSummaries(r);
+      })
+      .catch((err: unknown) => fail('Service health summaries', err));
 
-      listServiceSummaries(lookback, 'now')
-        .then((r) => {
-          if (!cancelled) setSummaries(r);
-        })
-        .catch((err: unknown) => {
-          if (!cancelled) {
-            setPartialFailures((cur) => ({
-              ...cur,
-              'Service health summaries': err instanceof Error ? err.message : String(err),
-            }));
-          }
-        });
+    const pBuckets = getServiceTimeSeries(binSeconds, undefined, lookback, 'now')
+      .then((r) => {
+        if (isCurrent()) setBuckets(r);
+      })
+      .catch((err: unknown) => fail('Service time series', err));
 
-      getServiceTimeSeries(binSeconds, undefined, lookback, 'now')
-        .then((r) => {
-          if (!cancelled) setBuckets(r);
-        })
-        .catch((err: unknown) => {
-          if (!cancelled) {
-            setPartialFailures((cur) => ({
-              ...cur,
-              'Service time series': err instanceof Error ? err.message : String(err),
-            }));
-          }
-        });
-
-      void pDeps;
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [lookback, streamFilterEnabled, retryNonce]);
+    await Promise.allSettled([pPrev, pDeps, pSummaries, pBuckets]);
+  }, [lookback, streamFilterEnabled]);
 
   function setView(value: ViewMode) {
     const next = new URLSearchParams(searchParams);
@@ -316,7 +284,7 @@ export default function SystemArchPage() {
       {error && <StatusBanner kind="error">{error}</StatusBanner>}
       <PartialFailureBanner
         failures={partialFailures}
-        onRetry={() => setRetryNonce((value) => value + 1)}
+        onRetry={retry}
       />
 
       <div className={s.canvasWrap} ref={containerRef}>

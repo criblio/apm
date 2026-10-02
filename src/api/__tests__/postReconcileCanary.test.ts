@@ -228,6 +228,12 @@ describe('eventContractProbe — framework generated-event canary', () => {
     expect(send).toContain('record_kind="evaluation"');
     expect(send).toMatch(/event_id="criblapm-[a-z0-9]+-[a-z0-9]+:criblapm_alert"/);
     expect(send).toContain('| export tee=true to search "otel"');
+    // The per-run columns of a real evaluation / deploy row: the canary id
+    // as evaluation_id / version, and now() (raw KQL, not the string).
+    const id = /event_id="(criblapm-[a-z0-9]+-[a-z0-9]+):criblapm_alert"/.exec(send)![1];
+    expect(send).toContain(`evaluation_id="${id}", evaluated_at=now()`);
+    expect(send).toContain(`version="${id}", first_seen=now()`);
+    expect(send).not.toContain('"now()"');
     expect(read).toContain('coalesce(tostring(data_datatype), tostring(datatype)) in ("criblapm_alert", "criblapm_deploy")');
   });
 
