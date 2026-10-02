@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { runQuery } from './helpers/criblSearch';
+import { runQuery } from './helpers/apmApp';
 import {
   alertTransitionCanaryRead,
   alertTransitionCanaryStep,

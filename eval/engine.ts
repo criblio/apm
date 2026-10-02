@@ -1,7 +1,6 @@
 import type { Page } from 'playwright-core';
 import { setFlag, allOff } from '../tests/helpers/flagd.js';
-import { runQuery } from '../tests/helpers/criblSearch.js';
-import { apmFrame } from '../tests/helpers/apmSession.js';
+import { apmFrame, runQuery } from '../tests/helpers/apmApp.js';
 import {
   INCIDENT_APP_PRODUCER,
   incidentEventCommitQuery,

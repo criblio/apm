@@ -111,7 +111,8 @@ they become reusable — the repo already has enough one-offs.
 
 **Every new UI feature must be validated via Playwright against
 staging before reporting it as done.** Use the e2e test helpers
-(`tests/helpers/apmSession.ts`) for auth + host-global injection.
+(`tests/helpers/apmApp.ts`, APM's bindings for
+`@criblio/app-tooling/playwright`) for auth + host-global injection.
 Write a short ad-hoc script that:
 
 1. Navigates to the relevant page
@@ -121,8 +122,9 @@ Write a short ad-hoc script that:
 
 Use `playwright-core` with `chromium.launch({ headless: true })`
 (not the CDP helper — Chromium may not be running). Auth via
-`installCriblHostGlobals(page)` + `gotoApm(page, '/path')`.
-See `tests/helpers/apmSession.ts` for the pattern.
+`installApmHostGlobals(page)` + `gotoApm(page)`, then click the nav
+inside `apmFrame(page)` (the shell ignores deep paths).
+See `tests/helpers/apmApp.ts` for the pattern.
 
 ### Deploying to staging
 

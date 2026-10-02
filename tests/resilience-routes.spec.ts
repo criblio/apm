@@ -1,5 +1,5 @@
 import { test, expect, type FrameLocator } from '@playwright/test';
-import { apmFrame, gotoApm } from './helpers/apmSession';
+import { apmFrame, gotoApm } from './helpers/apmApp';
 
 interface RouteCase {
   nav: string;

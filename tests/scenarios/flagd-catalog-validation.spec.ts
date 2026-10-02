@@ -28,7 +28,7 @@
 // Prereqs:
 //   - FLAGD_UI_URL set (see tests/helpers/flagd.ts)
 //   - CRIBL_BASE_URL / CRIBL_CLIENT_ID / CRIBL_CLIENT_SECRET set
-//     (see tests/helpers/criblSearch.ts)
+//     (see tests/helpers/apmApp.ts)
 //   - otel-demo cluster is up and producing baseline traffic
 //
 // Test does not drive a browser — it only talks to flagd-ui and the
@@ -36,7 +36,7 @@
 
 import { test, expect } from '@playwright/test';
 import { setFlag, allOff } from '../helpers/flagd';
-import { runQuery } from '../helpers/criblSearch';
+import { runQuery } from '../helpers/apmApp';
 
 const TEST_TIMEOUT_MS = 15 * 60 * 1000;
 // Poll interval for the per-target error-count check. Each iteration

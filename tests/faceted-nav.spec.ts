@@ -6,7 +6,7 @@
 // only assert the panels render (placeholder or data) — surface
 // presence, not data quality.
 import { test, expect } from '@playwright/test';
-import { apmFrame, gotoApm } from './helpers/apmSession';
+import { apmFrame, gotoApm } from './helpers/apmApp';
 
 test('Search page renders SearchForm + FilterBuilder + KqlEditor + facet rail', async ({
   page,

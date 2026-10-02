@@ -18,7 +18,7 @@ import { execSync } from 'node:child_process';
 import { chromium } from 'playwright-core';
 import { runScenario } from './engine.js';
 import { printReport } from './report.js';
-import { gotoApm as gotoApmShared } from '../tests/helpers/apmSession.js';
+import { gotoApm as gotoApmShared } from '../tests/helpers/apmApp.js';
 import type { ScenarioDeclaration, RunResult } from './types.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));

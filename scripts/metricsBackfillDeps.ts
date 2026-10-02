@@ -1,7 +1,7 @@
 /**
  * Node job-runner deps for the metrics backfill (src/api/metricsBackfill.ts).
  * Mints its own Bearer token (client-credentials, same flow as
- * tests/helpers/criblSearch.ts) and runs Cribl Search jobs, reading the
+ * @criblio/app-utils/auth) and runs Cribl Search jobs, reading the
  * NDJSON results the framework HttpClient can't (it JSON-parses whole
  * bodies). Used by scripts/provision.ts on `npm run deploy`.
  */

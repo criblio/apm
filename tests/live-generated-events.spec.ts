@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { setCurrentDataset } from '@criblio/app-utils/dataset';
-import { runQuery } from './helpers/criblSearch';
+import { runQuery } from './helpers/apmApp';
 import * as Q from '../src/api/queries';
 
 const OFFLINE_DATAGEN_WAIVER_EXPIRES = Date.parse('2026-08-31T23:59:59Z');

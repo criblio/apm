@@ -12,7 +12,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { chromium } from 'playwright-core';
-import { installCriblHostGlobals, gotoApm } from '../tests/helpers/apmSession.ts';
+import { installApmHostGlobals, gotoApm } from '../tests/helpers/apmApp.ts';
 
 // Inline dotenv loader so we don't take a dep on the package.
 for (const line of readFileSync('.env', 'utf8').split('\n')) {
@@ -42,7 +42,7 @@ async function main() {
     if (msg.type() === 'error') console.log('  [console.error]', msg.text());
   });
 
-  await installCriblHostGlobals(page);
+  await installApmHostGlobals(page);
 
   // Page navigation inside the iframe — direct gotoApm to deep links
   // doesn't work; have to click the sidebar nav. Start on Home; the

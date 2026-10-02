@@ -31,7 +31,7 @@
 
 import { test, expect } from '@playwright/test';
 import { setFlag, allOff } from '../helpers/flagd';
-import { installCriblHostGlobals, gotoApm } from '../helpers/apmSession';
+import { installApmHostGlobals, gotoApm } from '../helpers/apmApp';
 
 const TEST_TIMEOUT_MS = 12 * 60 * 1000;
 const TELEMETRY_WAIT_MS = 3 * 60 * 1000;
@@ -48,7 +48,7 @@ test('scenario 1 · paymentFailure surfaces in Home, Service Detail, Investigato
   page,
 }) => {
   test.setTimeout(TEST_TIMEOUT_MS);
-  await installCriblHostGlobals(page);
+  await installApmHostGlobals(page);
 
   try {
     // 1. Flip the flag. `setFlag` throws if the flag/variant is missing,

@@ -15,7 +15,7 @@
 // This spec asserts the initial (pre-scroll) KQL job count stays bounded.
 
 import { test, expect } from '@playwright/test';
-import { installCriblHostGlobals, gotoApm, apmFrame, dismissHostAnnouncements } from './helpers/apmSession';
+import { installApmHostGlobals, gotoApm, apmFrame, dismissHostAnnouncements } from './helpers/apmApp';
 
 test('Service Detail initial load stays within a KQL job budget', async ({ page }) => {
   test.setTimeout(120_000);
@@ -31,7 +31,7 @@ test('Service Detail initial load stays within a KQL job budget', async ({ page 
   page.on('requestfailed', (r) => { if (isApi(r.url())) finished++; });
   const pending = () => started - finished;
 
-  await installCriblHostGlobals(page);
+  await installApmHostGlobals(page);
   await gotoApm(page, '/?range=-15m');
   const apm = apmFrame(page);
   await dismissHostAnnouncements(page);

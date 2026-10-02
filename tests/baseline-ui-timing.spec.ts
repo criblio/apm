@@ -13,7 +13,7 @@
 import { test } from '@playwright/test';
 import { writeFileSync, existsSync, readFileSync } from 'node:fs';
 import type { FrameLocator, Page } from '@playwright/test';
-import { apmFrame, gotoApm } from './helpers/apmSession';
+import { apmFrame, gotoApm } from './helpers/apmApp';
 
 const OUT = '/tmp/apm-baseline-ui.json';
 const MARKER_TIMEOUT_MS = 180_000;

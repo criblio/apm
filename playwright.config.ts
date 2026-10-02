@@ -1,42 +1,14 @@
 import { defineConfig, devices } from '@playwright/test';
-import { readFileSync } from 'node:fs';
+import { loadTestEnv } from '@criblio/app-tooling/playwright';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-// Load .env manually so we don't pull in dotenv as a runtime dep just for
-// tests. Matches the parser in scripts/deploy.mjs.
-function loadDotEnv(path: string): Record<string, string> {
-  let text: string;
-  try {
-    text = readFileSync(path, 'utf8');
-  } catch {
-    return {};
-  }
-  const env: Record<string, string> = {};
-  for (const rawLine of text.split('\n')) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith('#')) continue;
-    const eq = line.indexOf('=');
-    if (eq === -1) continue;
-    const key = line.slice(0, eq).trim();
-    let value = line.slice(eq + 1).trim();
-    if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
-      value = value.slice(1, -1);
-    }
-    env[key] = value;
-  }
-  return env;
-}
+// .env next to this file; values already in the environment (CI secrets) win.
+loadTestEnv(resolve(__dirname, '.env'));
 
-const dotEnv = loadDotEnv(resolve(__dirname, '.env'));
-for (const [k, v] of Object.entries(dotEnv)) {
-  if (process.env[k] === undefined) process.env[k] = v;
-}
+export const AUTH_FILE = 'playwright/.auth/cribl-cloud.json';
 
 const baseURL = (process.env.CRIBL_BASE_URL ?? '').replace(/\/$/, '');
 if (!baseURL) {
@@ -70,7 +42,7 @@ export default defineConfig({
       dependencies: ['setup'],
       use: {
         ...devices['Desktop Chrome'],
-        storageState: 'playwright/.auth/cribl-cloud.json',
+        storageState: AUTH_FILE,
       },
     },
   ],

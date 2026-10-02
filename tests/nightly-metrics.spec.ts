@@ -1,8 +1,8 @@
 import { expect, test } from '@playwright/test';
-import { apmFrame, gotoApm, installCriblHostGlobals } from './helpers/apmSession';
+import { apmFrame, gotoApm, installApmHostGlobals } from './helpers/apmApp';
 
 test('nightly metrics responses populate APM views', async ({ page }) => {
-  await installCriblHostGlobals(page);
+  await installApmHostGlobals(page);
   await gotoApm(page, '/');
   const app = apmFrame(page);
 

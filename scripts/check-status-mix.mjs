@@ -8,15 +8,15 @@
 // Output path can be overridden via STATUS_MIX_OUT.
 //
 // Per CLAUDE.md "Validating UI changes via Playwright" — uses
-// playwright-core + tests/helpers/apmSession.ts (auth + host globals)
+// playwright-core + tests/helpers/apmApp.ts (auth + host globals)
 // rather than the @playwright/test runner. Reusable, kept around so
 // the widget can be re-validated after layout / colour changes.
 import { chromium } from 'playwright-core';
 import {
-  installCriblHostGlobals,
+  installApmHostGlobals,
   gotoApm,
   apmFrame,
-} from '../tests/helpers/apmSession.ts';
+} from '../tests/helpers/apmApp.ts';
 
 const SERVICE = process.env.STATUS_MIX_SERVICE ?? 'frontend-proxy';
 const OUT =
@@ -35,7 +35,7 @@ try {
     viewport: { width: 1600, height: 1100 },
   });
   const page = await ctx.newPage();
-  await installCriblHostGlobals(page);
+  await installApmHostGlobals(page);
   // Land on the app root first so the host shell injects globals,
   // then push the in-app deep route via the iframe's history. The
   // shell URL `/apps/a/apm/service/<name>` lands on Services even
