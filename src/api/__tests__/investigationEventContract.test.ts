@@ -9,7 +9,7 @@ import {
   INVESTIGATION_CONCLUSION_MAX,
   investigationEventCommitQuery,
 } from '../generatedEventContract';
-import { validateQuery } from '../provisionGuard';
+import { validateProvisionQuery as validateQuery } from '@criblio/app-utils/provision-guard';
 
 const BASE = {
   event_id: 'inv-abc:investigated',

@@ -11,7 +11,8 @@
  *        - no `(?i)` upstream of `export to lookup`
  *        - no `mv-expand` upstream of `export to lookup`
  *        - no empty `to lookup` name
- *      validateQuery() is the same code provision.ts runs over the
+ *      validateQuery() (the framework's validateProvisionQuery) is the
+ *      same per-query check the provisioner runs over the
  *      plan; reusing it keeps the guard and the test fence in sync.
  *
  * Two negative regression tests at the end pin the June 2026
@@ -25,7 +26,7 @@
  */
 import { describe, it, expect, beforeAll } from 'vitest';
 import * as Q from '../queries';
-import { validateQuery } from '../provisionGuard';
+import { validateProvisionQuery as validateQuery } from '@criblio/app-utils/provision-guard';
 import { setCurrentDataset } from '@criblio/app-utils/dataset';
 import { setLowVolumeMode, getLowVolumeMode } from '../lowVolumeMode';
 
@@ -198,7 +199,7 @@ describe('queries.ts — June 2026 outage regressions', () => {
     const broken = `dataset="otel" | where _raw matches regex "(?i)consume"
       | export mode=overwrite to lookup criblapm_trace_originators`;
     const errs = validateQuery('hand-rolled-bad', broken);
-    expect(errs.some((e) => e.includes('(?i)'))).toBe(true);
+    expect(errs.some((e) => e.rule === 'case-insensitive-regex-before-export')).toBe(true);
   });
 
   it('low-volume mode (P1.2) injects a 4th detection arm when on', () => {

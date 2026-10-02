@@ -14,7 +14,7 @@ import {
   cadenceToCron,
   setSearchCadence,
 } from '@criblio/app-utils/cadence';
-import { offsetCron } from '../cronOffset';
+import { offsetCron } from '@criblio/app-utils/cadence';
 import { getProvisioningPlan } from '../provisionedSearches';
 import { setServerInvestigations } from '../serverInvestigations';
 
@@ -85,9 +85,17 @@ describe('offsetCron', () => {
   });
 
   it('leaves shapes it does not understand unchanged', () => {
-    for (const c of ['0,30 * * * *', '5-10 * * * *', '1-59/5 * * * *', '* 5 * * *', '']) {
+    for (const c of ['0,30 * * * *', '5-10 * * * *', '* 5 * * *', '']) {
       expect(offsetCron(c, 2)).toBe(c);
     }
+  });
+
+  it('composes an already-offset step (framework /cadence, not the old local copy)', () => {
+    // The local copy left `a-59/N` unchanged; the framework shifts it
+    // again, so offsets compose. No plan cron is affected: APM only ever
+    // offsets the base cadence cron, never an already-offset one.
+    expect(offsetCron('1-59/5 * * * *', 2)).toBe('3-59/5 * * * *');
+    expect(offsetCron('3-59/5 * * * *', 2)).toBe('*/5 * * * *');
   });
 });
 

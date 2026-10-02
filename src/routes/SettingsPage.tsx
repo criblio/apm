@@ -10,11 +10,6 @@ import { setCurrentDataset, useDataset } from '@criblio/app-utils/dataset';
 import { setStreamFilterEnabled } from '../api/streamFilter';
 import { setLowVolumeMode } from '../api/lowVolumeMode';
 import { setSearchCadence, CADENCE_OPTIONS, type CadenceOption } from '@criblio/app-utils/cadence';
-import {
-  CRIBLAPM_PREFIX,
-  SEED_LOOKUPS,
-  getProvisioningPlan,
-} from '../api/provisionedSearches';
 import { DEFAULT_FILTER_RULES } from '../api/errorFilter';
 import { listTraceOriginators, type TraceOriginatorRow } from '../api/search';
 import { useStreamFilterEnabled } from '../hooks/useStreamFilter';
@@ -32,11 +27,11 @@ import { kvGet, kvPut } from '../api/kvstore';
 import { stageApmInvestigatorConfiguration } from '../api/goatTownProvisioning';
 import { pushGoatTownRepos } from '../api/investigationTransport';
 import {
-  ensureCellWebhookTarget,
-  ensureAlertNotification,
-  removeAlertNotification,
-} from '../api/cellProvisioning';
-import type { HttpClient } from '../api/provisioner';
+  ensureSavedSearchNotification,
+  removeSavedSearchNotification,
+} from '@criblio/app-utils/notifications';
+import { ALERT_NOTIFY_BINDING, ensureCellWebhookTarget } from '../api/cellProvisioning';
+import { APM_PROVISIONER_CONFIG, type HttpClient } from '../api/provisioner';
 import type { SourceRepo } from '../api/investigationTransport';
 import type { ProvisioningExtraStep } from '@criblio/app-utils/provisioning-panel';
 import { useSearchCadence } from '../hooks/useSearchCadence';
@@ -359,8 +354,18 @@ export default function SettingsPage() {
   ): Promise<ProvisioningExtraStep[]> {
     const steps: ProvisioningExtraStep[] = [];
     if (!getServerInvestigations()) {
-      await removeAlertNotification(http);
-      steps.push({ label: 'Alert trigger: removed (server investigations off)', ok: true });
+      // A failed unbind is reported, not swallowed: the old local helper
+      // reported "removed" even when the DELETE failed.
+      try {
+        const outcome = await removeSavedSearchNotification(http, ALERT_NOTIFY_BINDING);
+        steps.push({ label: `Alert trigger: ${outcome === 'deleted' ? 'removed' : 'already absent'} (server investigations off)`, ok: true });
+      } catch (err) {
+        steps.push({
+          label: 'Alert trigger: removal failed',
+          ok: false,
+          detail: err instanceof Error ? err.message : String(err),
+        });
+      }
       return steps;
     }
     const url = getCellBaseUrl();
@@ -403,7 +408,7 @@ export default function SettingsPage() {
         ok: false,
         detail: `Could not read GoatTown capabilities: ${err instanceof Error ? err.message : String(err)}`,
       });
-      const n0 = await ensureAlertNotification(http);
+      const n0 = await ensureSavedSearchNotification(http, ALERT_NOTIFY_BINDING);
       steps.push({ label: `Alert notification: ${n0} (alert_notify → GoatTown)`, ok: true });
       return steps;
     }
@@ -440,7 +445,7 @@ export default function SettingsPage() {
         });
       }
     }
-    const n = await ensureAlertNotification(http);
+    const n = await ensureSavedSearchNotification(http, ALERT_NOTIFY_BINDING);
     steps.push({ label: `Alert notification: ${n} (alert_notify → cell)`, ok: true });
     // Re-push the configured repos so alert-fired investigations check out
     // code. Interactive runs thread their own at create time; this is the only
@@ -607,11 +612,7 @@ export default function SettingsPage() {
 
           <div id="provisioning" className={s.card}>
             <ProvisioningPanel
-              config={{
-                prefix: CRIBLAPM_PREFIX,
-                plan: getProvisioningPlan,
-                seedLookups: SEED_LOOKUPS,
-              }}
+              config={APM_PROVISIONER_CONFIG}
               afterReconcile={handleProvisionCellTrigger}
               helpText={
                 <>

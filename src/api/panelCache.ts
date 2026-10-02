@@ -24,6 +24,7 @@
  * `docs/research/cribl-saved-searches.md` for empirical timing
  * numbers that motivate this design.
  */
+import { latestRunRows, readVtResults } from '@criblio/app-utils/vt-results';
 import { runQuery } from './cribl';
 import {
   getHomePanelJobNames,
@@ -96,67 +97,21 @@ function toNum(v: unknown): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-/** Keep only the newest scheduled run's rows. $vt_results retains
- * keepLastN (2) runs per jobName; readers that treat the partition as
- * "current state" must not mix a stale run in (a service that flapped
- * between runs would appear twice, once with its old status). jobId's
- * fixed-width epoch-millis prefix makes the string max the newest. */
-export function latestRunRows(
-  rows: Record<string, unknown>[],
-): Record<string, unknown>[] {
-  let latest = '';
-  for (const r of rows) {
-    const id = String(r.jobId ?? '');
-    if (id > latest) latest = id;
-  }
-  if (!latest) return rows;
-  return rows.filter((r) => String(r.jobId ?? '') === latest);
-}
-
 /**
- * Issue a single $vt_results query covering every panel in
- * `jobNames`, then partition the mixed row stream by the
- * auto-populated `jobName` column. Returns a Map keyed by
- * jobName (with arrays of raw rows as values) so the caller
- * can decide what to do with each partition.
+ * One batched `$vt_results` read for `jobNames`, partitioned by jobName
+ * (the framework's `readVtResults`: `where jobName in (...)`, -1h,
+ * 10 000-row limit). A job with no rows is absent — a cache miss, and
+ * the caller falls back to its live query.
+ *
+ * `latestRunOnly: false` keeps every retained run, as this reader always
+ * has: the readers that need "current state" (alerts, incidents) narrow
+ * with `latestRunRows` themselves. `runQuery` is passed explicitly so
+ * APM's search client (and any test double of it) stays in the path.
  */
-async function readCachedPanelsRaw(
+function readCachedPanelsRaw(
   jobNames: string[],
 ): Promise<Map<string, Record<string, unknown>[]>> {
-  if (jobNames.length === 0) return new Map();
-  // Build the jobName `in (...)` clause. Quotes are safe because
-  // job names match ^[a-zA-Z0-9 _-]+$.
-  //
-  // NOTE on syntax: the docs at docs.cribl.io/search/vt_results
-  // advertise `jobName=["a","b"]` as an inline array literal,
-  // but Cribl KQL does not actually parse that form in the
-  // top-of-pipeline position (verified empirically — it returns
-  // `no viable alternative at input 'jobName=['`). The working
-  // equivalent is a `| where jobName in (...)` filter, which
-  // returns the correct union of rows across all named searches.
-  const jobNameList = jobNames.map((n) => `"${n}"`).join(', ');
-  // The $vt_results dataset is global — no datasetClause() needed.
-  // Latest bucket timestamp across all scheduled runs lives in the
-  // events, so we don't need a long earliest window. Still, allow
-  // up to 1h in case a schedule slipped.
-  const query = `dataset="$vt_results" | where jobName in (${jobNameList})`;
-  // Panel caches can be large: the time-series panel alone is ~60
-  // buckets × ~20 services = 1,200 rows. Seven panels together can
-  // push 3,000+ rows. Use a generous limit so nothing is truncated.
-  const rows = await runQuery(query, '-1h', 'now', 10_000);
-
-  const out = new Map<string, Record<string, unknown>[]>();
-  for (const row of rows) {
-    const jn = String(row.jobName ?? '');
-    if (!jn) continue;
-    let bucket = out.get(jn);
-    if (!bucket) {
-      bucket = [];
-      out.set(jn, bucket);
-    }
-    bucket.push(row);
-  }
-  return out;
+  return readVtResults(jobNames, { latestRunOnly: false, runQuery });
 }
 
 /** Parse the service-summary partition into ServiceSummary[]. */
