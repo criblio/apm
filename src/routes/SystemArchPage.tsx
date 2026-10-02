@@ -3,20 +3,19 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Button, Menu } from '@capra/core';
 import { ChevronDown } from '@capra/icons';
-import { useRangeParam } from '../hooks/useRangeParam';
+import { useRangeParam } from '@criblio/app-utils/url-state';
 import DependencyGraph from '../components/DependencyGraph';
 import IsometricGraph from '../components/IsometricGraph';
 import StatusBanner from '../components/StatusBanner';
 import ResilienceBoundary from '../components/ResilienceBoundary';
-import PartialFailureBanner from '../components/PartialFailureBanner';
+import { PartialFailureBanner } from '@criblio/app-utils/partial-failure-banner';
 import {
   getDependencies,
   listServiceSummaries,
   getServiceTimeSeries,
   listOperationSummaries,
 } from '../api/search';
-import { binSecondsFor } from '../components/timeRanges';
-import { previousWindow } from '../utils/timeRange';
+import { binSecondsFor, previousWindow } from '@criblio/app-utils/time';
 import { useStreamFilterEnabled } from '../hooks/useStreamFilter';
 import { HEALTH_LEGEND, serviceHealth } from '../utils/health';
 import type {
@@ -89,19 +88,26 @@ export default function SystemArchPage() {
     // Previous-window summaries always live — range-dependent,
     // not cacheable. Fires in the background and feeds traffic-
     // drop detection in serviceHealth().
+    // An unparseable ?range= (hand-edited URL, snapped `-1d@d`) has no
+    // well-defined prior window: skip the comparison rather than compare
+    // against a guessed one (the old helper assumed 1h).
     const prev = previousWindow(lookback);
-    listServiceSummaries(prev.earliest, prev.latest)
-      .then((r) => {
-        if (!cancelled) setPrevSummaries(r);
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) {
-          setPartialFailures((cur) => ({
-            ...cur,
-            'Prior-window comparison': err instanceof Error ? err.message : String(err),
-          }));
-        }
-      });
+    if (!prev) {
+      setPrevSummaries([]);
+    } else {
+      listServiceSummaries(prev.earliest, prev.latest)
+        .then((r) => {
+          if (!cancelled) setPrevSummaries(r);
+        })
+        .catch((err: unknown) => {
+          if (!cancelled) {
+            setPartialFailures((cur) => ({
+              ...cur,
+              'Prior-window comparison': err instanceof Error ? err.message : String(err),
+            }));
+          }
+        });
+    }
 
     (async () => {
       if (cancelled) return;

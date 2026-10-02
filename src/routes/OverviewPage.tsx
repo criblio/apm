@@ -1,12 +1,11 @@
-import { newQueryGeneration, captureQueryGeneration } from '../api/queryGeneration';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Button, Card, Tag, type TagColor } from '@capra/core';
 import TimeRangePicker from '../components/TimeRangePicker';
 import StatusBanner from '../components/StatusBanner';
 import DetectedIssuesPanel from '../components/DetectedIssuesPanel';
 import ResilienceBoundary from '../components/ResilienceBoundary';
-import PartialFailureBanner from '../components/PartialFailureBanner';
+import { PartialFailureBanner } from '@criblio/app-utils/partial-failure-banner';
 import {
   listServiceSummaries,
   listServiceCounts,
@@ -21,8 +20,9 @@ import { entityColor } from '@criblio/app-utils/viz';
 import { serviceHealth, healthRowBg } from '../utils/health';
 import { buildDetectedIssues, buildDetectedIssuesFromCache } from '../utils/detectedIssues';
 import InvestigateButton from '../components/InvestigateButton';
-import { previousWindow } from '../utils/timeRange';
-import { useRangeParam } from '../hooks/useRangeParam';
+import { previousWindow, relativeTimeMs } from '@criblio/app-utils/time';
+import { useRangeParam } from '@criblio/app-utils/url-state';
+import { usePageLoad } from '@criblio/app-utils/page-load';
 import { useStreamFilterEnabled } from '../hooks/useStreamFilter';
 import type {
   ServiceSummary,
@@ -32,6 +32,8 @@ import type {
 import s from './OverviewPage.module.css';
 
 const DEFAULT_RANGE = '-1h';
+/** Duration of DEFAULT_RANGE: the rate-normalization fallback when ?range= is unparseable. */
+const DEFAULT_RANGE_MS = 3_600_000;
 
 /** Health-bucket → Capra Tag color. Matches the SIGNAL_TAG_COLOR
  *  map in DetectedIssuesPanel so the home table + the issues panel
@@ -61,14 +63,6 @@ function fmtRate(rpm: number): string {
   return `${rpm.toFixed(1)}/min`;
 }
 
-function relativeTimeMs(rel: string): number {
-  const m = rel.match(/^-(\d+)([smhd])$/);
-  if (!m) return 3600_000;
-  const n = Number(m[1]);
-  const unit = m[2] as 's' | 'm' | 'h' | 'd';
-  return n * { s: 1000, m: 60_000, h: 3600_000, d: 86_400_000 }[unit];
-}
-
 interface AlertEvent {
   time: number;
   eventType: string;
@@ -84,48 +78,41 @@ export default function OverviewPage() {
   const [anomalies, setAnomalies] = useState<OperationAnomaly[]>([]);
   const [recentAlerts, setRecentAlerts] = useState<AlertEvent[]>([]);
   const [cachedIssues, setCachedIssues] = useState<import('../api/types').DetectedIssue[] | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [partialFailures, setPartialFailures] = useState<Record<string, string>>({});
   const streamFilterEnabled = useStreamFilterEnabled();
-  const hasDataRef = useRef(false);
 
   // Alert history panel — same query in the fast (cache-hit) and
   // slow (live) branches below. Built once per call so we pick up
   // the current dataset even if the user just changed it in Settings.
   const recentAlertsQuery = () => Q.alertHistory(5);
 
-  const fetchAll = useCallback(async () => {
-    newQueryGeneration(); // cancel the prior page/fetch's in-flight reads
-    const isCurrent = captureQueryGeneration(); // guard stale async setState
-    setRefreshing(true);
+  // usePageLoad owns the generation (newQueryGeneration + stale-write
+  // guard), the first-load vs refresh phase, and the per-panel failures.
+  // The load settles when the primary counts read does — exactly when
+  // the old code cleared `loading`/`refreshing` — and the secondary panels
+  // keep filling (and reporting failures) around it.
+  const { phase, failures, retry } = usePageLoad(async ({ isCurrent, fail }) => {
     setError(null);
-    setPartialFailures({});
     if (range !== DEFAULT_RANGE) setCachedIssues(null);
-    if (!hasDataRef.current) setLoading(true);
 
+    // An unparseable ?range= has no defined prior window: compare
+    // against nothing rather than a guessed 1h (the old helper's fallback).
     const prev = previousWindow(range);
-    listServiceSummaries(prev.earliest, prev.latest)
-      .then((r) => { if (isCurrent()) setPrevSummaries(r); })
-      .catch((e: unknown) => { if (isCurrent()) setPartialFailures((current) => ({
-        ...current,
-        'Previous-window comparison': e instanceof Error ? e.message : String(e),
-      })); });
+    if (!prev) {
+      setPrevSummaries([]);
+    } else {
+      listServiceSummaries(prev.earliest, prev.latest)
+        .then((r) => { if (isCurrent()) setPrevSummaries(r); })
+        .catch((e: unknown) => fail('Previous-window comparison', e));
+    }
 
     getDependencies(range, 'now')
       .then((r) => { if (isCurrent()) setEdges(r); })
-      .catch((e: unknown) => { if (isCurrent()) setPartialFailures((current) => ({
-        ...current,
-        Dependencies: e instanceof Error ? e.message : String(e),
-      })); });
+      .catch((e: unknown) => fail('Dependencies', e));
 
     listOperationAnomalies(range, 'now')
       .then((r) => { if (isCurrent()) setAnomalies(r); })
-      .catch((e: unknown) => { if (isCurrent()) setPartialFailures((current) => ({
-        ...current,
-        'Latency anomalies': e instanceof Error ? e.message : String(e),
-      })); });
+      .catch((e: unknown) => fail('Latency anomalies', e));
 
     // Detected issues come from the $vt_results alert cache — load them
     // NON-BLOCKING so they never gate the fast metrics-backed panels.
@@ -163,8 +150,7 @@ export default function OverviewPage() {
         if (!isCurrent()) return;
         setError(e instanceof Error ? e.message : String(e));
         setSummaries([]);
-      })
-      .finally(() => { if (isCurrent()) setLoading(false); });
+      });
     if (!isCurrent()) return;
 
     // Recent alert history — the only live-KQL job on this page. Fire it
@@ -177,16 +163,10 @@ export default function OverviewPage() {
         service: String(r.svc ?? ''),
         signalType: String(r.signal_type ?? ''),
       }))); })
-      .catch((e: unknown) => { if (isCurrent()) setPartialFailures((current) => ({
-        ...current,
-        'Recent alert history': e instanceof Error ? e.message : String(e),
-      })); });
-
-    hasDataRef.current = true;
-    setRefreshing(false);
+      .catch((e: unknown) => fail('Recent alert history', e));
   }, [range, streamFilterEnabled]);
-
-  useEffect(() => { void fetchAll(); }, [fetchAll]);
+  const loading = phase === 'initial';
+  const refreshing = phase !== 'idle';
 
   const prevByService = useMemo(() => {
     const m = new Map<string, ServiceSummary>();
@@ -200,7 +180,7 @@ export default function OverviewPage() {
     return set;
   }, [anomalies]);
 
-  const rangeMs = relativeTimeMs(range);
+  const rangeMs = relativeTimeMs(range) || DEFAULT_RANGE_MS;
   const rangeMinutes = rangeMs / 60_000;
 
   const detectedIssues = useMemo(() => {
@@ -246,7 +226,7 @@ export default function OverviewPage() {
         </div>
         <div className={s.controls}>
           <TimeRangePicker value={range} onChange={setRange} />
-          <Button variant="secondary" size="sm" pending={refreshing} onClick={() => void fetchAll()}>
+          <Button variant="secondary" size="sm" pending={refreshing} onClick={retry}>
             {refreshing ? 'Refreshing...' : 'Refresh'}
           </Button>
         </div>
@@ -254,7 +234,7 @@ export default function OverviewPage() {
 
       {refreshing && <div className={s.refreshBar} />}
       {error && <StatusBanner kind="error">{error}</StatusBanner>}
-      <PartialFailureBanner failures={partialFailures} onRetry={() => void fetchAll()} />
+      <PartialFailureBanner failures={failures} onRetry={retry} />
 
       <ResilienceBoundary title="Detected Issues panel is unavailable">
         <DetectedIssuesPanel

@@ -1,13 +1,12 @@
-import { newQueryGeneration, captureQueryGeneration } from '../api/queryGeneration';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Button, Menu } from '@capra/core';
 import { ChevronDown } from '@capra/icons';
 import TimeRangePicker from '../components/TimeRangePicker';
-import { binSecondsFor } from '../components/timeRanges';
+import { binSecondsFor, previousWindow, relativeTimeMs } from '@criblio/app-utils/time';
 import Sparkline from '../components/Sparkline';
 import StatusBanner from '../components/StatusBanner';
-import PartialFailureBanner from '../components/PartialFailureBanner';
+import { PartialFailureBanner } from '@criblio/app-utils/partial-failure-banner';
 import TraceClassList, { type ClassItem } from '../components/TraceClassList';
 import OperationAnomalyList from '../components/OperationAnomalyList';
 import {
@@ -23,8 +22,8 @@ import {
 import { listCachedHomePanels } from '../api/panelCache';
 import { entityColor } from '@criblio/app-utils/viz';
 import { serviceHealth, healthRowBg } from '../utils/health';
-import { previousWindow } from '../utils/timeRange';
-import { useRangeParam } from '../hooks/useRangeParam';
+import { useRangeParam } from '@criblio/app-utils/url-state';
+import { usePageLoad } from '@criblio/app-utils/page-load';
 import { useStreamFilterEnabled } from '../hooks/useStreamFilter';
 import DeltaChip from '../components/DeltaChip';
 import InvestigateButton from '../components/InvestigateButton';
@@ -53,6 +52,8 @@ interface SortState {
 }
 
 const DEFAULT_RANGE = '-1h';
+/** Duration of DEFAULT_RANGE: the rate-normalization fallback when ?range= is unparseable. */
+const DEFAULT_RANGE_MS = 3_600_000;
 const MIN_PREV_SAMPLES = 10;
 
 const REFRESH_OPTIONS: Array<{ label: string; ms: number }> = [
@@ -157,14 +158,6 @@ function buildHomeRowSeed(
   };
 }
 
-function relativeTimeMs(rel: string): number {
-  const m = rel.match(/^-(\d+)([smhd])$/);
-  if (!m) return 3600_000;
-  const n = Number(m[1]);
-  const unit = m[2];
-  return n * { s: 1000, m: 60_000, h: 3600_000, d: 86_400_000 }[unit as 's' | 'm' | 'h' | 'd'];
-}
-
 export default function ServicesListPage() {
   const [range, setRange] = useRangeParam(DEFAULT_RANGE);
   const navigate = useNavigate();
@@ -184,24 +177,17 @@ export default function ServicesListPage() {
   const [loadingAnomalies, setLoadingAnomalies] = useState(true);
   const [panelCacheUpdatedMs, setPanelCacheUpdatedMs] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [partialFailures, setPartialFailures] = useState<Record<string, string>>({});
   const [refreshMs, setRefreshMs] = useState<number>(DEFAULT_REFRESH_MS);
   const [sort, setSort] = useState<SortState>({ key: 'requests', dir: 'desc' });
   const [lastRefresh, setLastRefresh] = useState<number>(() => Date.now());
   const streamFilterEnabled = useStreamFilterEnabled();
 
-  const fetchAll = useCallback(async () => {
-    newQueryGeneration(); // cancel the prior page/fetch's in-flight reads
-    const isCurrent = captureQueryGeneration(); // guard stale async setState
+  // usePageLoad owns the query generation, the stale-write guard and the
+  // per-panel failures (kept on screen until the next load settles, so the
+  // banner no longer blinks off at the start of every poll). This page has
+  // its own per-panel loading flags, so `phase` is unused.
+  const { failures, refresh } = usePageLoad(async ({ isCurrent, fail: recordFailure }) => {
     setError(null);
-    setPartialFailures({});
-    const recordFailure = (panel: string, value: unknown) => {
-      if (!isCurrent()) return;
-      setPartialFailures((cur) => ({
-        ...cur,
-        [panel]: value instanceof Error ? value.message : String(value),
-      }));
-    };
     const binSeconds = binSecondsFor(range);
     setLoadingSummaries(true);
     setLoadingBuckets(true);
@@ -243,10 +229,16 @@ export default function ServicesListPage() {
 
     // Secondary panels — fired only AFTER the catalog counter resolves so
     // they don't contend for connections during first paint.
+    // An unparseable ?range= has no defined prior window: compare against
+    // nothing rather than a guessed 1h (the old helper's fallback).
     const prev = previousWindow(range);
-    listServiceSummaries(prev.earliest, prev.latest)
-      .then((r) => { if (isCurrent()) setPrevSummaries(r); })
-      .catch((err: unknown) => recordFailure('Prior-window comparison', err));
+    if (!prev) {
+      setPrevSummaries([]);
+    } else {
+      listServiceSummaries(prev.earliest, prev.latest)
+        .then((r) => { if (isCurrent()) setPrevSummaries(r); })
+        .catch((err: unknown) => recordFailure('Prior-window comparison', err));
+    }
 
     getDependencies(range, 'now')
       .then((r) => { if (isCurrent()) setEdges(r); })
@@ -305,14 +297,15 @@ export default function ServicesListPage() {
     if (isCurrent()) setLastRefresh(Date.now());
   }, [range, streamFilterEnabled]);
 
-  useEffect(() => { void fetchAll(); }, [fetchAll]);
-
+  // Auto-refresh. Re-armed when the load's deps change (as before, when
+  // the interval keyed on fetchAll's identity) so a poll doesn't fire
+  // right after — and abort — the load a range change just started.
   const timerRef = useRef<number | null>(null);
   useEffect(() => {
     if (refreshMs <= 0) return;
-    timerRef.current = window.setInterval(() => { void fetchAll(); }, refreshMs);
+    timerRef.current = window.setInterval(() => { refresh({ silent: true }); }, refreshMs);
     return () => { if (timerRef.current != null) window.clearInterval(timerRef.current); };
-  }, [refreshMs, fetchAll]);
+  }, [refreshMs, refresh, range, streamFilterEnabled]);
 
   const prevByService = useMemo(() => {
     const m = new Map<string, ServiceSummary>();
@@ -376,7 +369,7 @@ export default function ServicesListPage() {
     return arr;
   }, [summaries, sort]);
 
-  const rangeMs = relativeTimeMs(range);
+  const rangeMs = relativeTimeMs(range) || DEFAULT_RANGE_MS;
   const rangeMinutes = rangeMs / 60_000;
   function reqPerMin(totalRequests: number): number {
     return rangeMinutes > 0 ? totalRequests / rangeMinutes : 0;
@@ -432,12 +425,12 @@ export default function ServicesListPage() {
               ))}
             </Menu>
           </div>
-          <Button variant="secondary" size="sm" onClick={() => void fetchAll()}>Refresh now</Button>
+          <Button variant="secondary" size="sm" onClick={() => refresh()}>Refresh now</Button>
         </div>
       </div>
 
       {error && <StatusBanner kind="error">{error}</StatusBanner>}
-      <PartialFailureBanner failures={partialFailures} onRetry={() => void fetchAll()} />
+      <PartialFailureBanner failures={failures} onRetry={() => refresh()} />
 
       <div className={s.catalog}>
         <div className={s.catalogHeader}>

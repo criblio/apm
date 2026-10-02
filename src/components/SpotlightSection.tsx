@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import SpotlightPanel from './SpotlightPanel';
-import PartialFailureBanner from './PartialFailureBanner';
+import { PartialFailureBanner } from '@criblio/app-utils/partial-failure-banner';
 import { SPOTLIGHT_ATTRIBUTES } from '../api/queries';
 import { getSpotlightDiff } from '../api/search';
 import type { SpotlightBucket } from '../api/types';

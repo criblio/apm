@@ -14,7 +14,7 @@ verbatim; some need the APM-specific content stripped.
 - `src/api/appSettings.ts` (strip APM-specific fields)
 - `src/api/dataset.ts`
 - `src/api/streamFilter.ts`
-- `src/hooks/useRangeParam.ts`
+- ~~`src/hooks/useRangeParam.ts`~~ — now `useRangeParam` from `@criblio/app-utils/url-state`
 - `src/hooks/useDataset.ts`
 - `src/hooks/useStreamFilter.ts`
 - `src/components/AppShell.tsx`

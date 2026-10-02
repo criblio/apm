@@ -2,13 +2,13 @@ import { newQueryGeneration, captureQueryGeneration } from '../api/queryGenerati
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import TimeRangePicker from '../components/TimeRangePicker';
-import { binSecondsFor } from '../components/timeRanges';
+import { binSecondsFor, previousWindow, relativeTimeMs } from '@criblio/app-utils/time';
 import LineChart, { type LineSeries } from '../components/LineChart';
 import { StackedColumnChart, type StackedSeries } from '@criblio/app-utils/viz';
 import TraceBriefList from '../components/TraceBriefList';
 import StatusBanner from '../components/StatusBanner';
 import ResilienceBoundary from '../components/ResilienceBoundary';
-import PartialFailureBanner from '../components/PartialFailureBanner';
+import { PartialFailureBanner } from '@criblio/app-utils/partial-failure-banner';
 import MetricsCard, { type MetricsCardRow } from '../components/MetricsCard';
 import SpotlightSection from '../components/SpotlightSection';
 
@@ -30,8 +30,7 @@ import { runQuery } from '../api/cribl';
 import * as Q from '../api/queries';
 import { kqlStringLiteral } from '../api/kqlSafety';
 import { entityColor } from '@criblio/app-utils/viz';
-import { previousWindow } from '../utils/timeRange';
-import { useRangeParam } from '../hooks/useRangeParam';
+import { useRangeParam } from '@criblio/app-utils/url-state';
 import DeltaChip from '../components/DeltaChip';
 import InvestigateButton from '../components/InvestigateButton';
 import type { InvestigationSeed } from '../api/agentContext';
@@ -49,6 +48,8 @@ import { STATUS_CODE_CLASSES } from '../api/types';
 import s from './ServiceDetailPage.module.css';
 
 const DEFAULT_RANGE = '-1h';
+/** Duration of DEFAULT_RANGE: the rate-normalization fallback when ?range= is unparseable. */
+const DEFAULT_RANGE_MS = 3_600_000;
 
 interface AlertHistoryEntry {
   time: number;
@@ -215,15 +216,6 @@ function buildServiceSeed(
     earliest: range,
     latest: 'now',
   };
-}
-
-/** Parse a relative-time like "-1h" into ms duration, for rate normalization. */
-function relativeTimeMs(rel: string): number {
-  const m = rel.match(/^-(\d+)([smhd])$/);
-  if (!m) return 3600_000;
-  const n = Number(m[1]);
-  const unit = m[2] as 's' | 'm' | 'h' | 'd';
-  return n * { s: 1000, m: 60_000, h: 3600_000, d: 86_400_000 }[unit];
 }
 
 type SvcTab = 'overview' | 'traces' | 'logs' | 'errors' | 'dependencies';
@@ -410,17 +402,24 @@ export default function ServiceDetailPage() {
     void Promise.allSettled([pSummary, pBuckets]).then(() => {
       if (!isCurrent()) return;
 
-      listServiceSummaries(prev.earliest, prev.latest, serviceName)
-        .then((all) => {
-          if (!isCurrent()) return;
-          setPrevSummary(all.find((x) => x.service === serviceName) ?? null);
-          clearPartialFailure('Prior-window comparison');
-        })
-        .catch((err: unknown) => {
-          if (!isCurrent()) return;
-          setPrevSummary(null);
-          recordPartialFailure('Prior-window comparison', err);
-        });
+      // An unparseable ?range= has no defined prior window: show no
+      // delta chips rather than compare against a guessed 1h (old helper).
+      if (!prev) {
+        setPrevSummary(null);
+        clearPartialFailure('Prior-window comparison');
+      } else {
+        listServiceSummaries(prev.earliest, prev.latest, serviceName)
+          .then((all) => {
+            if (!isCurrent()) return;
+            setPrevSummary(all.find((x) => x.service === serviceName) ?? null);
+            clearPartialFailure('Prior-window comparison');
+          })
+          .catch((err: unknown) => {
+            if (!isCurrent()) return;
+            setPrevSummary(null);
+            recordPartialFailure('Prior-window comparison', err);
+          });
+      }
 
       listOperationSummaries(serviceName, range, 'now')
         .then((ops) => {
@@ -628,7 +627,9 @@ export default function ServiceDetailPage() {
   }, [clearPartialFailure, metricCardsVisible, range, recordPartialFailure, retryNonce, serviceName]);
 
   const color = entityColor(serviceName);
-  const rangeMinutes = relativeTimeMs(range) / 60_000;
+  // Rate normalization keeps the old 1h assumption for an unparseable
+  // range (framework returns null and leaves the fallback to callers).
+  const rangeMinutes = (relativeTimeMs(range) || DEFAULT_RANGE_MS) / 60_000;
 
   // ─────────────────────────────────────────────────────────────
   // Metrics card row configs (P2 / P3 / P4)

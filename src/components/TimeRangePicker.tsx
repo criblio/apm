@@ -9,7 +9,7 @@
  */
 import { Button, Menu } from '@capra/core';
 import { ChevronDown } from '@capra/icons';
-import { TIME_RANGES } from './timeRanges';
+import { TIME_RANGES } from '@criblio/app-utils/time';
 import s from './TimeRangePicker.module.css';
 
 interface Props {

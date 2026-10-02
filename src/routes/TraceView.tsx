@@ -3,7 +3,7 @@ import { useParams, useSearchParams } from 'react-router-dom';
 import SpanTree from '../components/SpanTree';
 import SpanDetail from '../components/SpanDetail';
 import TraceLogsView from '../components/TraceLogsView';
-import PartialFailureBanner from '../components/PartialFailureBanner';
+import { PartialFailureBanner } from '@criblio/app-utils/partial-failure-banner';
 import { getTrace, getTraceLogs } from '../api/search';
 import { summarizeTrace } from '../api/transform';
 import { formatDurationUs } from '../utils/spans';
