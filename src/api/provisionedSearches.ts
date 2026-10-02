@@ -849,19 +849,15 @@ export function getMetricEmitters(): BackfillEmitter[] {
     // `histogram_quantile`. Each quantile is its own export AND its own
     // coverage: the series share one metric name and differ only by the
     // `quantile` label, so a plain `count(metric)` would read a covered p95
-    // as covering an empty p99. `coverageSplit` probes
-    // `count by (quantile)` and takes this emitter's quantile alone.
+    // as covering an empty p99. `coverageLabels` probes this emitter's
+    // quantile alone: `count(metric{quantile="pN"})`.
     ...LATENCY_QUANTILES.flatMap(({ q, label }) => [
-      { id: `criblapm__metric_req_lat_${label}`, metricName: METRIC_REQUEST_LATENCY_MS, coverageSplit: quantileSplit(label), kind: 'counter' as const, query: Q.metricLatencyPercentileExport(q) },
-      { id: `criblapm__metric_op_lat_${label}`, metricName: METRIC_OP_LATENCY_MS, coverageSplit: quantileSplit(label), kind: 'counter' as const, query: Q.metricLatencyPercentileExport(q, { byOperation: true }) },
+      { id: `criblapm__metric_req_lat_${label}`, metricName: METRIC_REQUEST_LATENCY_MS, coverageLabels: { quantile: label }, kind: 'counter' as const, query: Q.metricLatencyPercentileExport(q) },
+      { id: `criblapm__metric_op_lat_${label}`, metricName: METRIC_OP_LATENCY_MS, coverageLabels: { quantile: label }, kind: 'counter' as const, query: Q.metricLatencyPercentileExport(q, { byOperation: true }) },
     ]),
-    { id: 'criblapm__metric_edge_lat_p95', metricName: METRIC_EDGE_LATENCY_MS, coverageSplit: quantileSplit('p95'), kind: 'counter', query: Q.metricEdgeLatencyP95Export() },
-    { id: 'criblapm__metric_msg_lat_p95', metricName: METRIC_MSG_LATENCY_MS, coverageSplit: quantileSplit('p95'), kind: 'counter', query: Q.metricMessagingLatencyP95Export() },
+    { id: 'criblapm__metric_edge_lat_p95', metricName: METRIC_EDGE_LATENCY_MS, coverageLabels: { quantile: 'p95' }, kind: 'counter', query: Q.metricEdgeLatencyP95Export() },
+    { id: 'criblapm__metric_msg_lat_p95', metricName: METRIC_MSG_LATENCY_MS, coverageLabels: { quantile: 'p95' }, kind: 'counter', query: Q.metricMessagingLatencyP95Export() },
   ];
-}
-
-function quantileSplit(label: string): { label: string; values: readonly string[] } {
-  return { label: 'quantile', values: [label] };
 }
 
 /** Convenience: return just the IDs, in the order the plan

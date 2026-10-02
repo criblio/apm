@@ -18,12 +18,14 @@
  *    percentile gauges use big fixed windows; per-span histograms (none are
  *    emitted today, the planner is kept for when one is) are sized from a
  *    span-count pass so a sampled window stays under the per-export cap.
+ *    Both tile the gap exactly, as the framework requires.
  */
 import {
   DEFAULT_BACKFILL_WINDOW_SECONDS,
   SAFE_MAX_EXPORT_EVENTS,
   planDensityWindows,
   planFixedWindows,
+  promSelector,
   type BackfillWindow,
   type MetricsBackfillDeps,
   type MetricsBackfillEmitter,
@@ -88,19 +90,13 @@ export function makeApmPlanWindows(
     }
     const rate = emitter.sampleRate && emitter.sampleRate > 0 ? emitter.sampleRate : 1;
     const bins = await countSpans(gap.earliestSec * 1000, gap.latestSec * 1000);
-    // Bins are COUNT_BIN_SECONDS-aligned but the gap is only minute-aligned,
-    // so keep every bin that overlaps the gap and clamp the packed windows
-    // to it: a window past the gap's top re-emits covered (already written)
-    // minutes, and the store would double them.
-    const inGap = bins
-      .filter((b) => b.tSec + COUNT_BIN_SECONDS > gap.earliestSec && b.tSec < gap.latestSec)
-      .sort((a, b) => a.tSec - b.tSec);
-    return planDensityWindows(inGap, COUNT_BIN_SECONDS, Math.floor(SAFE_MAX_EXPORT_EVENTS / rate))
-      .map((w) => ({
-        earliestSec: Math.max(w.earliestSec, gap.earliestSec),
-        latestSec: Math.min(w.latestSec, gap.latestSec),
-      }))
-      .filter((w) => w.latestSec > w.earliestSec);
+    // Passing the gap makes the framework tile it exactly, which
+    // runMetricsBackfill requires of planWindows (0.12.4 fails an emitter
+    // whose windows leave a hole or overlap): bins outside the gap are
+    // ignored, windows are clamped to it — past the top is already-covered
+    // data the store would double — and a bin with no spans joins its
+    // neighbour instead of leaving a hole.
+    return planDensityWindows(bins, COUNT_BIN_SECONDS, Math.floor(SAFE_MAX_EXPORT_EVENTS / rate), gap);
   };
 }
 
@@ -111,11 +107,8 @@ export function spanCountBins(rows: readonly Record<string, unknown>[]): SpanCou
     .map((r) => ({ tSec: Number(r.t), count: Number(r.n) }));
 }
 
-/** Display name for an emitter's family: the metric plus its required
- *  label value when it covers one series of a split family. */
-export function emitterFamilyLabel(e: Pick<BackfillEmitter, 'metricName' | 'coverageSplit'>): string {
-  const split = e.coverageSplit;
-  return split && split.values.length === 1
-    ? `${e.metricName}{${split.label}="${split.values[0]}"}`
-    : e.metricName;
+/** Display name for an emitter's family: the metric plus the label values
+ *  its coverage is restricted to (one series of a shared family). */
+export function emitterFamilyLabel(e: Pick<BackfillEmitter, 'metricName' | 'coverageLabels'>): string {
+  return promSelector(e.metricName, e.coverageLabels);
 }
