@@ -39,16 +39,17 @@ const VIEW_MODES: Array<{ value: ViewMode; label: string }> = [
   { value: 'isometric', label: 'Isometric' },
 ];
 
+const LEGACY_RANGE_KEYS = { legacy: ['lookback'] } as const;
+
 export default function SystemArchPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const containerRef = useRef<HTMLDivElement>(null);
 
   // Unified with Home + Service Detail via ?range=. Keep reading the old
   // `?lookback=` param as a fallback so stale bookmarks don't silently
-  // snap back to 1h, but write only to `?range=` going forward.
-  const [rangeFromHook, setRange] = useRangeParam('-1h');
-  const legacyLookback = searchParams.get('lookback');
-  const lookback = searchParams.get('range') ?? legacyLookback ?? rangeFromHook;
+  // snap back to 1h; the setter writes only `?range=` and drops
+  // `?lookback=` in the same URL update.
+  const [lookback, setLookback] = useRangeParam('-1h', LEGACY_RANGE_KEYS);
   const viewParam = searchParams.get('view');
   const view: ViewMode = viewParam === 'isometric' ? 'isometric' : 'graph';
   const [edges, setEdges] = useState<DependencyEdge[]>([]);
@@ -155,17 +156,6 @@ export default function SystemArchPage() {
       cancelled = true;
     };
   }, [lookback, streamFilterEnabled, retryNonce]);
-
-  function setLookback(value: string) {
-    // Clear the legacy ?lookback= if present so we don't end up with
-    // both keys. The hook handles the canonical ?range= write.
-    if (legacyLookback != null) {
-      const next = new URLSearchParams(searchParams);
-      next.delete('lookback');
-      setSearchParams(next, { replace: true });
-    }
-    setRange(value);
-  }
 
   function setView(value: ViewMode) {
     const next = new URLSearchParams(searchParams);
