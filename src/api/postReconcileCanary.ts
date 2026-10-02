@@ -15,7 +15,8 @@
  *      lookup`) that reported success everywhere.
  *   3. Generated-event contract (APM probe) — emit one alert and one
  *      deploy sentinel, then read both back through the same normalized
- *      datatype expression every consumer uses.
+ *      datatype expression every consumer uses (framework
+ *      `runGeneratedEventCanary`).
  *
  * `firstInstall` tolerates empty sentinel/lookup results (the searches
  * have not run yet). It never tolerates the event-contract probe: that
@@ -31,20 +32,14 @@ import {
   type ProvisionCanaryProbe,
   type ProvisionCanaryReport,
 } from '@criblio/app-utils/provision-canary';
-import {
-  generatedEventContractCanaryRead,
-  generatedEventContractCanarySend,
-} from './generatedEventContract';
+import { runGeneratedEventCanary } from '@criblio/app-utils/generated-events';
+import { GENERATED_EVENTS } from './generatedEventContract';
 import { kqlDatasetId } from './kqlSafety';
 
 /** Guard against injection when embedding the runtime dataset name in a
  *  literal query. Callers must have set the dataset store upstream. */
 function safeDataset(): string {
   return kqlDatasetId(getCurrentDataset());
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**
@@ -87,36 +82,21 @@ function lookupProbeKql(): string {
     | summarize total=count(), joined=countif(isnotnull(type))`;
 }
 
-/** The generated-event send → storage → read round trip. */
+/** The generated-event send → storage → read round trip — the framework's
+ *  `runGeneratedEventCanary` over APM's {@link GENERATED_EVENTS}. */
 export function eventContractProbe(
   opts: Pick<CanaryOpts, 'contractPollAttempts' | 'contractPollMs'> = {},
 ): ProvisionCanaryProbe {
   return {
     name: EVENT_CONTRACT_PROBE_NAME,
     async run({ query }) {
-      const canaryId = `criblapm-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-      await query(generatedEventContractCanarySend(canaryId, safeDataset()), '-1m', 'now');
-      const attempts = Math.max(1, opts.contractPollAttempts ?? 8);
-      const pollMs = Math.max(0, opts.contractPollMs ?? 1_000);
-      let row: Record<string, unknown> | undefined;
-      for (let attempt = 0; attempt < attempts; attempt++) {
-        row = (await query(generatedEventContractCanaryRead(canaryId, safeDataset()), '-15m', 'now'))[0];
-        if (Number(row?.['rows'] ?? 0) >= 2) break;
-        if (attempt + 1 < attempts) await delay(pollMs);
-      }
-      const rows = Number(row?.['rows'] ?? 0);
-      const types = Number(row?.['types'] ?? 0);
-      const versions = Number(row?.['versions'] ?? 0);
-      const canaries = Number(row?.['canaries'] ?? 0);
-      const ok = rows >= 2 && types === 2 && versions === 1 && canaries >= 2;
-      return {
-        ok,
-        tolerated: false,
-        rowCount: rows,
-        message: ok
-          ? `round-trip passed (${rows} rows, ${types} datatypes, schema v1)`
-          : `drift: expected 2 canary rows across 2 datatypes at one schema version; got rows=${rows}, types=${types}, versions=${versions}, canaries=${canaries}`,
-      };
+      const verdict = await runGeneratedEventCanary(GENERATED_EVENTS, query, {
+        dataset: safeDataset(),
+        canaryId: `criblapm-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`,
+        attempts: opts.contractPollAttempts,
+        pollMs: opts.contractPollMs,
+      });
+      return { ok: verdict.ok, tolerated: false, rowCount: verdict.rows, message: verdict.message };
     },
   };
 }

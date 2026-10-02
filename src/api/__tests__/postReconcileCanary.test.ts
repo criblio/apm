@@ -16,6 +16,7 @@ import {
   CANARY_SENTINEL_SEARCH_ID,
   CANARY_LOOKUP_NAME,
   EVENT_CONTRACT_PROBE_NAME,
+  eventContractProbe,
 } from '../postReconcileCanary';
 
 beforeAll(() => setCurrentDataset('otel'));
@@ -114,7 +115,7 @@ describe('runCanary — happy path', () => {
       [`lookup ${CANARY_LOOKUP_NAME}`]: [{ total: 50, joined: 12 }],
     });
     const report = await runCanary(http, { contractPollAttempts: 1, contractPollMs: 0 });
-    expect(probes(report).eventContract.message).toBe('round-trip passed (2 rows, 2 datatypes, schema v1)');
+    expect(probes(report).eventContract.message).toBe('generated-event round trip passed (2 rows, 2 datatypes, schema v1)');
     expect(report.ok).toBe(true);
     expect(probes(report).sentinel.ok).toBe(true);
     expect(probes(report).lookupJoin.ok).toBe(true);
@@ -206,5 +207,37 @@ describe('runCanary — sentinel override', () => {
     expect(probes(report).sentinel.name).toBe('sentinel criblapm__custom_sentinel');
     expect(probes(report).sentinel.ok).toBe(true);
     expect(report.ok).toBe(true);
+  });
+});
+
+describe('eventContractProbe — framework generated-event canary', () => {
+  it('writes one sentinel per APM datatype through export, then reads it back', async () => {
+    const queries: string[] = [];
+    const probe = eventContractProbe({ contractPollAttempts: 1, contractPollMs: 0 });
+    const result = await probe.run({
+      query: async (kql) => {
+        queries.push(kql);
+        return kql.includes('summarize rows=count()') ? [{ rows: 2, types: 2, versions: 1, canaries: 2 }] : [];
+      },
+    } as Parameters<typeof probe.run>[0]);
+    expect(result.ok).toBe(true);
+    const [send, read] = queries;
+    expect(send).toContain('print datatype="criblapm_alert"');
+    expect(send).toContain('| union (print datatype="criblapm_deploy"');
+    expect(send).toContain('producer="criblapm_contract_canary"');
+    expect(send).toContain('record_kind="evaluation"');
+    expect(send).toMatch(/event_id="criblapm-[a-z0-9]+-[a-z0-9]+:criblapm_alert"/);
+    expect(send).toContain('| export tee=true to search "otel"');
+    expect(read).toContain('coalesce(tostring(data_datatype), tostring(datatype)) in ("criblapm_alert", "criblapm_deploy")');
+  });
+
+  it('reports drift with the counts that explain it', async () => {
+    const probe = eventContractProbe({ contractPollAttempts: 1, contractPollMs: 0 });
+    const result = await probe.run({
+      query: async (kql) => (kql.includes('summarize rows=count()') ? [{ rows: 1, types: 1, versions: 1, canaries: 1 }] : []),
+    } as Parameters<typeof probe.run>[0]);
+    expect(result.ok).toBe(false);
+    expect(result.tolerated).toBe(false);
+    expect(result.message).toContain('rows=1, types=1');
   });
 });

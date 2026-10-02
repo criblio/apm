@@ -66,23 +66,6 @@ export const LATENCY_QUANTILES = [
 /** Default PromQL lookback for an instant "value over the window" read. */
 export const DEFAULT_METRIC_WINDOW = '5m';
 
-/**
- * PromQL that returns samples where a metric HAS data — used by the backfill
- * coverage probe. Must be metric-type-aware: on this engine a histogram's
- * data is ONLY reachable through `histogram_quantile(... by (le))` (bare
- * `count()`/`sum()` over a histogram name return nothing), while counters
- * use `count()`. The 5m rate window is needed so `rate()` sees ≥2 of the
- * once-per-minute samples (same reason the RED duration read floors its
- * window at 5m). Run as a coarse-step RANGE query; the earliest step with a
- * sample is the earliest covered time.
- */
-export function coverageProbeQuery(metricName: string, kind: 'counter' | 'histogram'): string {
-  if (kind === 'histogram') {
-    return `histogram_quantile(0.5, sum(rate(${metricName}[5m])) by (le))`;
-  }
-  return `count(${metricName})`;
-}
-
 /** `-1h` / `1h` → `1h`; unrecognized → default. PromQL range-vectors need
  *  a bare duration, not a relative time. */
 export function toPromWindow(range: string, fallback = DEFAULT_METRIC_WINDOW): string {

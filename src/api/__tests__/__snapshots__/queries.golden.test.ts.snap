@@ -214,6 +214,7 @@ exports[`queries.ts — golden snapshots + invariants > alertEvaluator > snapsho
              prev_bad=iff(isnotnull(persisted_bad), persisted_bad, 0),
              prev_good=iff(isnotnull(persisted_good), persisted_good, 0),
              prev_fire_count=iff(isnotnull(persisted_fire_count), persisted_fire_count, 0)
+    | extend prev_status=iff(isnotempty(prev_status), prev_status, "ok")
     | extend new_bad=iff(is_bad, prev_bad + 1, 0),
              new_good=iff(is_bad, 0, prev_good + 1)
     | extend alert_status=case(
@@ -360,6 +361,7 @@ exports[`queries.ts — golden snapshots + invariants > alertEvaluator > snapsho
                  prev_bad=iff(isnotnull(persisted_bad), persisted_bad, 0),
                  prev_good=iff(isnotnull(persisted_good), persisted_good, 0),
                  prev_fire_count=iff(isnotnull(persisted_fire_count), persisted_fire_count, 0)
+        | extend prev_status=iff(isnotempty(prev_status), prev_status, "ok")
         | extend new_bad=iff(is_bad, prev_bad + 1, 0),
                  new_good=iff(is_bad, 0, prev_good + 1)
         | extend alert_status=case(
