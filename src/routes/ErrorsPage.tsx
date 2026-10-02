@@ -10,7 +10,7 @@ import { SPOTLIGHT_ATTRIBUTES_SERVICE_DETAIL } from '../api/queries';
 import { listCachedErrorClasses } from '../api/panelCache';
 import { useStreamFilterEnabled } from '../hooks/useStreamFilter';
 import { entityColor } from '@criblio/app-utils/viz';
-import { useRangeParam } from '../hooks/useRangeParam';
+import { useRangeParam } from '@criblio/app-utils/url-state';
 import type { ErrorClass } from '../api/types';
 import { kqlStringLiteral } from '../api/kqlSafety';
 import s from './ErrorsPage.module.css';

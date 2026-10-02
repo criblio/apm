@@ -1,5 +1,9 @@
 // @vitest-environment happy-dom
 /**
+ * APM's ?range= contract, now served by `@criblio/app-utils/url-state`
+ * (the local useRangeParam from #185 moved into the framework). Kept to
+ * pin System Architecture's `legacy: ['lookback']` bookmark behaviour.
+ *
  * System Architecture used to clear the legacy `?lookback=` param with
  * one setSearchParams write and then call setRange, which built its
  * write from the same render's (stale) params. React Router's setter
@@ -13,7 +17,7 @@ import { act, useEffect } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { afterEach, describe, expect, it } from 'vitest';
-import { useRangeParam } from '../useRangeParam';
+import { useRangeParam } from '@criblio/app-utils/url-state';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 

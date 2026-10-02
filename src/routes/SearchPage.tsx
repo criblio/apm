@@ -28,7 +28,7 @@ import {
 } from '../api/search';
 import TraceTable from '../components/TraceTable';
 import StatusBanner from '../components/StatusBanner';
-import PartialFailureBanner from '../components/PartialFailureBanner';
+import { PartialFailureBanner } from '@criblio/app-utils/partial-failure-banner';
 import ResilienceBoundary from '../components/ResilienceBoundary';
 import type {
   AttrValueBucket,

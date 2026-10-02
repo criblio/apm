@@ -38,7 +38,7 @@
  */
 import { listServiceSummaries, listRecentDeploys, type RecentDeploy } from './search';
 import { browserSearchClient, type SearchClient } from './searchClient';
-import { previousWindow } from '../utils/timeRange';
+import { previousWindow } from '@criblio/app-utils/time';
 import { MIN_BASELINE_REQUESTS } from '../utils/health';
 import type { ServiceSummary } from './types';
 
@@ -108,6 +108,11 @@ export async function runPreflight(
   let prior: ServiceSummary[];
   let recentDeploys: RecentDeploy[] = [];
   try {
+    // Prior window assumes latest=now (as before). An unparseable
+    // `earliest` (absolute time, snapped `-1d@d`) has no defined prior
+    // window: run with an empty baseline — no silent/rate/error buckets —
+    // instead of comparing against a guessed one (the old helper
+    // silently assumed 1h, producing bogus drops/spikes).
     const prev = previousWindow(earliest);
     // Fetch summaries (required for the silent/rate/error buckets)
     // alongside the deploys probe. listRecentDeploys's failure is
@@ -115,7 +120,9 @@ export async function runPreflight(
     // fresh install shouldn't abort the whole preflight.
     const [cur, pri, deploys] = await Promise.all([
       listServiceSummaries(earliest, latest, undefined, client),
-      listServiceSummaries(prev.earliest, prev.latest, undefined, client),
+      prev
+        ? listServiceSummaries(prev.earliest, prev.latest, undefined, client)
+        : Promise.resolve([] as ServiceSummary[]),
       listRecentDeploys(`-${DEPLOY_LOOKBACK_MIN}m`, 'now', client).catch((e) => {
         console.error('[agentPreflight] deploys probe failed:', e);
         return [] as RecentDeploy[];

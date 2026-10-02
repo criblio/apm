@@ -21,7 +21,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import TraceLogsView from '../components/TraceLogsView';
 import TimeRangePicker from '../components/TimeRangePicker';
 import StatusBanner from '../components/StatusBanner';
-import PartialFailureBanner from '../components/PartialFailureBanner';
+import { PartialFailureBanner } from '@criblio/app-utils/partial-failure-banner';
 import { listLogServices, searchLogs } from '../api/search';
 import type { TraceLogEntry } from '../api/types';
 import s from './LogsPage.module.css';

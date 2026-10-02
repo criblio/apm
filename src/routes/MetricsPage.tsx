@@ -33,7 +33,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import LineChart, { type LineSeries } from '../components/LineChart';
 import TimeRangePicker from '../components/TimeRangePicker';
 import StatusBanner from '../components/StatusBanner';
-import PartialFailureBanner from '../components/PartialFailureBanner';
+import { PartialFailureBanner } from '@criblio/app-utils/partial-failure-banner';
 import ResilienceBoundary from '../components/ResilienceBoundary';
 import {
   listMetrics,
@@ -41,8 +41,8 @@ import {
   getMetricInfo,
   getMetricSeries,
 } from '../api/search';
-import { binSecondsFor } from '../components/timeRanges';
-import { useRangeParam } from '../hooks/useRangeParam';
+import { binSecondsFor } from '@criblio/app-utils/time';
+import { useRangeParam } from '@criblio/app-utils/url-state';
 import { entityColor } from '@criblio/app-utils/viz';
 import type {
   MetricSummary,

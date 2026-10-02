@@ -79,6 +79,31 @@ describe('browser-free import surface', () => {
     expect(lines.join('\n')).toMatch(/No traffic-drop/);
   });
 
+  it('preflight queries the prior window, and skips it for an unparseable range', async () => {
+    const windows: string[] = [];
+    const client: SearchClient = {
+      runQuery: async (_kql, earliest, latest) => {
+        windows.push(`${earliest}..${latest}`);
+        return [];
+      },
+      flatFields: async () => false,
+      serviceSummariesViaMetrics: async () => null,
+      metricsReadEnabled: () => false,
+    };
+    await runPreflight('-1h', 'now', client);
+    expect(windows).toContain('-1h..now');
+    expect(windows).toContain('-2h..-1h');
+
+    // previousWindow() returns null for a snapped range; the old helper
+    // silently compared against -2h..-1h. Now: no baseline query at all.
+    windows.length = 0;
+    const result = await runPreflight('-1d@d', 'now', client);
+    expect(windows).toContain('-1d@d..now');
+    expect(windows).not.toContain('-2h..-1h');
+    expect(result.silent).toEqual([]);
+    expect(result.rateDrops).toEqual([]);
+  });
+
   it('tool executors dispatch through the injected client', async () => {
     const queries: string[] = [];
     const client: SearchClient = {
