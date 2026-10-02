@@ -1,22 +1,26 @@
 /**
- * App settings stored in the pack-scoped KV store. Keeps the save/load
- * helpers out of DatasetProvider so the provider file satisfies the
- * react-refresh/only-export-components rule.
+ * App settings stored in the app-scoped KV store, read and written
+ * through the framework's `/settings` module at APM's own key. Keeps the
+ * helpers out of a component file so the react-refresh rule holds.
  *
- * Built on the framework's strict `/kv` client, but deliberately NOT on
- * the framework's `/settings` module: that one reads and writes the fixed
- * key `settings`, while every deployed APM keeps its settings under
- * `settings/app` (and `scripts/provision.ts` reads them from there). Moving
- * keys would orphan every stored preference, so APM keeps its key.
+ * Every deployed APM keeps its settings under `settings/app` (not the
+ * framework default `settings`), and `scripts/provision.ts` reads them from
+ * there, so the key is passed explicitly on every call.
  *
  * Absence (the store's own `{"message":"Key not found"}` 404) is "nothing
- * saved yet" and yields null. Anything else — notably an HTML 404 from an
+ * saved yet" and reads as `{}`. Anything else — notably an HTML 404 from an
  * unmatched route or rejected session — throws `KvError`, and the merge in
- * `saveAppSettings` must abort on it: substituting `{}` there would replace
- * every persisted setting with whatever partial was being saved.
+ * `saveAppSettings` aborts on it without writing: substituting `{}` there
+ * would replace every persisted setting with whatever partial was being
+ * saved. Both rules are the framework's (`loadSettings` /
+ * `saveSettings(..., { merge: true })`).
  */
-import { kvGetJson, kvPutJson } from '@criblio/app-utils/kv';
-import { setCurrentDataset, setDatasetLoadError } from '@criblio/app-utils/dataset';
+import {
+  loadSettings,
+  saveSettings,
+  type AppSettings as FrameworkSettings,
+} from '@criblio/app-utils/settings';
+import { setCurrentDataset } from '@criblio/app-utils/dataset';
 import { setSearchCadence } from '@criblio/app-utils/cadence';
 import type { SourceRepo } from './investigationTransport';
 import { setStreamFilterEnabled } from './streamFilter';
@@ -71,25 +75,30 @@ export interface AppSettings {
   [k: string]: unknown;
 }
 
-/** The saved settings, or null when nothing has been saved. Throws
- *  `KvError` when the read did not reach the store. */
-export async function loadAppSettings(): Promise<AppSettings | null> {
-  const result = await kvGetJson<AppSettings>(SETTINGS_KEY);
-  return result.found ? result.value : null;
+/** Pre-v0.12 settings that were exposed without a runtime consumer.
+ *  Every save removes them from the stored object. */
+const RETIRED_KEYS = ['alertNotificationTargets', 'forceUserOriginators', 'forceServiceOriginators'] as const;
+
+/** The saved settings; `{}` when nothing has been saved. Throws `KvError`
+ *  when the read did not reach the store. */
+export async function loadAppSettings(): Promise<AppSettings> {
+  // No defaults: the framework's own `{ dataset: 'otel' }` default would
+  // read as a saved dataset. APM's defaults live in each flag's store.
+  const settings = await loadSettings({} as FrameworkSettings, { key: SETTINGS_KEY });
+  return settings as AppSettings;
 }
 
 /**
- * Persist app settings to the KV store. Merges with whatever else is
- * stored so we don't clobber future fields.
+ * Persist app settings to the KV store, shallow-merged over whatever is
+ * stored so fields this caller does not know about survive. A failed or
+ * misrouted read aborts with `KvError` and writes nothing.
  */
 export async function saveAppSettings(partial: AppSettings): Promise<void> {
-  const existing = (await loadAppSettings()) ?? {};
-  const next = { ...existing, ...partial };
-  // Remove pre-v0.12 settings that were exposed without a runtime consumer.
-  delete next.alertNotificationTargets;
-  delete next.forceUserOriginators;
-  delete next.forceServiceOriginators;
-  await kvPutJson(SETTINGS_KEY, next);
+  const next: Record<string, unknown> = { ...partial };
+  // An `undefined` field is dropped by the JSON write, so naming the
+  // retired keys here deletes them from the merged object.
+  for (const key of RETIRED_KEYS) next[key] = undefined;
+  await saveSettings(next as FrameworkSettings, { key: SETTINGS_KEY, merge: true });
 }
 
 /**
@@ -128,39 +137,16 @@ export function applyAppSettings(settings: AppSettings | null): void {
   }
 }
 
-/** The `console.warn` text for a settings-load failure nobody else reports. */
-export const SETTINGS_LOAD_WARNING = 'DatasetProvider: could not load saved settings; using defaults.';
-
 /**
- * DatasetProvider's mount effect: load the saved settings and apply them.
- * A failed read leaves every default in place (as before) but is no
- * longer silent — it is recorded in the framework's dataset load-error
- * store, so `useDatasetLoadError()` can show it, and reported through
- * `onError`; a later successful load clears it. Never rejects.
+ * `<DatasetProvider loadDataset>`: ONE read of `settings/app` that applies
+ * every saved flag and hands the dataset back to the framework provider,
+ * which sets it and records a failure for `useDatasetLoadError()` (a
+ * rejection here leaves every default in place and is reported through
+ * the provider's `onError`, or logged). Reading the key a second time for
+ * the flags would race two loads of the same object.
  */
-export async function syncAppSettings(opts: {
-  isCancelled?: () => boolean;
-  onError?: (err: Error) => void;
-} = {}): Promise<void> {
-  let settings: AppSettings | null;
-  try {
-    settings = await loadAppSettings();
-  } catch (raw) {
-    if (opts.isCancelled?.()) return;
-    const err = raw instanceof Error ? raw : new Error(String(raw));
-    setDatasetLoadError(err);
-    if (opts.onError) {
-      try {
-        opts.onError(err);
-      } catch {
-        /* a throwing reporter must not become an unhandled rejection */
-      }
-    } else {
-      console.warn(SETTINGS_LOAD_WARNING, err);
-    }
-    return;
-  }
-  if (opts.isCancelled?.()) return;
-  setDatasetLoadError(null);
+export async function loadDatasetAndApplySettings(): Promise<string | undefined> {
+  const settings = await loadAppSettings();
   applyAppSettings(settings);
+  return typeof settings.dataset === 'string' ? settings.dataset : undefined;
 }

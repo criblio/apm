@@ -2,7 +2,8 @@ import { BrowserRouter, Routes, Route, Navigate, useHref, useNavigate } from 're
 import { RouterProvider as AriaRouterProvider } from '@capra/core';
 import type { ReactNode } from 'react';
 import AppShell from './components/AppShell';
-import DatasetProvider from './components/DatasetProvider';
+import { DatasetProvider } from '@criblio/app-utils/dataset-provider';
+import { loadDatasetAndApplySettings } from './api/appSettings';
 import OverviewPage from './routes/OverviewPage';
 import SearchPage from './routes/SearchPage';
 import TraceView from './routes/TraceView';
@@ -41,9 +42,18 @@ function CapraRouterBridge({ children }: { children: ReactNode }) {
   );
 }
 
+/**
+ * The framework provider puts `otel` in the dataset store during its own
+ * render, before any child renders or runs an effect (a query built
+ * earlier would read `dataset=""`). On mount it makes one read of
+ * `settings/app` through `loadDatasetAndApplySettings`, which applies the
+ * saved flags (stream filter, cadence, low-volume, metrics, server
+ * investigations) and returns the dataset for the provider to set. A failed
+ * read keeps the defaults and is recorded for `useDatasetLoadError()`.
+ */
 export default function App() {
   return (
-    <DatasetProvider>
+    <DatasetProvider defaultDataset="otel" loadDataset={loadDatasetAndApplySettings}>
       <BrowserRouter basename={window.CRIBL_BASE_PATH ?? '/'}>
         <CapraRouterBridge>
         <Routes>
