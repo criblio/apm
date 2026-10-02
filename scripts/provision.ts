@@ -51,6 +51,7 @@ import { getServerInvestigations, setServerInvestigations } from '../src/api/ser
 import { getMetricEmitters } from '../src/api/provisionedSearches.js';
 import { runMetricsBackfill } from '../src/api/metricsBackfill.js';
 import { makeNodeBackfillDeps } from './metricsBackfillDeps.js';
+import type { OAuthConfig } from '@criblio/app-utils/auth';
 import { stageApmInvestigatorConfiguration } from '../src/api/goatTownProvisioning.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -408,7 +409,7 @@ async function main(): Promise<void> {
     }
   }
 
-  await maybeBackfillMetrics();
+  await maybeBackfillMetrics(http, { baseUrl, clientId, clientSecret });
 }
 
 /**
@@ -416,34 +417,47 @@ async function main(): Promise<void> {
  * time ranges immediately, not just from emitter-start forward. Runs only
  * when metric emitters are provisioned (metricsEmit on).
  *
- * v2 (shared core, src/api/metricsBackfill.ts — same as the Settings UI):
- * per-metric idempotency (each family probes its own coverage and backfills
- * only its uncovered gap, so adding a NEW metric backfills ONLY that one),
- * newest→oldest, sampled histograms + big counter windows, zero-drop. See
+ * Shared core (src/api/metricsBackfill.ts → framework runMetricsBackfill —
+ * same as the Settings UI): per-metric idempotency (each family probes its
+ * own coverage and backfills only its uncovered gap, so adding a NEW metric
+ * backfills ONLY that one), newest→oldest, zero-drop. An emitter whose
+ * export drops EVERY event is a broken query, not a dense window: it is
+ * stopped and reported rather than split down to the minute. See
  * docs/sessions/backfill-v2-design.md.
  */
-async function maybeBackfillMetrics(): Promise<void> {
+async function maybeBackfillMetrics(http: HttpClient, oauth: OAuthConfig): Promise<void> {
   if (!getMetricsEmit()) return;
   const horizonSec = Number(process.env.METRICS_BACKFILL_HORIZON_SEC ?? 86_400); // 24h default
   const nowSec = Math.floor(Date.now() / 1000);
 
   console.log(`▶ Metrics backfill (horizon ${Math.round(horizonSec / 3600)}h, per-metric idempotent, reverse) …`);
-  const deps = await makeNodeBackfillDeps((m) => console.log(m));
-  const res = await runMetricsBackfill(deps, getMetricEmitters(), { horizonSec, nowSec });
+  const deps = makeNodeBackfillDeps(http, oauth, (m) => console.log(`  ${m}`));
+  const res = await runMetricsBackfill(getMetricEmitters(), deps, { horizonSec, nowSec });
 
+  let failed = 0;
+  let unreported = 0;
   for (const e of res.emitters) {
-    if (e.skipped) {
+    unreported += e.unreportedExports;
+    if (e.status === 'skipped') {
       console.log(`✓  · ${e.id}: already covered`);
+    } else if (e.status === 'failed') {
+      failed += 1;
+      console.error(`✗  ! ${e.id}: ${e.error ?? 'failed'}`);
     } else {
-      const cov = e.windowsCovered ? `, ${e.windowsCovered} window(s) already covered` : '';
-      const drop = e.totalDropped ? `, ${e.totalDropped} DROPPED` : '';
-      console.log(`✓  ~ ${e.id}: ${e.exportsRun} exports, ${e.totalOut} out${cov}${drop}`);
+      const drop = e.eventsDropped ? `, ${e.eventsDropped} DROPPED` : '';
+      const unrep = e.unreportedExports ? `, ${e.unreportedExports} export(s) returned no stats` : '';
+      console.log(`✓  ~ ${e.id}: ${e.exportsRun} exports, ${e.eventsOut} out${drop}${unrep}`);
     }
   }
-  const icon = res.totalDropped === 0 ? '✓' : '✗';
-  console.log(`${icon}  backfill: ${res.exportsRun} exports total, ${res.totalOut} events out, ${res.totalDropped} dropped`);
-  if (res.totalDropped > 0) {
+  const icon = res.eventsDropped === 0 && failed === 0 ? '✓' : '✗';
+  console.log(`${icon}  backfill: ${res.exportsRun} exports total, ${res.eventsOut} events out, ${res.eventsDropped} dropped`);
+  if (failed > 0) {
+    console.error(`▶ Backfill stopped ${failed} emitter(s) whose export dropped every event — fix the emitter query.`);
+  } else if (res.eventsDropped > 0) {
     console.error('▶ Backfill had dropped events in dense minutes — history is incomplete for those.');
+  }
+  if (unreported > 0) {
+    console.error(`▶ ${unreported} backfill export(s) returned no stats row — counted as clean but unverified.`);
   }
 }
 

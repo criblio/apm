@@ -1,6 +1,7 @@
 /**
  * Settings UI for the metrics backfill. Runs the SAME core
- * (src/api/metricsBackfill.ts) that `npm run deploy` runs — only the deps
+ * (framework runMetricsBackfill via src/api/metricsBackfill.ts) that
+ * `npm run deploy` runs — only the deps
  * (transport) differ (src/api/metricsBackfillBrowser.ts). Per-metric
  * idempotent: re-running only backfills families that aren't yet covered,
  * so it's safe to click repeatedly and adding a new metric backfills only
@@ -8,7 +9,12 @@
  */
 import { useCallback, useRef, useState } from 'react';
 import { Button } from '@capra/core';
-import { runMetricsBackfill, type BackfillResult } from '../api/metricsBackfill';
+import {
+  emitterFamilyLabel,
+  runMetricsBackfill,
+  type EmitterBackfillResult,
+  type MetricsBackfillResult,
+} from '../api/metricsBackfill';
 import { makeBrowserBackfillDeps } from '../api/metricsBackfillBrowser';
 import { getMetricEmitters } from '../api/provisionedSearches';
 import { getMetricsEmit } from '../api/metricsEmit';
@@ -27,10 +33,22 @@ const mono: React.CSSProperties = {
   marginTop: 'var(--cds-space-sm)',
 };
 
+/** Family label per emitter id (a percentile emitter covers one quantile). */
+const FAMILY_LABELS = new Map(getMetricEmitters().map((e) => [e.id, emitterFamilyLabel(e)]));
+
+function statusText(e: EmitterBackfillResult): string {
+  if (e.status === 'skipped') return 'already covered';
+  if (e.status === 'failed') return `FAILED — ${e.error ?? 'export dropped every event'}`;
+  if (e.status === 'aborted') return 'aborted';
+  if (e.eventsDropped > 0) return `${e.eventsDropped} DROPPED`;
+  if (e.unreportedExports > 0) return `backfilled (${e.unreportedExports} export(s) unverified: no stats)`;
+  return 'backfilled';
+}
+
 export default function MetricsBackfillPanel() {
   const [running, setRunning] = useState(false);
   const [lines, setLines] = useState<string[]>([]);
-  const [result, setResult] = useState<BackfillResult | null>(null);
+  const [result, setResult] = useState<MetricsBackfillResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const logRef = useRef<string[]>([]);
 
@@ -47,7 +65,7 @@ export default function MetricsBackfillPanel() {
     try {
       const deps = makeBrowserBackfillDeps(log);
       const nowSec = Math.floor(Date.now() / 1000);
-      const res = await runMetricsBackfill(deps, getMetricEmitters(), {
+      const res = await runMetricsBackfill(getMetricEmitters(), deps, {
         horizonSec: HORIZON_SEC,
         nowSec,
       });
@@ -94,10 +112,10 @@ export default function MetricsBackfillPanel() {
           <tbody>
             {result.emitters.map((e) => (
               <tr key={e.id}>
-                <td>{e.metricName}</td>
-                <td>{e.skipped ? 'already covered' : e.totalDropped > 0 ? `${e.totalDropped} DROPPED` : 'backfilled'}</td>
+                <td>{FAMILY_LABELS.get(e.id) ?? e.metricName}</td>
+                <td>{statusText(e)}</td>
                 <td>{e.exportsRun}</td>
-                <td>{e.totalOut.toLocaleString()}</td>
+                <td>{e.eventsOut.toLocaleString()}</td>
               </tr>
             ))}
           </tbody>

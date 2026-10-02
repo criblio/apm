@@ -10,7 +10,8 @@
  *   1. Structural pins on the KQL (shared state machine, computed is_bad,
  *      emission gate, latest-run read, no-traffic driver rows).
  *   2. A cycle-by-cycle walk through the evaluator's semantics, using the
- *      pure-TS `nextAlertState()` that mirrors the KQL case() plus a TS
+ *      framework's pure-TS `nextAlertState()` — generated from the same arm
+ *      table as the evaluator's `alertStateKql()` — plus a TS
  *      mirror of the arm's is_bad predicate, emission gate and prior-state
  *      read. The predicate strings the mirror encodes are pinned against
  *      the generated KQL so the two cannot drift silently.
@@ -18,14 +19,11 @@
 import { describe, expect, it } from 'vitest';
 import { setCurrentDataset } from '@criblio/app-utils/dataset';
 import * as Q from '../queries';
-import {
-  CLEAR_AFTER,
-  FIRE_AFTER,
-  nextAlertState,
-  type AlertStatus,
-} from '../alertStateMachine';
+import { nextAlertState, type AlertStatus } from '@criblio/app-utils/alert-state';
 
 setCurrentDataset('otel');
+
+const { fireAfter: FIRE_AFTER, clearAfter: CLEAR_AFTER } = Q.ALERT_DEBOUNCE;
 
 const q = Q.alertEvaluator();
 const opArm = q.slice(
@@ -124,16 +122,16 @@ function opCycle(sample: OpSample, prior: CommittedRow | undefined): CommittedRo
   const is_bad = opIsBad(sample);
   const new_bad = is_bad ? (prior?.consecutive_bad ?? 0) + 1 : 0;
   const new_good = is_bad ? 0 : (prior?.consecutive_good ?? 0) + 1;
-  const out = nextAlertState({ prev_status: prevStatus, is_bad, new_bad, new_good });
+  const out = nextAlertState({ prevStatus, isBad: is_bad, newBad: new_bad, newGood: new_good }, Q.ALERT_DEBOUNCE);
   // Emission gate: `where is_bad or prev_status != "ok"`.
   if (!(is_bad || prevStatus !== 'ok')) return null;
   return {
-    alert_status: out.alert_status,
+    alert_status: out.status,
     consecutive_bad: new_bad,
     consecutive_good: new_good,
-    fire_count: (prior?.fire_count ?? 0) + out.fire_count_delta,
+    fire_count: (prior?.fire_count ?? 0) + out.fireCountDelta,
     is_bad,
-    transitioned_to: out.transitioned_to,
+    transitioned_to: out.transitionedTo,
   };
 }
 

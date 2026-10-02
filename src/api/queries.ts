@@ -8,6 +8,7 @@
  * Spans are identified by isnotnull(end_time_unix_nano).
  */
 import { getCurrentDataset } from '@criblio/app-utils/dataset';
+import { alertStateKql, type AlertDebounce } from '@criblio/app-utils/alert-state';
 import { streamFilterKqlClause, streamFilterSpanKqlClause } from './streamFilter';
 import { getLowVolumeMode } from './lowVolumeMode';
 import {
@@ -568,40 +569,36 @@ function priorAlertStateJoin(): string {
 }
 
 /**
+ * APM's debounce tunables: the first bad evaluation enters pending, the
+ * second fires; three consecutive good evaluations clear resolving → ok.
+ * Explicit rather than the framework default so a framework change cannot
+ * silently retune APM's alerts.
+ */
+export const ALERT_DEBOUNCE: Readonly<AlertDebounce> = { fireAfter: 2, clearAfter: 3 };
+
+/**
  * The debounce state machine shared by every evaluator arm. Expects
  * `is_bad` and the `persisted_*` columns from priorAlertStateJoin(); emits
  * alert_status, consecutive_bad/good, fire_count and transitioned_to.
- * Mirrors `nextAlertState()` in alertStateMachine.ts. Both arms MUST use
- * this one builder: the per-operation latency arm once carried a bad-only
- * copy and could never walk firing → resolving → ok.
+ * The state step itself is the framework's `alertStateKql()`
+ * (`@criblio/app-utils/alert-state`), generated from the same arm table as
+ * its pure-TS `nextAlertState()` — so the UI/tests and the evaluator cannot
+ * drift. APM adds the retry key and the null-defaulting of the persisted
+ * columns in front of it; the framework step then also maps an EMPTY
+ * prev_status to "ok" (`isnotempty`), as `nextAlertState` does — evaluation
+ * rows always carry alert_status, so on live data the two are identical
+ * (verified row-for-row on staging, 2026-10-02). Both arms MUST use this one builder: the
+ * per-operation latency arm once carried a bad-only copy and could never
+ * walk firing → resolving → ok.
  */
-function alertStateMachineKql(indent: string, fireAfter: number, clearAfter: number): string {
+function alertStateMachineKql(indent: string): string {
   const lines = [
     `| extend is_retry=iff(isnotnull(persisted_evaluation_id) and persisted_evaluation_id == evaluation_id, true, false),`,
     `         prev_status=iff(isnotnull(persisted_status), persisted_status, "ok"),`,
     `         prev_bad=iff(isnotnull(persisted_bad), persisted_bad, 0),`,
     `         prev_good=iff(isnotnull(persisted_good), persisted_good, 0),`,
     `         prev_fire_count=iff(isnotnull(persisted_fire_count), persisted_fire_count, 0)`,
-    `| extend new_bad=iff(is_bad, prev_bad + 1, 0),`,
-    `         new_good=iff(is_bad, 0, prev_good + 1)`,
-    `| extend alert_status=case(`,
-    `           is_bad and prev_status == "ok", "pending",`,
-    `           is_bad and prev_status == "pending" and new_bad >= ${fireAfter}, "firing",`,
-    `           is_bad and prev_status == "pending", "pending",`,
-    `           is_bad and prev_status == "firing", "firing",`,
-    `           is_bad and prev_status == "resolving", "firing",`,
-    `           not(is_bad) and prev_status == "pending", "ok",`,
-    `           not(is_bad) and prev_status == "firing", "resolving",`,
-    `           not(is_bad) and prev_status == "resolving" and new_good >= ${clearAfter}, "ok",`,
-    `           not(is_bad) and prev_status == "resolving", "resolving",`,
-    `           "ok"),`,
-    `         consecutive_bad=new_bad,`,
-    `         consecutive_good=new_good,`,
-    `         fire_count=iff(is_bad and prev_status == "pending" and new_bad >= ${fireAfter}, prev_fire_count + 1, prev_fire_count),`,
-    `         transitioned_to=case(`,
-    `           is_bad and prev_status == "pending" and new_bad >= ${fireAfter}, "firing",`,
-    `           not(is_bad) and prev_status == "resolving" and new_good >= ${clearAfter}, "resolved",`,
-    `           "")`,
+    ...alertStateKql(ALERT_DEBOUNCE).split('\n'),
   ];
   return lines.map((l, i) => (i === 0 ? l : indent + l)).join('\n');
 }
@@ -618,8 +615,6 @@ function alertStateMachineKql(indent: string, fireAfter: number, clearAfter: num
  * available.
  */
 export function alertEvaluator(): string {
-  const FIRE_AFTER = 2;
-  const CLEAR_AFTER = 3;
   // Low-volume mode (P1.2): when on, inject a fourth detection
   // arm matching the older chaos-eval thresholds. Read at query-
   // build time so toggling requires a re-provision (the alert
@@ -802,7 +797,7 @@ export function alertEvaluator(): string {
     | extend alert_id=strcat("auto:health:", svc),
              evaluation_id=strcat("criblapm-eval:", tostring(bin(now(), 5m)))
     ${priorAlertStateJoin()}
-    ${alertStateMachineKql('    ', FIRE_AFTER, CLEAR_AFTER)}
+    ${alertStateMachineKql('    ')}
     | project svc, curr_requests, curr_errors, curr_error_rate,
               prev_requests, prev_errors, prev_error_rate,
               alert_id, evaluation_id, is_retry,
@@ -889,7 +884,7 @@ export function alertEvaluator(): string {
                  curr_errors=0.0, curr_error_rate=0.0,
                  prev_requests=prev_op_requests, prev_errors=0.0, prev_error_rate=0.0
         ${priorAlertStateJoin()}
-        ${alertStateMachineKql('        ', FIRE_AFTER, CLEAR_AFTER)}
+        ${alertStateMachineKql('        ')}
         // Emission gate (see cardinality note above). prev_status != "ok"
         // keeps the good rows that drive pending → ok and the
         // firing → resolving → ok walk; the row that resolves the alert

@@ -840,20 +840,28 @@ export function getMetricEmitters(): BackfillEmitter[] {
   // Duration histograms are no longer emitted/read — RED latency comes from
   // the precomputed percentile gauges below.
   return [
-    { id: 'criblapm__metric_requests', metricName: METRIC_REQUESTS_TOTAL, kind: 'counter', backfillQuery: Q.metricRequestsExport() },
-    { id: 'criblapm__metric_edge_calls', metricName: METRIC_EDGE_CALLS_TOTAL, kind: 'counter', backfillQuery: Q.metricEdgeCallsExport() },
-    { id: 'criblapm__metric_messaging', metricName: METRIC_MESSAGING_TOTAL, kind: 'counter', backfillQuery: Q.metricMessagingExport() },
-    { id: 'criblapm__metric_status_class', metricName: METRIC_STATUS_CLASS_TOTAL, kind: 'counter', backfillQuery: Q.metricStatusClassExport() },
+    { id: 'criblapm__metric_requests', metricName: METRIC_REQUESTS_TOTAL, kind: 'counter', query: Q.metricRequestsExport() },
+    { id: 'criblapm__metric_edge_calls', metricName: METRIC_EDGE_CALLS_TOTAL, kind: 'counter', query: Q.metricEdgeCallsExport() },
+    { id: 'criblapm__metric_messaging', metricName: METRIC_MESSAGING_TOTAL, kind: 'counter', query: Q.metricMessagingExport() },
+    { id: 'criblapm__metric_status_class', metricName: METRIC_STATUS_CLASS_TOTAL, kind: 'counter', query: Q.metricStatusClassExport() },
     // Latency-percentile gauges: aggregated (percentile-per-minute) emit, so
-    // they backfill like counters (big windows). The coverage probe uses
-    // `count()` — a gauge, not a histogram, so the counter path is correct.
+    // they backfill like counters (big windows) and probe with `count`, not
+    // `histogram_quantile`. Each quantile is its own export AND its own
+    // coverage: the series share one metric name and differ only by the
+    // `quantile` label, so a plain `count(metric)` would read a covered p95
+    // as covering an empty p99. `coverageSplit` probes
+    // `count by (quantile)` and takes this emitter's quantile alone.
     ...LATENCY_QUANTILES.flatMap(({ q, label }) => [
-      { id: `criblapm__metric_req_lat_${label}`, metricName: `${METRIC_REQUEST_LATENCY_MS}{quantile="${label}"}`, kind: 'counter' as const, backfillQuery: Q.metricLatencyPercentileExport(q) },
-      { id: `criblapm__metric_op_lat_${label}`, metricName: `${METRIC_OP_LATENCY_MS}{quantile="${label}"}`, kind: 'counter' as const, backfillQuery: Q.metricLatencyPercentileExport(q, { byOperation: true }) },
+      { id: `criblapm__metric_req_lat_${label}`, metricName: METRIC_REQUEST_LATENCY_MS, coverageSplit: quantileSplit(label), kind: 'counter' as const, query: Q.metricLatencyPercentileExport(q) },
+      { id: `criblapm__metric_op_lat_${label}`, metricName: METRIC_OP_LATENCY_MS, coverageSplit: quantileSplit(label), kind: 'counter' as const, query: Q.metricLatencyPercentileExport(q, { byOperation: true }) },
     ]),
-    { id: 'criblapm__metric_edge_lat_p95', metricName: `${METRIC_EDGE_LATENCY_MS}{quantile="p95"}`, kind: 'counter', backfillQuery: Q.metricEdgeLatencyP95Export() },
-    { id: 'criblapm__metric_msg_lat_p95', metricName: `${METRIC_MSG_LATENCY_MS}{quantile="p95"}`, kind: 'counter', backfillQuery: Q.metricMessagingLatencyP95Export() },
+    { id: 'criblapm__metric_edge_lat_p95', metricName: METRIC_EDGE_LATENCY_MS, coverageSplit: quantileSplit('p95'), kind: 'counter', query: Q.metricEdgeLatencyP95Export() },
+    { id: 'criblapm__metric_msg_lat_p95', metricName: METRIC_MSG_LATENCY_MS, coverageSplit: quantileSplit('p95'), kind: 'counter', query: Q.metricMessagingLatencyP95Export() },
   ];
+}
+
+function quantileSplit(label: string): { label: string; values: readonly string[] } {
+  return { label: 'quantile', values: [label] };
 }
 
 /** Convenience: return just the IDs, in the order the plan
