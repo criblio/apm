@@ -31,6 +31,7 @@
 import type { ProvisionedSearch, SeedLookup } from '@criblio/app-utils/provisioner';
 import * as Q from './queries';
 import { getSearchCadenceCron, getSearchCadence } from '@criblio/app-utils/cadence';
+import { offsetCron } from './cronOffset';
 import { getMetricsEmit } from './metricsEmit';
 import { getServerInvestigations } from './serverInvestigations';
 import type { BackfillEmitter } from './metricsBackfill';
@@ -328,7 +329,7 @@ export function getProvisioningPlan(): ProvisionedSearch[] {
   } as const;
   // Alert evaluator runs 1 minute after the panel searches so their
   // $vt_results and lookup exports are available.
-  const evalCronSchedule = cronSchedule.replace(/^\*\/(\d+)/, (_m: string, n: string) => `1-59/${n}`).replace(/^\* /, '1 ');
+  const evalCronSchedule = offsetCron(cronSchedule, 1);
   const evalCadence = {
     enabled: true,
     cronSchedule: evalCronSchedule,
@@ -337,13 +338,19 @@ export function getProvisioningPlan(): ProvisionedSearch[] {
   } as const;
   // Alert-notify runs 2 minutes after the panels (1 after the
   // evaluator) so the firing events it selects are already committed.
-  const notifyCronSchedule = cronSchedule.replace(/^\*\/(\d+)/, (_m: string, n: string) => `2-59/${n}`).replace(/^\* /, '2 ');
+  const notifyCronSchedule = offsetCron(cronSchedule, 2);
   // Incident pipeline (P4.4): grouper 3 min after the panels (2 after
   // the evaluator, so firing transitions are committed); the state
   // fold 1 min after the grouper; the lookup export rides the base
   // panel cadence, which fires 1 min after the fold.
-  const incidentGrouperCron = cronSchedule.replace(/^\*\/(\d+)/, (_m: string, n: string) => `3-59/${n}`).replace(/^\* /, '3 ');
-  const incidentFoldCron = cronSchedule.replace(/^\*\/(\d+)/, (_m: string, n: string) => `4-59/${n}`).replace(/^\* /, '4 ');
+  //
+  // offsetCron wraps offsets modulo the cadence: at 5m/10m every
+  // dependent gets its own minute (+1..+4). At 2m the five stages
+  // share two phases (grouper with the evaluator, notify and fold with
+  // the panels), and at 1m everything runs every minute — each run
+  // reads its producer's previous run, which is already committed.
+  const incidentGrouperCron = offsetCron(cronSchedule, 3);
+  const incidentFoldCron = offsetCron(cronSchedule, 4);
   const hourly = {
     enabled: true,
     cronSchedule: '0 * * * *',
