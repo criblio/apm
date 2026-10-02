@@ -1,3 +1,6 @@
+// Must stay the first import: sets the dataset default before any module
+// that builds KQL at import time is evaluated (see datasetDefault.ts).
+import './datasetDefault';
 import { BrowserRouter, Routes, Route, Navigate, useHref, useNavigate } from 'react-router-dom';
 import { RouterProvider as AriaRouterProvider } from '@capra/core';
 import type { ReactNode } from 'react';
@@ -43,9 +46,9 @@ function CapraRouterBridge({ children }: { children: ReactNode }) {
 }
 
 /**
- * The framework provider puts `otel` in the dataset store during its own
- * render, before any child renders or runs an effect (a query built
- * earlier would read `dataset=""`). On mount it makes one read of
+ * `otel` is already in the dataset store from `./datasetDefault` (module
+ * scope); `defaultDataset` is the framework's own render-time guard for the
+ * same thing and never overwrites it. On mount the provider makes one read of
  * `settings/app` through `loadDatasetAndApplySettings`, which applies the
  * saved flags (stream filter, cadence, low-volume, metrics, server
  * investigations) and returns the dataset for the provider to set. A failed
