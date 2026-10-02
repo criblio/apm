@@ -1,5 +1,4 @@
-import { newQueryGeneration, captureQueryGeneration } from '../api/queryGeneration';
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import TimeRangePicker from '../components/TimeRangePicker';
 import { binSecondsFor, previousWindow, relativeTimeMs } from '@criblio/app-utils/time';
@@ -9,6 +8,7 @@ import TraceBriefList from '../components/TraceBriefList';
 import StatusBanner from '../components/StatusBanner';
 import ResilienceBoundary from '../components/ResilienceBoundary';
 import { PartialFailureBanner } from '@criblio/app-utils/partial-failure-banner';
+import { usePageLoad } from '@criblio/app-utils/page-load';
 import MetricsCard, { type MetricsCardRow } from '../components/MetricsCard';
 import SpotlightSection from '../components/SpotlightSection';
 
@@ -265,7 +265,6 @@ export default function ServiceDetailPage() {
   const [loadingInstances, setLoadingInstances] = useState(true);
   const [loadingDeps, setLoadingDeps] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [partialFailures, setPartialFailures] = useState<Record<string, string>>({});
   const [retryNonce, setRetryNonce] = useState(0);
   const [notFound, setNotFound] = useState(false);
   const [alertStatus, setAlertStatus] = useState<'ok' | 'pending' | 'firing' | 'resolving'>('ok');
@@ -306,25 +305,14 @@ export default function ServiceDetailPage() {
     return () => obs.disconnect();
   }, [metricCardsVisible]);
 
-  const recordPartialFailure = useCallback((panel: string, value: unknown) => {
-    setPartialFailures((cur) => ({
-      ...cur,
-      [panel]: value instanceof Error ? value.message : String(value),
-    }));
-  }, []);
-
-  const clearPartialFailure = useCallback((panel: string) => {
-    setPartialFailures((cur) => {
-      if (!(panel in cur)) return cur;
-      const next = { ...cur };
-      delete next[panel];
-      return next;
-    });
-  }, []);
-
-  const fetchAll = useCallback(async () => {
-    newQueryGeneration(); // cancel the prior page/fetch's in-flight reads
-    const isCurrent = captureQueryGeneration(); // guard stale async setState
+  // The page's one load (framework `usePageLoad`): a new query generation
+  // per run (cancelling the previous run's in-flight reads), superseded
+  // results dropped, aborts never reported. It owns the panels below and
+  // settles once every one of them has, so its failure keys are replaced
+  // only by this run's outcomes. `retryNonce` is a dep so the banner's
+  // Retry re-runs it together with the sibling effects further down,
+  // which report their own panels' failures through `report`.
+  const { failures: partialFailures, report, token } = usePageLoad(async ({ isCurrent, fail, ok }) => {
     setError(null);
     setNotFound(false);
     setLoadingSummary(true);
@@ -386,9 +374,9 @@ export default function ServiceDetailPage() {
             ? { ...prevS, p50Us: latest.p50Us, p95Us: latest.p95Us, p99Us: latest.p99Us }
             : prevS));
         }
-        clearPartialFailure('Service time series');
+        ok('Service time series');
       })
-      .catch((err: unknown) => { if (isCurrent()) recordPartialFailure('Service time series', err); })
+      .catch((err: unknown) => { fail('Service time series', err); })
       .finally(() => { if (isCurrent()) { setLoadingBuckets(false); setLoadingLatency(false); } });
 
     // ── PHASE 1.5: secondary metric reads, deferred behind the hero ──
@@ -399,45 +387,47 @@ export default function ServiceDetailPage() {
     // delta, and dependency edges until the hero reads resolve so the
     // charts' quantiles aren't contended. These panels render below /
     // around the RED row, so filling slightly later is invisible.
-    void Promise.allSettled([pSummary, pBuckets]).then(() => {
+    const pSecondary = Promise.allSettled([pSummary, pBuckets]).then(async () => {
       if (!isCurrent()) return;
 
       // An unparseable ?range= has no defined prior window: show no
       // delta chips rather than compare against a guessed 1h (old helper).
+      let pPrev: Promise<void> = Promise.resolve();
       if (!prev) {
         setPrevSummary(null);
-        clearPartialFailure('Prior-window comparison');
+        ok('Prior-window comparison');
       } else {
-        listServiceSummaries(prev.earliest, prev.latest, serviceName)
+        pPrev = listServiceSummaries(prev.earliest, prev.latest, serviceName)
           .then((all) => {
             if (!isCurrent()) return;
             setPrevSummary(all.find((x) => x.service === serviceName) ?? null);
-            clearPartialFailure('Prior-window comparison');
+            ok('Prior-window comparison');
           })
           .catch((err: unknown) => {
             if (!isCurrent()) return;
             setPrevSummary(null);
-            recordPartialFailure('Prior-window comparison', err);
+            fail('Prior-window comparison', err);
           });
       }
 
-      listOperationSummaries(serviceName, range, 'now')
+      const pOps = listOperationSummaries(serviceName, range, 'now')
         .then((ops) => {
           if (!isCurrent()) return;
           setOperations(ops);
-          clearPartialFailure('Operation summaries');
+          ok('Operation summaries');
         })
-        .catch((err: unknown) => { if (isCurrent()) recordPartialFailure('Operation summaries', err); })
+        .catch((err: unknown) => { fail('Operation summaries', err); })
         .finally(() => { if (isCurrent()) setLoadingOps(false); });
 
-      getDependencies(range, 'now')
+      const pDeps = getDependencies(range, 'now')
         .then((e) => {
           if (!isCurrent()) return;
           setEdges(e);
-          clearPartialFailure('Service dependencies');
+          ok('Service dependencies');
         })
-        .catch((err: unknown) => { if (isCurrent()) recordPartialFailure('Service dependencies', err); })
+        .catch((err: unknown) => { fail('Service dependencies', err); })
         .finally(() => { if (isCurrent()) setLoadingDeps(false); });
+      await Promise.allSettled([pPrev, pOps, pDeps]);
     });
 
     // ── PHASE 2: heavy live-KQL panels, deferred ──────────────────
@@ -453,16 +443,16 @@ export default function ServiceDetailPage() {
     // Status-code mix breaks the flat error rate apart into 503
     // (capacity) vs 504 (upstream timeout) vs 500 (upstream bug). See
     // docs/sessions/2026-05-20-smooth-climb-misdiagnosis.md.
-    getServiceStatusCodeMix(binSeconds, serviceName, range, 'now')
+    const pStatusMix = getServiceStatusCodeMix(binSeconds, serviceName, range, 'now')
       .then((rows) => {
         if (!isCurrent()) return;
         setStatusMix(rows);
-        clearPartialFailure('HTTP status mix');
+        ok('HTTP status mix');
       })
       .catch((err: unknown) => {
         if (!isCurrent()) return;
         setStatusMix([]);
-        recordPartialFailure('HTTP status mix', err);
+        fail('HTTP status mix', err);
       })
       .finally(() => { if (isCurrent()) setLoadingStatusMix(false); });
 
@@ -471,7 +461,9 @@ export default function ServiceDetailPage() {
     // scroll-into-view effect (see below) so they don't run on load — they
     // were the bulk of the ~13s settle once the latency reads moved to
     // gauges.
-  }, [clearPartialFailure, range, recordPartialFailure, serviceName]);
+
+    await Promise.allSettled([pBuckets, pSecondary, pStatusMix]);
+  }, [serviceName, range, retryNonce]);
 
   // LAZY: the below-the-fold KQL panels fire only once their section
   // scrolls into view. Keyed on serviceName/range/retryNonce so a range
@@ -492,25 +484,24 @@ export default function ServiceDetailPage() {
   useEffect(() => {
     if (!deferredVisible || !serviceName) return;
     let cancelled = false;
+    // Re-runs with every page dep, so the deps generation can drop a
+    // report that lands after a range/service change or Retry.
+    const t = token();
     setLoadingErrors(true);
     setLoadingInstances(true);
     listPodUptime(serviceName, '-30m', 'now')
-      .then((rows) => { if (!cancelled) { setPodUptimes(rows); clearPartialFailure('Pod uptime'); } })
-      .catch((err: unknown) => { if (!cancelled) recordPartialFailure('Pod uptime', err); });
+      .then((rows) => { if (!cancelled) { setPodUptimes(rows); report('Pod uptime', null, t); } })
+      .catch((err: unknown) => { if (!cancelled) report('Pod uptime', err, t); });
     listRecentErrorTraces(serviceName, range, 'now')
-      .then((et) => { if (!cancelled) { setErrorTraces(et); clearPartialFailure('Recent error traces'); } })
-      .catch((err: unknown) => { if (!cancelled) recordPartialFailure('Recent error traces', err); })
+      .then((et) => { if (!cancelled) { setErrorTraces(et); report('Recent error traces', null, t); } })
+      .catch((err: unknown) => { if (!cancelled) report('Recent error traces', err, t); })
       .finally(() => { if (!cancelled) setLoadingErrors(false); });
     listServiceInstances(serviceName, range, 'now')
-      .then((inst) => { if (!cancelled) { setInstances(inst); clearPartialFailure('Service instances'); } })
-      .catch((err: unknown) => { if (!cancelled) recordPartialFailure('Service instances', err); })
+      .then((inst) => { if (!cancelled) { setInstances(inst); report('Service instances', null, t); } })
+      .catch((err: unknown) => { if (!cancelled) report('Service instances', err, t); })
       .finally(() => { if (!cancelled) setLoadingInstances(false); });
     return () => { cancelled = true; };
-  }, [deferredVisible, serviceName, range, retryNonce, clearPartialFailure, recordPartialFailure]);
-
-  useEffect(() => {
-    void fetchAll();
-  }, [fetchAll, retryNonce]);
+  }, [deferredVisible, serviceName, range, retryNonce, report, token]);
 
   // Alert queries — independent of the time range picker since they
   // use fixed windows. Polled every 30s so the badge picks up a
@@ -521,6 +512,9 @@ export default function ServiceDetailPage() {
   useEffect(() => {
     if (!serviceName) return;
     const svcLiteral = kqlStringLiteral(serviceName);
+    // No deps token: this effect does not re-run on a range change, so a
+    // token captured here would go stale and drop every later poll's
+    // report. Its own `cancelled` flag guards it instead.
     let cancelled = false;
 
     const refreshAlertStatus = () => {
@@ -534,10 +528,10 @@ export default function ServiceDetailPage() {
           if (['ok', 'pending', 'firing', 'resolving'].includes(status)) {
             setAlertStatus(status as typeof alertStatus);
           }
-          clearPartialFailure('Alert status');
+          report('Alert status', null);
         })
         .catch((err: unknown) => {
-          if (!cancelled) recordPartialFailure('Alert status', err);
+          if (!cancelled) report('Alert status', err);
         });
     };
 
@@ -556,10 +550,10 @@ export default function ServiceDetailPage() {
               ? `Error rate ${(Number(r.curr_error_rate) * 100).toFixed(1)}% (was ${(Number(r.prev_error_rate ?? 0) * 100).toFixed(1)}%)`
               : '',
           })));
-          clearPartialFailure('Alert history');
+          report('Alert history', null);
         })
         .catch((err: unknown) => {
-          if (!cancelled) recordPartialFailure('Alert history', err);
+          if (!cancelled) report('Alert history', err);
         });
     };
 
@@ -573,7 +567,7 @@ export default function ServiceDetailPage() {
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [clearPartialFailure, recordPartialFailure, retryNonce, serviceName]);
+  }, [report, retryNonce, serviceName]);
 
   // Metric cards fire TWO queries in parallel: the catalog (which
   // tells us which rows to render) and a single batched series
@@ -588,17 +582,18 @@ export default function ServiceDetailPage() {
     if (!serviceName) return;
     if (!metricCardsVisible) return; // lazy: only fetch once cards scroll in
     let cancelled = false;
+    const t = token(); // re-runs with every page dep (see the deferred panels)
     setServiceMetricSet(undefined);
     setCardSeriesByMetric(undefined);
     const binSeconds = binSecondsFor(range);
     Promise.all([
       listServiceMetricNames(serviceName, range, 'now')
         .then((list) => {
-          clearPartialFailure('Metric catalog');
+          report('Metric catalog', null, t);
           return list;
         })
         .catch((err: unknown) => {
-          recordPartialFailure('Metric catalog', err);
+          report('Metric catalog', err, t);
           return [] as string[];
         }),
       getServiceMetricsBatch(
@@ -609,11 +604,11 @@ export default function ServiceDetailPage() {
         'now',
       )
         .then((map) => {
-          clearPartialFailure('Metric card series');
+          report('Metric card series', null, t);
           return map;
         })
         .catch((err: unknown) => {
-          recordPartialFailure('Metric card series', err);
+          report('Metric card series', err, t);
           return new Map<string, Array<{ t: number; v: number }>>();
         }),
     ]).then(([list, map]) => {
@@ -624,7 +619,7 @@ export default function ServiceDetailPage() {
     return () => {
       cancelled = true;
     };
-  }, [clearPartialFailure, metricCardsVisible, range, recordPartialFailure, retryNonce, serviceName]);
+  }, [metricCardsVisible, range, report, retryNonce, serviceName, token]);
 
   const color = entityColor(serviceName);
   // Rate normalization keeps the old 1h assumption for an unparseable

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Button, Card, Menu, Tag, type TagColor } from '@capra/core';
 import { ChevronDown } from '@capra/icons';
@@ -7,7 +7,7 @@ import AlertTimeline from '../components/AlertTimeline';
 import InvestigateButton from '../components/InvestigateButton';
 import { buildAlertSeed } from '../api/agentContext';
 import { runQuery } from '../api/cribl';
-import { newQueryGeneration, captureQueryGeneration } from '../api/queryGeneration';
+import { usePageLoad } from '@criblio/app-utils/page-load';
 import * as Q from '../api/queries';
 import { entityColor } from '@criblio/app-utils/viz';
 import { latestRunRows } from '@criblio/app-utils/vt-results';
@@ -85,6 +85,9 @@ function fmtDuration(ms: number): string {
   return rm > 0 ? `${hr}h ${rm}m` : `${hr}h`;
 }
 
+/** The page-load failure key for the primary Active-alerts read. */
+const ALERTS_ERROR_KEY = 'Active alerts';
+
 const HISTORY_RANGES = [
   { label: 'Last 1 hour', value: '-1h' },
   { label: 'Last 6 hours', value: '-6h' },
@@ -100,104 +103,100 @@ export default function AlertsPage() {
   const [history, setHistory] = useState<AlertEvent[]>([]);
   const [historyRange, setHistoryRange] = useState('-24h');
   const [timelineSelection, setTimelineSelection] = useState<[number, number] | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [investigations, setInvestigations] = useState<InvestigationEventRow[]>([]);
   const serverInvestigations = useServerInvestigations();
 
-  const hasData = useRef(false);
-  const fetchAlerts = useCallback(async (silent = false) => {
-    newQueryGeneration(); // cancel prior page/poll's in-flight KQL on nav/refresh
-    const isCurrent = captureQueryGeneration();
-    if (!silent) { setLoading(true); setError(null); }
-    try {
-      // PRIMARY: the Active-alerts table. Paint this first.
-      const alertRows = await runQuery(
-        'dataset="$vt_results" | where jobName == "criblapm__home_alerts"',
-        '-1h', 'now', 500,
-      );
+  // One load per page through the framework lifecycle: it starts a new
+  // query generation (cancelling the previous load's or poll's in-flight
+  // KQL), drops superseded results, never reports an abort, and shows
+  // `refreshing` only for a non-silent run. The load settles when the
+  // PRIMARY read does, which is when the Refresh button stops spinning;
+  // the secondary reads below keep running, guarded by `isCurrent`.
+  //
+  // `silentFailures: 'keep'`: the 30s poll runs silently and can neither
+  // show the error banner nor clear it — only mount, a deps change or
+  // Refresh changes it, as before.
+  const { phase, failures, retry, refresh } = usePageLoad(async ({ isCurrent }) => {
+    // PRIMARY: the Active-alerts table. Paint this first. A failure
+    // rejects the load and becomes the page error (ALERTS_ERROR_KEY).
+    const alertRows = await runQuery(
+      'dataset="$vt_results" | where jobName == "criblapm__home_alerts"',
+      '-1h', 'now', 500,
+    );
+    if (!isCurrent()) return;
+    // Latest run only — $vt_results keeps two runs, and a service
+    // that flapped between them would render twice (stale status).
+    setAlerts(parseAlertRows(latestRunRows(alertRows)));
+
+    // Incidents — the drill-in layer above alerts (P4.4). One cached
+    // $vt_results read; best-effort, never blocks the alert tables.
+    listCachedIncidents()
+      .then((incs) => { if (isCurrent()) setIncidents(incs ?? []); })
+      .catch(() => { /* incidents are best-effort */ });
+
+    // SECONDARY: alert history (timeline + incidents). Read the panel
+    // cache (`criblapm__alert_history`, -7d) for windows it covers — no
+    // live search job on every load (P4.5) — and go live only for -30d
+    // or before the cache first populates.
+    const cutoff = historyCutoffMs(historyRange);
+    const cacheable = cutoff > 0 && Date.now() - cutoff <= CACHED_HISTORY_WINDOW_MS;
+    const applyHistory = (rows: Record<string, unknown>[]) => {
       if (!isCurrent()) return;
-      // Latest run only — $vt_results keeps two runs, and a service
-      // that flapped between them would render twice (stale status).
-      setAlerts(parseAlertRows(latestRunRows(alertRows)));
-      hasData.current = true;
-      if (!silent) setLoading(false);
-
-      // Incidents — the drill-in layer above alerts (P4.4). One cached
-      // $vt_results read; best-effort, never blocks the alert tables.
-      listCachedIncidents()
-        .then((incs) => { if (isCurrent()) setIncidents(incs ?? []); })
-        .catch(() => { /* incidents are best-effort */ });
-
-      // SECONDARY: alert history (timeline + incidents). Read the panel
-      // cache (`criblapm__alert_history`, -7d) for windows it covers — no
-      // live search job on every load (P4.5) — and go live only for -30d
-      // or before the cache first populates.
-      const cutoff = historyCutoffMs(historyRange);
-      const cacheable = cutoff > 0 && Date.now() - cutoff <= CACHED_HISTORY_WINDOW_MS;
-      const applyHistory = (rows: Record<string, unknown>[]) => {
-        if (!isCurrent()) return;
-        setHistory(rows.map(mapHistoryRow).filter((e) => e.time >= cutoff));
-      };
-      const liveHistory = () =>
-        runQuery(Q.alertHistory(500, undefined, 'asc'), historyRange, 'now', 500)
-          .then(applyHistory)
-          .catch(() => { /* history is best-effort; primary already shown */ });
-      if (cacheable) {
-        readCachedAlertHistory()
-          .then((cached) => {
-            if (!isCurrent()) return;
-            if (cached) applyHistory(cached);
-            else void liveHistory();
-          })
-          .catch(() => void liveHistory());
-      } else {
-        void liveHistory();
-      }
-
-      // TERTIARY (flag-gated): read the server's session index directly.
-      // GoatFarm owns session lifecycle and does not emit APM-specific
-      // dataset rows; the v1 summary contract has all fields badges need.
-      if (serverInvestigations) {
-        listRecentInvestigations(500)
-          .then((rows) => {
-            if (!isCurrent()) return;
-            const eventType: Record<string, string> = {
-              queued: 'started',
-              running: 'started',
-              concluded: 'investigated',
-              failed: 'investigation_failed',
-              cancelled: 'investigation_failed',
-            };
-            setInvestigations(rows.map((r) => ({
-              timeMs: r.concludedAt ?? r.startedAt ?? r.createdAt,
-              eventType: eventType[r.status] ?? 'started',
-              alertId: r.alertId,
-              investigationId: r.id,
-              svc: r.incidentKey.startsWith('apm:')
-                ? (r.incidentKey.split(':')[1] ?? '')
-                : (r.incidentKey.split(':')[0] ?? ''),
-              conclusion: '',
-            })));
-          })
-          .catch(() => { /* badges are best-effort */ });
-      } else {
-        setInvestigations([]);
-      }
-    } catch (e) {
-      if (!isCurrent()) return;
-      if (!silent) { setError(e instanceof Error ? e.message : String(e)); setLoading(false); }
+      setHistory(rows.map(mapHistoryRow).filter((e) => e.time >= cutoff));
+    };
+    const liveHistory = () =>
+      runQuery(Q.alertHistory(500, undefined, 'asc'), historyRange, 'now', 500)
+        .then(applyHistory)
+        .catch(() => { /* history is best-effort; primary already shown */ });
+    if (cacheable) {
+      readCachedAlertHistory()
+        .then((cached) => {
+          if (!isCurrent()) return;
+          if (cached) applyHistory(cached);
+          else void liveHistory();
+        })
+        .catch(() => void liveHistory());
+    } else {
+      void liveHistory();
     }
-  }, [historyRange, serverInvestigations]);
 
-  useEffect(() => { void fetchAlerts(); }, [fetchAlerts]);
+    // TERTIARY (flag-gated): read the server's session index directly.
+    // GoatFarm owns session lifecycle and does not emit APM-specific
+    // dataset rows; the v1 summary contract has all fields badges need.
+    if (serverInvestigations) {
+      listRecentInvestigations(500)
+        .then((rows) => {
+          if (!isCurrent()) return;
+          const eventType: Record<string, string> = {
+            queued: 'started',
+            running: 'started',
+            concluded: 'investigated',
+            failed: 'investigation_failed',
+            cancelled: 'investigation_failed',
+          };
+          setInvestigations(rows.map((r) => ({
+            timeMs: r.concludedAt ?? r.startedAt ?? r.createdAt,
+            eventType: eventType[r.status] ?? 'started',
+            alertId: r.alertId,
+            investigationId: r.id,
+            svc: r.incidentKey.startsWith('apm:')
+              ? (r.incidentKey.split(':')[1] ?? '')
+              : (r.incidentKey.split(':')[0] ?? ''),
+            conclusion: '',
+          })));
+        })
+        .catch(() => { /* badges are best-effort */ });
+    } else {
+      setInvestigations([]);
+    }
+  }, [historyRange, serverInvestigations], { errorKey: ALERTS_ERROR_KEY, silentFailures: 'keep' });
+  const loading = phase !== 'idle';
+  const error = failures[ALERTS_ERROR_KEY] ?? null;
 
-  const refreshRef = useRef(fetchAlerts);
-  refreshRef.current = fetchAlerts;
   useEffect(() => {
-    const id = setInterval(() => { void refreshRef.current(true); }, 30_000);
+    const id = setInterval(() => refresh({ silent: true }), 30_000);
     return () => clearInterval(id);
-  }, []);
+  }, [refresh]);
 
   const nonOk = alerts.filter((a) => a.alertStatus !== 'ok' || a.isBad);
 
@@ -253,7 +252,7 @@ export default function AlertsPage() {
               <Menu.Item key={r.value} label={r.label} onClick={() => setHistoryRange(r.value)} />
             ))}
           </Menu>
-          <Button variant="secondary" size="sm" pending={loading} onClick={() => void fetchAlerts()}>
+          <Button variant="secondary" size="sm" pending={loading} onClick={retry}>
             {loading ? 'Loading...' : 'Refresh'}
           </Button>
         </div>
