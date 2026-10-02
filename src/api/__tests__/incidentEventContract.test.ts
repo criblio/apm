@@ -9,7 +9,7 @@ import {
   INCIDENT_NOTE_MAX,
   incidentEventCommitQuery,
 } from '../generatedEventContract';
-import { validateQuery } from '../provisionGuard';
+import { validateProvisionQuery as validateQuery } from '@criblio/app-utils/provision-guard';
 
 const BASE = {
   event_id: 'incident-abc:note:1',

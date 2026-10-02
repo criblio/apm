@@ -4,24 +4,45 @@
  * Staging validation is the eventual gate, but the canary's
  * decision logic is exercised here against a fake HttpClient so
  * each branch is pinned. Mirrors the structure of the
- * provisionGuard tests: pure-input → expected-output, plus a few
+ * plan-guard tests: pure-input → expected-output, plus a few
  * stage-failure cases that mimic real API errors.
  */
 import { beforeAll, describe, it, expect, vi } from 'vitest';
 import type { HttpClient } from '@criblio/app-utils/provisioner';
+import type { ProvisionCanaryReport, ProvisionProbeResult } from '@criblio/app-utils/provision-canary';
 import { setCurrentDataset } from '@criblio/app-utils/dataset';
 import {
   runCanary,
   CANARY_SENTINEL_SEARCH_ID,
   CANARY_LOOKUP_NAME,
+  EVENT_CONTRACT_PROBE_NAME,
 } from '../postReconcileCanary';
 
 beforeAll(() => setCurrentDataset('otel'));
 
+/** The report's probes, by role. The framework names them
+ *  `sentinel <id>`, `lookup <name>`, and the extra probe's own name. */
+function probes(report: ProvisionCanaryReport): {
+  sentinel: ProvisionProbeResult;
+  lookupJoin: ProvisionProbeResult;
+  eventContract: ProvisionProbeResult;
+} {
+  const find = (pred: (name: string) => boolean) => {
+    const p = report.probes.find((x) => pred(x.name));
+    if (!p) throw new Error(`probe missing from ${JSON.stringify(report.probes.map((x) => x.name))}`);
+    return p;
+  };
+  return {
+    sentinel: find((n) => n.startsWith('sentinel ')),
+    lookupJoin: find((n) => n === `lookup ${CANARY_LOOKUP_NAME}`),
+    eventContract: find((n) => n === EVENT_CONTRACT_PROBE_NAME),
+  };
+}
+
 /**
  * Fake HttpClient that scripts responses by query-substring.
- * runCanary issues three queries per run (sentinel, probe-key
- * discovery, lookup-join probe). Each query goes through:
+ * runCanary issues one query each for the sentinel and the
+ * lookup-join probe, then the event-contract send + read. Each query goes through:
  *
  *   POST /m/default_search/search/jobs       → {items:[{id,status:"completed"}]}
  *   GET  /m/default_search/search/jobs/:id   → {items:[{status:"completed"}]}
@@ -93,13 +114,13 @@ describe('runCanary — happy path', () => {
       [`lookup ${CANARY_LOOKUP_NAME}`]: [{ total: 50, joined: 12 }],
     });
     const report = await runCanary(http, { contractPollAttempts: 1, contractPollMs: 0 });
-    expect(report.eventContract.message).toBe('generated-event contract round-trip passed (2 rows, 2 datatypes, schema v1)');
+    expect(probes(report).eventContract.message).toBe('round-trip passed (2 rows, 2 datatypes, schema v1)');
     expect(report.ok).toBe(true);
-    expect(report.sentinel.ok).toBe(true);
-    expect(report.lookupJoin.ok).toBe(true);
-    expect(report.lookupJoin.message).toContain('joinable');
-    expect(report.lookupJoin.message).toContain('12/50');
-    expect(report.eventContract.ok).toBe(true);
+    expect(probes(report).sentinel.ok).toBe(true);
+    expect(probes(report).lookupJoin.ok).toBe(true);
+    expect(probes(report).lookupJoin.message).toContain('joinable');
+    expect(probes(report).lookupJoin.message).toContain('12/50');
+    expect(probes(report).eventContract.ok).toBe(true);
   });
 });
 
@@ -110,8 +131,8 @@ describe('runCanary — sentinel empty', () => {
     });
     const report = await runCanary(http, { contractPollAttempts: 1, contractPollMs: 0 });
     expect(report.ok).toBe(false);
-    expect(report.sentinel.ok).toBe(false);
-    expect(report.sentinel.message).toContain('ZERO');
+    expect(probes(report).sentinel.ok).toBe(false);
+    expect(probes(report).sentinel.message).toContain('ZERO');
   });
 
   it('tolerates empty sentinel under --first-install', async () => {
@@ -119,8 +140,9 @@ describe('runCanary — sentinel empty', () => {
       [`lookup ${CANARY_LOOKUP_NAME}`]: [{ total: 50, joined: 10 }],
     });
     const report = await runCanary(http, { firstInstall: true, contractPollAttempts: 1, contractPollMs: 0 });
-    expect(report.sentinel.ok).toBe(true);
-    expect(report.sentinel.message).toContain('first-install');
+    expect(probes(report).sentinel.ok).toBe(true);
+    expect(probes(report).sentinel.tolerated).toBe(true);
+    expect(probes(report).sentinel.message).toContain('first install');
   });
 });
 
@@ -134,8 +156,8 @@ describe('runCanary — lookup join failure shapes', () => {
     });
     const report = await runCanary(http, { contractPollAttempts: 1, contractPollMs: 0 });
     expect(report.ok).toBe(false);
-    expect(report.lookupJoin.ok).toBe(false);
-    expect(report.lookupJoin.message).toMatch(/ZERO joined|unjoinable/);
+    expect(probes(report).lookupJoin.ok).toBe(false);
+    expect(probes(report).lookupJoin.message).toMatch(/ZERO joined|unjoinable/);
   });
 
   it('tolerates zero-joined under --first-install (search not yet populated)', async () => {
@@ -144,8 +166,9 @@ describe('runCanary — lookup join failure shapes', () => {
       [`lookup ${CANARY_LOOKUP_NAME}`]: [{ total: 50, joined: 0 }],
     });
     const report = await runCanary(http, { firstInstall: true, contractPollAttempts: 1, contractPollMs: 0 });
-    expect(report.lookupJoin.ok).toBe(true);
-    expect(report.lookupJoin.message).toContain('first-install');
+    expect(probes(report).lookupJoin.ok).toBe(true);
+    expect(probes(report).lookupJoin.tolerated).toBe(true);
+    expect(probes(report).lookupJoin.message).toContain('first install');
   });
 
   it('FAILS on zero root spans without --first-install', async () => {
@@ -154,8 +177,8 @@ describe('runCanary — lookup join failure shapes', () => {
       [`lookup ${CANARY_LOOKUP_NAME}`]: [{ total: 0, joined: 0 }],
     });
     const report = await runCanary(http, { contractPollAttempts: 1, contractPollMs: 0 });
-    expect(report.lookupJoin.ok).toBe(false);
-    expect(report.lookupJoin.message).toMatch(/zero root spans/);
+    expect(probes(report).lookupJoin.ok).toBe(false);
+    expect(probes(report).lookupJoin.message).toMatch(/no keys to sample/);
   });
 
   it('FAILS gracefully when the probe query throws', async () => {
@@ -165,7 +188,7 @@ describe('runCanary — lookup join failure shapes', () => {
     );
     const report = await runCanary(http, { contractPollAttempts: 1, contractPollMs: 0 });
     expect(report.ok).toBe(false);
-    expect(report.sentinel.ok || report.lookupJoin.ok).toBe(false);
+    expect(probes(report).sentinel.ok || probes(report).lookupJoin.ok).toBe(false);
   });
 });
 
@@ -180,7 +203,8 @@ describe('runCanary — sentinel override', () => {
       contractPollAttempts: 1,
       contractPollMs: 0,
     });
-    expect(report.sentinel.message).toContain('criblapm__custom_sentinel');
+    expect(probes(report).sentinel.name).toBe('sentinel criblapm__custom_sentinel');
+    expect(probes(report).sentinel.ok).toBe(true);
     expect(report.ok).toBe(true);
   });
 });

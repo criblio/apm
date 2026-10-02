@@ -30,8 +30,7 @@
  */
 import type { ProvisionedSearch, SeedLookup } from '@criblio/app-utils/provisioner';
 import * as Q from './queries';
-import { getSearchCadenceCron, getSearchCadence } from '@criblio/app-utils/cadence';
-import { offsetCron } from './cronOffset';
+import { getSearchCadenceCron, getSearchCadence, offsetCron } from '@criblio/app-utils/cadence';
 import { getMetricsEmit } from './metricsEmit';
 import { getServerInvestigations } from './serverInvestigations';
 import type { BackfillEmitter } from './metricsBackfill';
@@ -795,7 +794,7 @@ export function getProvisioningPlan(): ProvisionedSearch[] {
   //
   // Gated behind serverInvestigations (default off). Selects firing
   // alerts in the last 15m and fires the investigator-cell webhook
-  // (CELL_WEBHOOK_TARGET_ID, provisioned by scripts/provision.ts) with
+  // (CELL_WEBHOOK_TARGET_ID, provisioned by scripts/provision.ts / Settings) with
   // the rows inlined. The cell builds a seed from each row and dedupes
   // on event_id. Off ⇒ this search doesn't exist, so nothing ever
   // fires at the cell — that's the feature's provision-time on/off.
@@ -814,35 +813,10 @@ export function getProvisioningPlan(): ProvisionedSearch[] {
         cronSchedule: notifyCronSchedule,
         tz: 'UTC',
         keepLastN: 2,
-        // Structure mirrors a known-good Cribl saved-search notification
-        // exactly. The API SILENTLY stores `{}` (dropping the whole
-        // notification) if any of these are missing: a unique `items[].id`,
-        // `items[].disabled`, `conf.savedQueryId`, and `targetConfigs[].id`.
-        notifications: {
-          disabled: false,
-          items: [
-            {
-              disabled: false,
-              condition: 'search',
-              targets: [CELL_WEBHOOK_TARGET_ID],
-              conf: {
-                triggerType: 'resultsCount',
-                triggerComparator: '>',
-                triggerCount: 0,
-                savedQueryId: 'criblapm__alert_notify',
-                message: 'Cribl APM: firing alert(s) — triggering server-side investigation.',
-              },
-              targetConfigs: [
-                {
-                  id: CELL_WEBHOOK_TARGET_ID,
-                  conf: { includeResults: true, attachmentType: 'inline' },
-                },
-              ],
-              group: 'default_search',
-              id: 'criblapm__alert_notify_Notification_1',
-            },
-          ],
-        },
+        // No inline `notifications`: the server drops them (stores `{}`).
+        // The binding to CELL_WEBHOOK_TARGET_ID is the separate
+        // /notifications record ALERT_NOTIFY_BINDING (cellProvisioning.ts),
+        // ensured after the target exists by provision.ts and Settings.
       },
     });
   }

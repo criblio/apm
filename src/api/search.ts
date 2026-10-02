@@ -3,6 +3,7 @@
  * into the verbs the UI calls.
  */
 import { runQuery } from './cribl';
+import { runWithLimit, SEARCH_FANOUT_LIMIT } from '@criblio/app-utils/search';
 import { browserSearchClient, type SearchClient } from './searchClient';
 import { listCachedMetricCatalog } from './panelCache';
 import {
@@ -163,33 +164,14 @@ export async function getTrace(
  * those as collapsed rows.
  */
 /**
- * Cribl Search has a per-cluster concurrent-job ceiling (the
- * `Search queue limit reached (max: 20)` error). Pages like Service
- * Detail already fire ~15 queries of their own, so unconditionally
- * fanning out 22 Spotlight queries blows past the ceiling and the
- * tail return 429s. Run with a small concurrency cap so we coexist
- * with the rest of the page; the streaming UX is unchanged from
- * the user's POV — attrs still appear one by one, just paced.
+ * Spotlight fans out one query per attribute (~22). Cribl Search caps
+ * concurrent jobs per cluster (`Search queue limit reached (max: 20)`)
+ * and Service Detail already holds ~15 of them, so the fan-out runs
+ * through the framework's `runWithLimit` at `SEARCH_FANOUT_LIMIT` (4).
+ * Attributes still stream into the panel one by one, just paced. The
+ * workers catch their own errors, so one failed attribute never stops
+ * the rest.
  */
-const SPOTLIGHT_CONCURRENCY = 4;
-
-async function runWithLimit<T>(
-  attrs: readonly string[],
-  limit: number,
-  worker: (attr: string) => Promise<T>,
-): Promise<void> {
-  let next = 0;
-  async function pump(): Promise<void> {
-    while (next < attrs.length) {
-      const i = next++;
-      await worker(attrs[i]);
-    }
-  }
-  await Promise.all(
-    Array.from({ length: Math.min(limit, attrs.length) }, () => pump()),
-  );
-}
-
 export async function getFacetDistribution(
   attrs: readonly string[],
   predicateKql: string,
@@ -209,7 +191,7 @@ export async function getFacetDistribution(
   onError?: (attr: string, error: unknown) => void,
 ): Promise<Map<string, AttrValueBucket[]>> {
   const out = new Map<string, AttrValueBucket[]>();
-  await runWithLimit(attrs, SPOTLIGHT_CONCURRENCY, async (attr) => {
+  await runWithLimit(attrs, SEARCH_FANOUT_LIMIT, async (attr) => {
     let rows: Record<string, unknown>[];
     try {
       rows = await runQuery(
@@ -283,7 +265,7 @@ export async function getSpotlightDiff(
 ): Promise<Map<string, SpotlightBucket[]>> {
   const { topPerAttr = 20, scopeKql, onAttr, onError, signal } = options;
   const out = new Map<string, SpotlightBucket[]>();
-  await runWithLimit(attrs, SPOTLIGHT_CONCURRENCY, async (attr) => {
+  await runWithLimit(attrs, SEARCH_FANOUT_LIMIT, async (attr) => {
     if (signal?.aborted) return;
     let rows: Record<string, unknown>[];
     try {

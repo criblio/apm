@@ -23,19 +23,20 @@ import {
   type HttpClient,
   type PlanAction,
 } from '@criblio/app-utils/provisioner';
-import { reconcile, planOnly } from '../src/api/provisioner.js';
-import { validateProvisionPlan } from '../src/api/provisionGuard.js';
-import { runCanary } from '../src/api/postReconcileCanary.js';
+import { ProvisionPlanError } from '@criblio/app-utils/provision-guard';
 import {
-  getProvisioningPlan,
-  SEED_LOOKUPS,
+  ensureSavedSearchNotification,
+  removeSavedSearchNotification,
+} from '@criblio/app-utils/notifications';
+import { reconcile, planOnly } from '../src/api/provisioner.js';
+import { runCanary, EVENT_CONTRACT_PROBE_NAME } from '../src/api/postReconcileCanary.js';
+import {
   CELL_WEBHOOK_TARGET_ID,
   CRIBLAPM_PREFIX,
 } from '../src/api/provisionedSearches.js';
 import {
   ensureCellWebhookTarget,
-  ensureAlertNotification,
-  removeAlertNotification,
+  ALERT_NOTIFY_BINDING,
   ALERT_NOTIFY_SEARCH_ID,
 } from '../src/api/cellProvisioning.js';
 import {
@@ -182,7 +183,7 @@ async function wireCellTrigger(
   }
   // Bind alert_notify → target via the notifications resource (writing
   // it inline in the search body is silently dropped by the API).
-  const n = await ensureAlertNotification(http);
+  const n = await ensureSavedSearchNotification(http, ALERT_NOTIFY_BINDING);
   console.log(`▶ Alert notification: ${n === 'created' ? '+ create' : '~ update'} ${ALERT_NOTIFY_SEARCH_ID} → cell webhook`);
 
   // Push source repos to the cell so alert-fired (autonomous)
@@ -291,22 +292,15 @@ async function main(): Promise<void> {
     }
   }
 
-  // P0.1 tripwire: refuse to push a corrupt plan to the server. The
-  // June 2026 outage chain (dataset="" in 17 searches, unjoinable
-  // lookup CSVs) shipped through a reconcile that reported success.
-  const guardErrors = validateProvisionPlan([
-    ...getProvisioningPlan().map((s) => ({ id: s.id, query: s.query, name: s.name })),
-    ...SEED_LOOKUPS.map((l) => ({ id: `seed:${l.name}`, query: l.seedQuery })),
-  ]);
-  if (guardErrors.length > 0) {
-    console.error(`✗ Provision guard: ${guardErrors.length} violation(s) — refusing to reconcile`);
-    for (const e of guardErrors) console.error(`    ${e}`);
-    process.exit(1);
-  }
-  console.log('▶ Provision guard: plan OK');
+  // P0.1 tripwire: the framework's plan guard runs inside planOnly() and
+  // reconcile() and throws ProvisionPlanError before anything is written
+  // (reported by the catch at the bottom). The June 2026 outage chain
+  // (dataset="" in 17 searches, unjoinable lookup CSVs) shipped through a
+  // reconcile that reported success.
 
   if (dryRun) {
     const { actions } = await planOnly(http);
+    console.log('▶ Provision guard: plan OK');
     if (actions.length === 0) {
       console.log('▶ Provision: nothing to do (all searches up to date)');
     } else {
@@ -325,6 +319,7 @@ async function main(): Promise<void> {
   }
 
   const { actions, results } = await reconcile(http);
+  console.log('▶ Provision guard: plan OK');
   if (actions.length === 0) {
     console.log('▶ Provision: nothing to do (all searches up to date)');
   } else {
@@ -348,9 +343,14 @@ async function main(): Promise<void> {
     await wireCellTrigger(http, false);
   } else if (flagExplicit) {
     // Explicit disable: remove the notification binding (the search
-    // itself is removed by the reconcile above).
-    await removeAlertNotification(http);
-    console.log(`▶ Alert notification: removed (server investigations off)`);
+    // itself is removed by the reconcile above). Best-effort, as before,
+    // but a failed DELETE is now reported instead of logged as removed.
+    try {
+      const outcome = await removeSavedSearchNotification(http, ALERT_NOTIFY_BINDING);
+      console.log(`▶ Alert notification: ${outcome === 'deleted' ? 'removed' : 'already absent'} (server investigations off)`);
+    } catch (err) {
+      console.error(`✗ Alert notification: removal failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   // Reconcile dataset acceleration (ruleset + acceleratedFields).
@@ -382,17 +382,17 @@ async function main(): Promise<void> {
   // lookup CSVs from the June (?i)-export bug).
   console.log('▶ Post-reconcile canary …');
   const canary = await runCanary(http, { firstInstall });
-  const tickFor = (ok: boolean) => (ok ? '✓' : '✗');
-  console.log(`${tickFor(canary.sentinel.ok)}   sentinel:    ${canary.sentinel.message}`);
-  console.log(`${tickFor(canary.lookupJoin.ok)}   lookup-join: ${canary.lookupJoin.message}`);
-  console.log(`${tickFor(canary.eventContract.ok)}   event-contract: ${canary.eventContract.message}`);
+  for (const p of canary.probes) {
+    console.log(`${p.ok ? '✓' : '✗'}   ${p.name}${p.tolerated ? ' (tolerated)' : ''}: ${p.message}`);
+  }
   if (!canary.ok) {
+    // The waiver covers only the telemetry-dependent probes (sentinel,
+    // lookup join); the event contract must still pass.
     const offlineDatagenWaiver = process.env.APM_ALLOW_OFFLINE_DATAGEN === 'true';
-    const dataChecksOnly = !canary.sentinel.ok || !canary.lookupJoin.ok;
+    const eventContractOk = canary.probes.some((p) => p.name === EVENT_CONTRACT_PROBE_NAME && p.ok);
     const waiverValid = offlineDatagenWaiver
       && Date.now() <= OFFLINE_DATAGEN_WAIVER_EXPIRES
-      && dataChecksOnly
-      && canary.eventContract.ok;
+      && eventContractOk;
 
     if (waiverValid) {
       console.warn(
@@ -448,6 +448,11 @@ async function maybeBackfillMetrics(): Promise<void> {
 }
 
 main().catch((err) => {
+  if (err instanceof ProvisionPlanError) {
+    console.error(`✗ Provision guard: ${err.problems.length} violation(s) — refusing to reconcile`);
+    for (const p of err.problems) console.error(`    ${p.searchId} [${p.rule}]: ${p.message}`);
+    process.exit(1);
+  }
   console.error('Provision failed:', err.message);
   process.exit(1);
 });

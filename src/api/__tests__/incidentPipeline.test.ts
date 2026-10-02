@@ -8,7 +8,7 @@
 import { describe, expect, it } from 'vitest';
 import { setCurrentDataset } from '@criblio/app-utils/dataset';
 import * as Q from '../queries';
-import { validateQuery } from '../provisionGuard';
+import { validateProvisionQuery as validateQuery } from '@criblio/app-utils/provision-guard';
 import {
   getProvisioningPlan,
   INCIDENTS_LOOKUP,

@@ -10,7 +10,7 @@
  * hardcoded literal silently reads zero rows: no crash, no error,
  * just an empty table.
  *
- * The provision guard (src/api/provisionGuard.ts) catches this in
+ * The provision guard (@criblio/app-utils/provision-guard) catches this in
  * `provisionedSearches.ts` at deploy time. This test extends the
  * same guarantee to ad-hoc queries in `src/routes/**` and
  * `src/api/**` that bypass the provisioner.
