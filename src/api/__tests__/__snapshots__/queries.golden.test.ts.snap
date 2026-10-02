@@ -325,8 +325,9 @@ exports[`queries.ts — golden snapshots + invariants > alertEvaluator > snapsho
                          and prev_op_requests >= 20),
                  evaluation_id=strcat("criblapm-eval:", tostring(bin(now(), 5m))),
                  // Constant, not iff(is_bad, ..., "none"): the alert id
-                 // already names the family, and the Alerts page pairs
-                 // firing → resolved episodes on svc + signal_type.
+                 // already names the family, and a resolved row should say
+                 // what resolved. (The Alerts page pairs episodes on
+                 // alert_id, so pairing no longer depends on this.)
                  signal_type="latency",
                  is_persistent=false,
                  curr_errors=0.0, curr_error_rate=0.0,

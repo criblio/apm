@@ -57,7 +57,7 @@ All routes wrap in a resilience boundary. Route table:
 | `/compare/:a/:b` | Structural trace diff: added/removed/changed spans with duration deltas. |
 | `/logs` | Log explorer: service, severity tier (OTel 1–24 scale), body text, lookback, limit. |
 | `/metrics` | Metrics explorer: catalog-driven picker, type detection (counter/gauge/histogram), smart default aggregation, client-side rate for counters, group-by top-N series. |
-| `/alerts` | Incidents section (drill-in layer), brush-selectable alert timeline, alert episodes (paired firing→resolved), currently-active table; 30 s silent refresh. |
+| `/alerts` | Incidents section (drill-in layer), brush-selectable alert timeline, alert episodes (firing→resolved paired on `alert_id`; legacy rows without one fall back to svc + signal_type), currently-active table; 30 s silent refresh. |
 | `/incident/:id` | Warroom: deterministic summary narrative, investigation findings, member services with per-signal detail, interleaved timeline, note composer, status/severity/close/reopen controls. |
 | `/errors` | Grouped error classes (service/operation/message) with inline Spotlight expansion scoped to the failing operation; click-through to pre-filtered trace search. |
 | `/investigate` | Investigator. Client mode: in-browser agent chat. Server mode (flag): recall sidebar, replayable server investigations, follow-up composer. |
