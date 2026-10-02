@@ -214,21 +214,6 @@ match exactly. The pack filename `apm-X.Y.Z.tgz` is derived from
 was bumped in a separate commit from the tag, double-check before
 pushing.
 
-**The packer never bumps the version.** `npm run package` is
-`apps package` from `@cribl/apps` (the platform packer; it also ships
-`README.md` and any `config/policies.yml` / `schedules.yml` /
-`backend.yml`). Left to itself `apps package` increments
-`package.json` on every run, so a release would attest an artifact
-one patch ahead of its tag. APM's script passes
-`--version $npm_package_version`, which packs exactly the committed
-version: the release workflow (which passes no `app-version` to the
-framework's release-build action), `npm run deploy` and local
-packaging all leave `package.json` alone. Bump the version by hand
-in the release commit, as above. Unlike the retired
-`cribl-app-package`, `apps package` does not produce a byte-identical
-archive on rebuild (tar mtimes and owners), so promote the CI- or
-release-built `.tgz` and its checksum rather than rebuilding.
-
 **If a release workflow fails after tag push**:
 - Smallest possible fix: commit the fix on master, force-update
   the tag (`git tag -fa vX.Y.Z && git push origin vX.Y.Z --force`),
