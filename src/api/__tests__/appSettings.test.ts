@@ -1,7 +1,7 @@
 /**
  * APM's settings live at `settings/app` (not the framework `/settings`
- * module's fixed `settings` key) and are read through the framework's
- * strict `/kv` client.
+ * module's default `settings` key) and are read and written through the
+ * framework's `/settings` module with `{ key: 'settings/app' }`.
  *
  * A 404 from the KV store and a 404 from an unmatched route mean opposite
  * things, and only one of them is absence. `saveAppSettings` merges onto
@@ -12,14 +12,14 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { KvError } from '@criblio/app-utils/kv';
-import { getCurrentDataset, getDatasetLoadError, setDatasetLoadError } from '@criblio/app-utils/dataset';
+import { getCurrentDataset, setCurrentDataset } from '@criblio/app-utils/dataset';
 import { getSearchCadence } from '@criblio/app-utils/cadence';
 import {
   SETTINGS_KEY,
   applyAppSettings,
   loadAppSettings,
+  loadDatasetAndApplySettings,
   saveAppSettings,
-  syncAppSettings,
 } from '../appSettings';
 import { getStreamFilterEnabled, setStreamFilterEnabled } from '../streamFilter';
 import { getLowVolumeMode, setLowVolumeMode } from '../lowVolumeMode';
@@ -64,9 +64,9 @@ describe('loadAppSettings', () => {
     expect(fetchMock.mock.calls[0][0]).toBe('/api/v1/kvstore/settings/app');
   });
 
-  it('treats the store\'s own not-found as absence', async () => {
+  it('treats the store\'s own not-found as absence — nothing saved, and no framework default dataset', async () => {
     stubFetch(KEY_MISSING);
-    await expect(loadAppSettings()).resolves.toBeNull();
+    await expect(loadAppSettings()).resolves.toEqual({});
   });
 
   it('throws a routing-failure KvError on an HTML 404 from the web shell', async () => {
@@ -162,37 +162,28 @@ describe('applyAppSettings', () => {
   });
 });
 
-describe('syncAppSettings (DatasetProvider mount)', () => {
-  it('records a load failure for useDatasetLoadError and reports it', async () => {
-    stubFetch(HTML_404);
-    const onError = vi.fn();
-    await syncAppSettings({ onError });
-    expect(onError).toHaveBeenCalledTimes(1);
-    expect(onError.mock.calls[0][0]).toBeInstanceOf(KvError);
-    expect(getDatasetLoadError()).toBeInstanceOf(KvError);
+describe('loadDatasetAndApplySettings (DatasetProvider loadDataset)', () => {
+  it('applies the saved flags and returns the dataset, from one read', async () => {
+    setLowVolumeMode(false);
+    setServerInvestigations(false);
+    const fetchMock = stubFetch(() => json({ dataset: ' default_spans ', lowVolumeMode: true, serverInvestigations: true }));
+    await expect(loadDatasetAndApplySettings()).resolves.toBe(' default_spans ');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(getLowVolumeMode()).toBe(true);
+    expect(getServerInvestigations()).toBe(true);
   });
 
-  it('warns when no onError is given', async () => {
-    stubFetch(HTML_404);
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    await expect(syncAppSettings()).resolves.toBeUndefined();
-    expect(warn).toHaveBeenCalledTimes(1);
+  it('returns undefined when nothing is saved, leaving the defaults', async () => {
+    setCurrentDataset('otel');
+    stubFetch(KEY_MISSING);
+    await expect(loadDatasetAndApplySettings()).resolves.toBeUndefined();
+    expect(getCurrentDataset()).toBe('otel');
   });
 
-  it('clears a recorded failure and applies settings on success', async () => {
-    setDatasetLoadError(new Error('earlier'));
-    stubFetch(() => json({ dataset: 'default_spans' }));
-    await syncAppSettings();
-    expect(getDatasetLoadError()).toBeNull();
-    expect(getCurrentDataset()).toBe('default_spans');
-  });
-
-  it('does nothing once cancelled', async () => {
-    setDatasetLoadError(null);
+  it('rejects with the KvError on a misroute, applying nothing', async () => {
+    setLowVolumeMode(false);
     stubFetch(HTML_404);
-    const onError = vi.fn();
-    await syncAppSettings({ isCancelled: () => true, onError });
-    expect(onError).not.toHaveBeenCalled();
-    expect(getDatasetLoadError()).toBeNull();
+    await expect(loadDatasetAndApplySettings()).rejects.toBeInstanceOf(KvError);
+    expect(getLowVolumeMode()).toBe(false);
   });
 });

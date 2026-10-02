@@ -26,14 +26,26 @@ import {
   SEED_LOOKUPS,
   getProvisioningPlan,
 } from './provisionedSearches';
+import { alertNotifyBindings } from './cellProvisioning';
 
+/**
+ * `notifications` binds alert_notify → the cell webhook while server
+ * investigations is on (and unbinds it when the reconcile deletes the
+ * search). The webhook TARGET depends on where the bearer comes from, so
+ * each caller adds `notificationTargets` (see cellProvisioning.ts): the
+ * CLI passes it to `reconcile`, Settings to its `<ProvisioningPanel>`.
+ */
 export const APM_PROVISIONER_CONFIG: ProvisionerConfig = {
   prefix: CRIBLAPM_PREFIX,
   plan: getProvisioningPlan,
   seedLookups: SEED_LOOKUPS,
+  notifications: alertNotifyBindings,
 };
 
-export const reconcile = (http: HttpClient) => fwReconcile(http, APM_PROVISIONER_CONFIG);
+export const reconcile = (
+  http: HttpClient,
+  extra: Pick<ProvisionerConfig, 'notificationTargets'> = {},
+) => fwReconcile(http, { ...APM_PROVISIONER_CONFIG, ...extra });
 export const planOnly = (http: HttpClient) => fwPlanOnly(http, APM_PROVISIONER_CONFIG);
 export const unprovisionAll = (http: HttpClient) =>
   fwUnprovisionAll(http, CRIBLAPM_PREFIX);

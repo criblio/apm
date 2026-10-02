@@ -24,20 +24,16 @@ import {
   type PlanAction,
 } from '@criblio/app-utils/provisioner';
 import { ProvisionPlanError } from '@criblio/app-utils/provision-guard';
-import {
-  ensureSavedSearchNotification,
-  removeSavedSearchNotification,
-} from '@criblio/app-utils/notifications';
+import { removeSavedSearchNotification } from '@criblio/app-utils/notifications';
 import { reconcile, planOnly } from '../src/api/provisioner.js';
 import { runCanary, EVENT_CONTRACT_PROBE_NAME } from '../src/api/postReconcileCanary.js';
 import {
-  CELL_WEBHOOK_TARGET_ID,
   CRIBLAPM_PREFIX,
 } from '../src/api/provisionedSearches.js';
 import {
-  ensureCellWebhookTarget,
   ALERT_NOTIFY_BINDING,
   ALERT_NOTIFY_SEARCH_ID,
+  cliCellWebhookTargets,
 } from '../src/api/cellProvisioning.js';
 import {
   apply as applyDatasetProvisioning,
@@ -115,27 +111,32 @@ async function loadAppSettingsFromKV(http: HttpClient): Promise<void> {
   }
 }
 
+/** GoatTown base URL and the bearer the webhook target sends, from the
+ *  environment/.env. Prefer the connected-app credential;
+ *  GOATTOWN_WEBHOOK_TOKEN is the legacy installation secret and is no
+ *  longer required. */
+function cellEnv(): { cellUrl: string; bearer: string | undefined } {
+  return {
+    cellUrl: process.env.GOATTOWN_URL ?? 'https://goattown-shared.lab.cribl.io',
+    bearer: process.env.GOATTOWN_APP_TOKEN ?? process.env.GOATTOWN_WEBHOOK_TOKEN,
+  };
+}
+
 /**
- * Wire the alert → cell trigger: the webhook target + the alert-notify
- * notification binding. Delegates to the shared cellProvisioning module
- * (the same code the Settings UI uses) so CLI and UI stay identical.
- * Must run AFTER the search reconcile so alert_notify exists before its
- * notification binds. No-op when server investigations are off.
- * GOATTOWN_URL / GOATTOWN_APP_TOKEN come from the environment/.env.
+ * The rest of the alert → cell trigger, after the reconcile has written
+ * the webhook target (`notificationTargets`) and bound alert_notify to it
+ * (`APM_PROVISIONER_CONFIG.notifications`) — the framework apply path the
+ * Settings UI uses too, so CLI and UI stay identical. This stages the agent
+ * configuration and pushes source repos. No-op when server investigations
+ * are off.
  */
-async function wireCellTrigger(
-  http: HttpClient,
-  dryRun: boolean,
-): Promise<void> {
+async function wireCellTrigger(dryRun: boolean): Promise<void> {
   if (!getServerInvestigations()) return;
   if (dryRun) {
     console.log('▶ Cell trigger (dry-run): would ensure webhook target + alert notification');
     return;
   }
-  const cellUrl = process.env.GOATTOWN_URL ?? 'https://goattown-shared.lab.cribl.io';
-  // Prefer the connected-app credential; GOATTOWN_WEBHOOK_TOKEN is the legacy
-  // installation secret and is no longer required.
-  const bearer = process.env.GOATTOWN_APP_TOKEN ?? process.env.GOATTOWN_WEBHOOK_TOKEN;
+  const { cellUrl, bearer } = cellEnv();
   const adminBearer = process.env.GOATTOWN_ADMIN_TOKEN;
   // Deliberately admin-token-only. The connected-app gt_a1_ credential is
   // write-only in KV and injected by the platform proxy; copying it into CI
@@ -167,25 +168,18 @@ async function wireCellTrigger(
         'connected-app credential from KV. Set GOATTOWN_ADMIN_TOKEN to stage from CI.',
     );
   }
-  if (cellUrl && bearer) {
-    const t = await ensureCellWebhookTarget(http, { cellUrl, bearer });
-    console.log(`▶ Notification target: ${t === 'created' ? '+ create' : '~ update'} ${CELL_WEBHOOK_TARGET_ID}`);
-  } else {
-    // Not an error any more. The Settings page is the supported way to
-    // provision this target: it reads the connected-app credential that
-    // GoatTown's console delivers to KV, which the CLI cannot see (the
-    // app-scoped KV needs app context a machine token does not have). A
-    // deploy without the env var is the normal case, not a misconfiguration.
+  if (!bearer) {
+    // Not an error. The Settings page is the supported way to provision
+    // this target: it reads the connected-app credential that GoatTown's
+    // console delivers to KV, which the CLI cannot see (the app-scoped KV
+    // needs app context a machine token does not have). A deploy without
+    // the env var is the normal case, not a misconfiguration.
     console.log(
       '▶ Notification target: left to the Settings page, which provisions it ' +
         'from the connected-app credential in KV. Set GOATTOWN_APP_TOKEN only ' +
         'to provision it from CI.',
     );
   }
-  // Bind alert_notify → target via the notifications resource (writing
-  // it inline in the search body is silently dropped by the API).
-  const n = await ensureSavedSearchNotification(http, ALERT_NOTIFY_BINDING);
-  console.log(`▶ Alert notification: ${n === 'created' ? '+ create' : '~ update'} ${ALERT_NOTIFY_SEARCH_ID} → cell webhook`);
 
   // Push source repos to the cell so alert-fired (autonomous)
   // investigations get the code tools an interactive one carries.
@@ -308,7 +302,7 @@ async function main(): Promise<void> {
       console.log(`▶ Provision dry-run: ${actions.length} action(s)`);
       for (const a of actions) console.log(actionLabel(a));
     }
-    await wireCellTrigger(http, true);
+    await wireCellTrigger(true);
     // Dataset acceleration dry-run
     const status = await getDatasetStatus(http);
     console.log('▶ Dataset acceleration:');
@@ -319,7 +313,12 @@ async function main(): Promise<void> {
     return;
   }
 
-  const { actions, results } = await reconcile(http);
+  // The reconcile also ensures the webhook target (only when the bearer is
+  // in the environment) and then binds alert_notify to it, AFTER the search
+  // is written — see wireCellTrigger.
+  const { actions, results, targets, notifications } = await reconcile(http, {
+    notificationTargets: () => cliCellWebhookTargets(cellEnv()),
+  });
   console.log('▶ Provision guard: plan OK');
   if (actions.length === 0) {
     console.log('▶ Provision: nothing to do (all searches up to date)');
@@ -338,10 +337,32 @@ async function main(): Promise<void> {
     }
   }
 
-  // Wire (or tear down) the alert → cell trigger, AFTER the search
-  // reconcile so alert_notify exists before its notification binds.
+  // Notification target and bindings written by the same apply. A failure
+  // stops the deploy here, as the former direct calls did by throwing.
+  let notifyFailed = 0;
+  for (const t of targets) {
+    if (!t.ok) notifyFailed += 1;
+    console.log(
+      t.ok
+        ? `▶ Notification target: ${t.detail === 'created' ? '+ create' : '~ update'} ${t.targetId}`
+        : `✗ Notification target ${t.targetId}: ${t.error}`,
+    );
+  }
+  for (const n of notifications) {
+    if (!n.ok) notifyFailed += 1;
+    const label = n.searchId === ALERT_NOTIFY_SEARCH_ID ? `${n.searchId} → cell webhook` : n.searchId;
+    if (!n.ok) console.log(`✗ Alert notification ${n.step} ${label}: ${n.error}`);
+    else if (n.step === 'ensure') console.log(`▶ Alert notification: ${n.detail === 'created' ? '+ create' : '~ update'} ${label}`);
+    else if (n.detail !== 'none') console.log(`▶ Notification: removed ${n.detail} (${n.searchId} deleted)`);
+  }
+  if (notifyFailed > 0) {
+    console.error(`▶ Provision: ${notifyFailed} notification step(s) failed`);
+    process.exit(1);
+  }
+
+  // The rest of the alert → cell trigger (or its explicit teardown).
   if (getServerInvestigations()) {
-    await wireCellTrigger(http, false);
+    await wireCellTrigger(false);
   } else if (flagExplicit) {
     // Explicit disable: remove the notification binding (the search
     // itself is removed by the reconcile above). Best-effort, as before,

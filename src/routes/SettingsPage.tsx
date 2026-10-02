@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import StatusBanner from '../components/StatusBanner';
 import ProvisioningPanel from '@criblio/app-utils/provisioning-panel';
 import DatasetProvisioningPanel from '../components/DatasetProvisioningPanel';
@@ -23,16 +23,13 @@ import {
   SHARED_GOATTOWN_BASE_URL,
   verifyGoatTownConnection,
 } from '../api/investigationTransport';
-import { kvPutText } from '@criblio/app-utils/kv';
-import { kvGetText } from '../api/kvText';
+import { kvGetText, kvPutText } from '@criblio/app-utils/kv';
 import { stageApmInvestigatorConfiguration } from '../api/goatTownProvisioning';
 import { pushGoatTownRepos } from '../api/investigationTransport';
-import {
-  ensureSavedSearchNotification,
-  removeSavedSearchNotification,
-} from '@criblio/app-utils/notifications';
-import { ALERT_NOTIFY_BINDING, ensureCellWebhookTarget } from '../api/cellProvisioning';
+import { removeSavedSearchNotification } from '@criblio/app-utils/notifications';
+import { ALERT_NOTIFY_BINDING, settingsCellWebhookTargets } from '../api/cellProvisioning';
 import { APM_PROVISIONER_CONFIG, type HttpClient } from '../api/provisioner';
+import type { ProvisionerConfig } from '@criblio/app-utils/provisioner';
 import type { SourceRepo } from '../api/investigationTransport';
 import type { ProvisioningExtraStep } from '@criblio/app-utils/provisioning-panel';
 import { useSearchCadence } from '../hooks/useSearchCadence';
@@ -342,22 +339,40 @@ export default function SettingsPage() {
     }
   }
 
+  // The webhook target is ensured by the framework apply itself (after the
+  // searches, before the alert_notify binding in APM_PROVISIONER_CONFIG),
+  // from the connected-app credential GoatTown's console delivers to KV —
+  // which the CLI cannot see, so Settings is the supported way to provision
+  // it. Reasons it was skipped are collected here and reported by
+  // handleProvisionCellTrigger, which runs after the apply.
+  const targetSkipsRef = useRef<ProvisioningExtraStep[]>([]);
+  const provisionerConfig = useMemo<ProvisionerConfig>(() => ({
+    ...APM_PROVISIONER_CONFIG,
+    notificationTargets: () => {
+      targetSkipsRef.current = [];
+      return settingsCellWebhookTargets({
+        cellUrl: getCellBaseUrl,
+        canFireAlerts: () => canFireAlerts(),
+        readCredential: () => kvGetText(GOATTOWN_CREDENTIAL_KEY),
+        credentialKey: GOATTOWN_CREDENTIAL_KEY,
+        report: (step) => targetSkipsRef.current.push(step),
+      });
+    },
+  }), []);
+
   // Runs on the shared ProvisioningPanel's "Apply", after the search
-  // reconcile. When server investigations is off it tears the notification
-  // down; when on it ensures the webhook target and binds alert-notify.
-  //
-  // This is now the only supported way to provision the target. It reads the
-  // connected-app credential GoatTown's console delivers to KV, which the CLI
-  // cannot see — the app-scoped KV needs app context that a machine token does
-  // not have. scripts/provision.ts therefore reports the target as left to
-  // Settings rather than failing.
+  // reconcile and the notification target/binding. When server
+  // investigations is off it makes sure the notification is gone; when on
+  // it stages the agent configuration and pushes the source repos.
   async function handleProvisionCellTrigger(
     http: HttpClient,
   ): Promise<ProvisioningExtraStep[]> {
-    const steps: ProvisioningExtraStep[] = [];
+    const steps: ProvisioningExtraStep[] = [...targetSkipsRef.current];
+    targetSkipsRef.current = [];
     if (!getServerInvestigations()) {
-      // A failed unbind is reported, not swallowed: the old local helper
-      // reported "removed" even when the DELETE failed.
+      // The apply already unbinds alert_notify when it deletes the search;
+      // this also clears a binding left behind by an earlier, partial
+      // teardown. A failed unbind is reported, not swallowed.
       try {
         const outcome = await removeSavedSearchNotification(http, ALERT_NOTIFY_BINDING);
         steps.push({ label: `Alert trigger: ${outcome === 'deleted' ? 'removed' : 'already absent'} (server investigations off)`, ok: true });
@@ -371,17 +386,14 @@ export default function SettingsPage() {
       return steps;
     }
     const url = getCellBaseUrl();
-    // Stage the agent configuration first. The webhook target and the alert
-    // notification only mean something once GoatTown knows about the
-    // investigator agent they trigger, so the configuration goes up with the
-    // same Apply that wires the trigger — this is the workflow the CLI's
-    // `wireCellTrigger` performs, kept identical between UI and CLI.
+    // Stage the agent configuration with the same Apply that wires the
+    // trigger — the workflow the CLI's `wireCellTrigger` performs, kept
+    // identical between UI and CLI.
     //
     // Unlike the pre-SDK version this does NOT abort the rest on failure.
-    // Staging can now fail for a legitimate, unrelated reason (the app
-    // connection has not been granted proposal rights), and returning early
-    // there would leave alert_notify unbound as collateral damage. The step
-    // is still reported not-ok, so the failure stays visible.
+    // Staging can fail for a legitimate, unrelated reason (the app
+    // connection has not been granted proposal rights). The step is still
+    // reported not-ok, so the failure stays visible.
     try {
       const registration = await stageApmInvestigatorConfiguration(url, currentDataset);
       steps.push({
@@ -399,56 +411,6 @@ export default function SettingsPage() {
         detail: err instanceof Error ? err.message : String(err),
       });
     }
-    // The capability is the only correct check: it is absent unless an
-    // administrator has enabled "Allow alert firing" on this connection.
-    let mayFire = false;
-    try {
-      mayFire = await canFireAlerts();
-    } catch (err) {
-      steps.push({
-        label: 'Webhook target: skipped',
-        ok: false,
-        detail: `Could not read GoatTown capabilities: ${err instanceof Error ? err.message : String(err)}`,
-      });
-      const n0 = await ensureSavedSearchNotification(http, ALERT_NOTIFY_BINDING);
-      steps.push({ label: `Alert notification: ${n0} (alert_notify → GoatTown)`, ok: true });
-      return steps;
-    }
-    if (!mayFire) {
-      steps.push({
-        label: 'Webhook target: skipped',
-        ok: false,
-        detail: 'GoatTown has not granted this app connection alert firing. '
-          + 'A tenant administrator enables it under Connections → Connected apps; '
-          + 'it is off by default because an external event can start billable work.',
-      });
-    } else {
-      // Cribl's alert fires server-side, so the target must carry a literal
-      // bearer — the webhook target schema allows only none/basic/token, with
-      // no `credentialsSecret`/`textSecret` reference (probed against the
-      // live API). So the credential is inlined here, and the API returns it
-      // in plaintext to any reader of notification targets.
-      //
-      // Given that exposure is unavoidable at this layer, the app credential
-      // is the right thing to inline rather than the installation webhook
-      // token: this one can be rotated from Connections → Connected apps
-      // (prepare replacement → finish → revoke), whereas gt_w1_ is a one-shot
-      // enrolment secret that would require re-enrolling the installation.
-      const bearer = await kvGetText(GOATTOWN_CREDENTIAL_KEY);
-      if (typeof bearer === 'string' && bearer.trim()) {
-        const t = await ensureCellWebhookTarget(http, { cellUrl: url, bearer: bearer.trim() });
-        steps.push({ label: `Webhook target: ${t} (${url})`, ok: true });
-      } else {
-        steps.push({
-          label: 'Webhook target: skipped',
-          ok: false,
-          detail: `No connected-app credential in kv.${GOATTOWN_CREDENTIAL_KEY}. `
-            + 'Deliver it from GoatTown\'s console, or paste it above.',
-        });
-      }
-    }
-    const n = await ensureSavedSearchNotification(http, ALERT_NOTIFY_BINDING);
-    steps.push({ label: `Alert notification: ${n} (alert_notify → cell)`, ok: true });
     // Re-push the configured repos so alert-fired investigations check out
     // code. Interactive runs thread their own at create time; this is the only
     // way the autonomous path gets them.
@@ -620,7 +582,7 @@ export default function SettingsPage() {
 
           <div id="provisioning" className={s.card}>
             <ProvisioningPanel
-              config={APM_PROVISIONER_CONFIG}
+              config={provisionerConfig}
               afterReconcile={handleProvisionCellTrigger}
               helpText={
                 <>

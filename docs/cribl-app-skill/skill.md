@@ -174,9 +174,14 @@ every deploy that must land.
 (`scripts/provision.ts`) does beyond the saved-search reconcile — e.g.
 create a webhook target, bind a notification — the in-app "Provision"
 button must do too, or the two diverge (UI creates the search but not
-the trigger). Put those steps in a shared, browser-safe `src/api/`
-module and run them from both: the CLI directly, the UI via the
-framework `ProvisioningPanel`'s `afterReconcile` hook (added 2026-08-14).
+the trigger). Declare notification targets and bindings on the shared
+`ProvisionerConfig` (`notificationTargets`, `notifications`, app-utils
+≥ 0.12.2) so the framework's one apply path writes them for both — after
+the searches, targets before bindings. Never create a target in
+`ProvisioningPanel`'s `afterReconcile`: it runs after the bindings, so a
+binding to a target it creates had no target on first apply. Keep
+`afterReconcile` for steps outside Cribl (APM stages its GoatTown
+configuration there).
 
 **Feature-flag-gated searches vs. an unreadable CLI flag.** When a
 plan item is gated on an app-scoped KV flag the machine-token CLI can't
