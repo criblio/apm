@@ -2,10 +2,10 @@
 //   STATUS_MIX_SERVICE=frontend-proxy npx tsx scripts/screenshot-svcdetail.mjs
 import { chromium } from 'playwright-core';
 import {
-  installCriblHostGlobals,
+  installApmHostGlobals,
   gotoApm,
   apmFrame,
-} from '../tests/helpers/apmSession.ts';
+} from '../tests/helpers/apmApp.ts';
 
 const SERVICE = process.env.STATUS_MIX_SERVICE ?? 'frontend-proxy';
 const OUT =
@@ -22,7 +22,7 @@ try {
     viewport: { width: 1600, height: 1100 },
   });
   const page = await ctx.newPage();
-  await installCriblHostGlobals(page);
+  await installApmHostGlobals(page);
   await gotoApm(page, '/');
   await page.waitForTimeout(8_000);
   const appFrame = page.frames().find((f) => f.url().includes('/app-ui/apm'));

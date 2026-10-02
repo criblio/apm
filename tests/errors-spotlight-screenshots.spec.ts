@@ -9,7 +9,7 @@
 import { test } from '@playwright/test';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { apmFrame, gotoApm } from './helpers/apmSession';
+import { apmFrame, gotoApm } from './helpers/apmApp';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

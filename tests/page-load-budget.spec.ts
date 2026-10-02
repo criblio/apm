@@ -10,7 +10,7 @@
 
 import { test, expect } from '@playwright/test';
 import type { FrameLocator } from '@playwright/test';
-import { installCriblHostGlobals, gotoApm, apmFrame, dismissHostAnnouncements } from './helpers/apmSession';
+import { installApmHostGlobals, gotoApm, apmFrame, dismissHostAnnouncements } from './helpers/apmApp';
 
 interface PageDef { nav: string; budget: number; marker: (a: FrameLocator) => Promise<unknown> }
 
@@ -39,7 +39,7 @@ test('every page stays within its initial KQL-job budget', async ({ page }) => {
     }
   }
 
-  await installCriblHostGlobals(page);
+  await installApmHostGlobals(page);
   await gotoApm(page, '/?range=-15m');
   const apm = apmFrame(page);
   await dismissHostAnnouncements(page);

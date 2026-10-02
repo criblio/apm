@@ -3,7 +3,9 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     include: ['src/**/__tests__/**/*.test.{ts,tsx}'],
-    exclude: ['tests/**', 'eval/**'],
+    // Playwright specs (tests/) and the live eval harness (eval/) must never
+    // run under Vitest.
+    exclude: ['tests/**', 'eval/**', 'node_modules/**', 'dist/**'],
     server: {
       deps: {
         // Let Vite transform the framework rather than leaving it to node's

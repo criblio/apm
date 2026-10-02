@@ -9,7 +9,7 @@
 // shell chrome and won't find anything the APM app renders.
 
 import { test, expect } from '@playwright/test';
-import { apmFrame, gotoApm } from './helpers/apmSession';
+import { apmFrame, gotoApm } from './helpers/apmApp';
 
 test('APM app shell renders on Cribl Cloud', async ({ page }) => {
   await gotoApm(page, '/');

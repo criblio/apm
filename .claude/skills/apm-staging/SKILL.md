@@ -92,12 +92,12 @@ trivially derivable from a query.
 
 ```ts
 import { test, expect } from '@playwright/test';
-import { installCriblHostGlobals, gotoApm } from './helpers/apmSession';
+import { installApmHostGlobals, gotoApm, apmFrame } from './helpers/apmApp';
 
 test('thing renders', async ({ page }) => {
-  await installCriblHostGlobals(page);
-  await gotoApm(page, '/some/path');
-  await expect(page.getByText('Whatever')).toBeVisible();
+  await installApmHostGlobals(page);
+  await gotoApm(page, '/');
+  await expect(apmFrame(page).getByText('Whatever')).toBeVisible();
 });
 ```
 
@@ -188,9 +188,11 @@ ad-hoc browser scripts don't).
 
 If you're writing a one-off Node script with `playwright-core`
 instead of using `@playwright/test`, you have to assemble the
-host-global init script yourself. The exact code lives in
-`tests/helpers/apmSession.ts` — `installCriblHostGlobals(page)`.
-**Copy it, don't reimplement from memory.** Three things must be
+host-global init script yourself — or import it: Node 22 runs
+`tests/helpers/apmApp.ts` directly, so `installApmHostGlobals(page)`,
+`gotoApm` and `apmFrame` work from a `.mjs` script (see
+`scripts/wave-verify.mjs`). They wrap `@criblio/app-tooling/playwright`.
+**Don't reimplement from memory.** Three things must be
 set via `page.addInitScript` **before navigation**:
 
 1. `window.CRIBL_BASE_PATH` = the app's mount path without trailing slash

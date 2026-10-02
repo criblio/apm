@@ -23,7 +23,7 @@
 import { test, expect } from '@playwright/test';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import type { FrameLocator, Page } from '@playwright/test';
-import { installCriblHostGlobals, gotoApm, apmFrame, dismissHostAnnouncements } from './helpers/apmSession';
+import { installApmHostGlobals, gotoApm, apmFrame, dismissHostAnnouncements } from './helpers/apmApp';
 
 const OUT_DIR = 'test-results';
 const OUT = `${OUT_DIR}/nav-escalation.json`;
@@ -67,7 +67,7 @@ test('Services SPA nav does not escalate across repeat visits', async ({ page })
   page.on('requestfinished', (r) => { if (isApi(r.url())) finished++; });
   page.on('requestfailed', (r) => { if (isApi(r.url())) finished++; });
 
-  await installCriblHostGlobals(page);
+  await installApmHostGlobals(page);
   await gotoApm(page, '/?range=-15m');
   const apm = apmFrame(page);
   await markers.overview(apm).catch(() => {});
