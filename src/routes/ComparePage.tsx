@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { getTrace } from '../api/search';
 import { diffTraces, type DiffRow } from '../utils/diff';
-import { formatDurationUs, serviceColor } from '../utils/spans';
+import { entityColor } from '@criblio/app-utils/viz';
+import { formatDurationUs } from '../utils/spans';
 import StatusBanner from '../components/StatusBanner';
 import type { JaegerTrace } from '../api/types';
 import s from './ComparePage.module.css';
@@ -158,7 +159,7 @@ export default function ComparePage() {
               <div key={i} className={`${s.row} ${rowClass}`}>
                 <div className={s.label} style={{ paddingLeft: `${8 + row.depth * 18}px` }}>
                   <span className={`${s.markChip} ${markClass}`}>{markChar}</span>
-                  <span className={s.serviceDot} style={{ background: serviceColor(row.service) }} />
+                  <span className={s.serviceDot} style={{ background: entityColor(row.service) }} />
                   <span className={s.svc}>{row.service}</span>
                   <span className={s.op}>{row.operationName}</span>
                 </div>

@@ -17,6 +17,13 @@ export interface SimNode extends ForceNode {
 }
 
 export interface SimLink extends SimulationLinkDatum<SimNode> {
+  /**
+   * Stable identity: `kind\0parent\0child`. An rpc and a messaging edge
+   * can join the same pair of services; without an id the framework's
+   * `linkKeys` tells them apart only by array position (`a>b`, `a>b#1`),
+   * so a refresh that reorders them pours one edge's metrics onto the other.
+   */
+  id: string;
   /** Call count aggregated on this edge. */
   value: number;
   /** Error count on this edge. */

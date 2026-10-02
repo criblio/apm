@@ -8,7 +8,8 @@
  * coordinates (relative to the graph container) and the card offsets
  * itself to avoid going off the right edge.
  */
-import { serviceColor, formatDurationUs } from '../utils/spans';
+import { entityColor } from '@criblio/app-utils/viz';
+import { formatDurationUs } from '../utils/spans';
 import { healthFromRate } from '../utils/health';
 import s from './EdgeTooltip.module.css';
 
@@ -61,8 +62,8 @@ export default function EdgeTooltip({
     y = containerHeight - CARD_HEIGHT_EST - 8;
   }
 
-  const parentColor = serviceColor(parent);
-  const childColor = serviceColor(child);
+  const parentColor = entityColor(parent);
+  const childColor = entityColor(child);
   const kindLabel = kind === 'messaging' ? 'messaging' : 'rpc';
 
   return (

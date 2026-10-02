@@ -16,7 +16,7 @@
  *    behavior doesn't fire on drags.
  *
  * Node visual encoding:
- *  - Fill = serviceColor(id) — the deterministic hash hue used everywhere
+ *  - Fill = entityColor(id) — the deterministic hash hue used everywhere
  *    else in the app for consistent service identification.
  *  - Size = log of request count (traffic volume).
  *  - Health = offset halo ring drawn only for non-healthy buckets; the
@@ -31,7 +31,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import NodeTooltip from './NodeTooltip';
 import EdgeTooltip from './EdgeTooltip';
 import ZoomControls from './ZoomControls';
-import { serviceColor } from '../utils/spans';
+import { entityColor } from '@criblio/app-utils/viz';
 import { serviceHealth, healthFromRate } from '../utils/health';
 import { useForceLayout, type SimNode, type SimLink } from '../hooks/useForceLayout';
 import { usePanZoom } from '../hooks/usePanZoom';
@@ -154,6 +154,7 @@ export default function DependencyGraph({
         if (e.p95DurUs > existing.p95DurUs) existing.p95DurUs = e.p95DurUs;
       } else {
         linkAgg.set(key, {
+          id: key,
           source: e.parent,
           target: e.child,
           value: e.callCount,
@@ -352,7 +353,7 @@ export default function DependencyGraph({
         {/* Everything inside this group is affected by pan+zoom. */}
         <g transform={`translate(${transform.tx},${transform.ty}) scale(${transform.scale})`}>
         <g>
-          {simLinksRef.current.map((l, i) => {
+          {simLinksRef.current.map((l) => {
             const sx = (l.source as SimNode).x ?? 0;
             const sy = (l.source as SimNode).y ?? 0;
             const tx = (l.target as SimNode).x ?? 0;
@@ -381,7 +382,7 @@ export default function DependencyGraph({
             // synchronous RPC edges even when the pair of services is
             // the same. Dash pattern scales roughly with line width.
             const dashArray = isMessaging ? '6 4' : undefined;
-            const edgeKey = `${l.kind ?? 'rpc'}\u0000${sourceId}\u0000${targetId}`;
+            const edgeKey = l.id;
             // A wider, transparent "hit" line lets hover catch thin
             // edges without the user needing pixel-perfect aim. The
             // visible styled line sits on top of it.
@@ -390,7 +391,7 @@ export default function DependencyGraph({
               Math.log10(l.value + 1) + (hasErrors ? 1 : 0),
             );
             return (
-              <g key={i}>
+              <g key={l.id}>
                 <line
                   x1={sx}
                   y1={sy}
@@ -464,7 +465,7 @@ export default function DependencyGraph({
             const health = serviceHealth(summary, prevSummary);
             const isFocused = focusId === n.id;
             const isPinned = pinned === n.id;
-            const idColor = serviceColor(n.id);
+            const idColor = entityColor(n.id);
 
             const haloGap = 3;
             const haloRadius = r + haloGap;

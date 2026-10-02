@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { Tag, type TagColor } from '@capra/core';
-import { serviceColor } from '../utils/spans';
+import { entityColor } from '@criblio/app-utils/viz';
 import InvestigateButton from './InvestigateButton';
 import type { InvestigationSeed } from '../api/agentContext';
 import type { DetectedIssue } from '../api/types';
@@ -157,7 +157,7 @@ export default function DetectedIssuesPanel({ issues, loading, lookback }: Props
                   )}
                   <span
                     className={s.svcName}
-                    style={{ color: serviceColor(issue.service) }}
+                    style={{ color: entityColor(issue.service) }}
                   >
                     {issue.service}
                   </span>

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { scaleTime } from 'd3-scale';
 import { timeFormat } from 'd3-time-format';
 import { Button } from '@capra/core';
-import { serviceColor } from '../utils/spans';
+import { entityColor } from '@criblio/app-utils/viz';
 import s from './AlertTimeline.module.css';
 
 export interface AlertInterval {
@@ -133,7 +133,7 @@ export default function AlertTimeline({ intervals, onRangeSelect, onRangeClear, 
           {/* Service bars */}
           {services.map((svc, svcIdx) => {
             const y = svcIdx * (BAR_H + BAR_GAP);
-            const color = serviceColor(svc);
+            const color = entityColor(svc);
             const svcIntervals = intervals.filter((iv) => iv.service === svc);
             return (
               <g key={svc}>

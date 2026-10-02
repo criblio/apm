@@ -14,7 +14,7 @@
  * flagged instead of having to trust a single scalar ratio.
  */
 import { Link } from 'react-router-dom';
-import { serviceColor } from '../utils/spans';
+import { entityColor } from '@criblio/app-utils/viz';
 import InvestigateButton from './InvestigateButton';
 import type { InvestigationSeed } from '../api/agentContext';
 import type { OperationAnomaly } from '../api/types';
@@ -100,7 +100,7 @@ export default function OperationAnomalyList({ items, loading, lookback }: Props
                   <div className={s.topLine}>
                     <span
                       className={s.svcDot}
-                      style={{ background: serviceColor(item.service) }}
+                      style={{ background: entityColor(item.service) }}
                     />
                     <span className={s.svcName}>{item.service}</span>
                     <span className={s.opName}>{item.operation}</span>

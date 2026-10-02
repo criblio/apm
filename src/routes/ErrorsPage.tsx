@@ -9,7 +9,7 @@ import { listErrorClasses } from '../api/search';
 import { SPOTLIGHT_ATTRIBUTES_SERVICE_DETAIL } from '../api/queries';
 import { listCachedErrorClasses } from '../api/panelCache';
 import { useStreamFilterEnabled } from '../hooks/useStreamFilter';
-import { serviceColor } from '../utils/spans';
+import { entityColor } from '@criblio/app-utils/viz';
 import { useRangeParam } from '../hooks/useRangeParam';
 import type { ErrorClass } from '../api/types';
 import { kqlStringLiteral } from '../api/kqlSafety';
@@ -197,7 +197,7 @@ export default function ErrorsPage() {
                           <Link
                             to={`/service/${encodeURIComponent(ec.service)}?range=${range}`}
                             className={s.svcLink}
-                            style={{ color: serviceColor(ec.service) }}
+                            style={{ color: entityColor(ec.service) }}
                             onClick={(e) => e.stopPropagation()}
                           >
                             {ec.service}

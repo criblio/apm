@@ -17,7 +17,7 @@ import {
 import { listCachedHomePanels } from '../api/panelCache';
 import { runQuery } from '../api/cribl';
 import * as Q from '../api/queries';
-import { serviceColor } from '../utils/spans';
+import { entityColor } from '@criblio/app-utils/viz';
 import { serviceHealth, healthRowBg } from '../utils/health';
 import { buildDetectedIssues, buildDetectedIssuesFromCache } from '../utils/detectedIssues';
 import InvestigateButton from '../components/InvestigateButton';
@@ -309,7 +309,7 @@ export default function OverviewPage() {
               {issueServices.map(({ svc, health }) => (
                 <tr key={svc.service} style={{ background: healthRowBg(health.bucket) }}>
                   <td>
-                    <Link to={`/service/${encodeURIComponent(svc.service)}?range=${range}`} className={s.svcLink} style={{ color: serviceColor(svc.service) }}>
+                    <Link to={`/service/${encodeURIComponent(svc.service)}?range=${range}`} className={s.svcLink} style={{ color: entityColor(svc.service) }}>
                       {svc.service}
                     </Link>
                   </td>
@@ -365,7 +365,7 @@ export default function OverviewPage() {
                     </Tag>
                   </td>
                   <td>
-                    <Link to={`/service/${encodeURIComponent(a.service)}?range=-1h`} className={s.svcLink} style={{ color: serviceColor(a.service) }}>
+                    <Link to={`/service/${encodeURIComponent(a.service)}?range=-1h`} className={s.svcLink} style={{ color: entityColor(a.service) }}>
                       {a.service}
                     </Link>
                   </td>
