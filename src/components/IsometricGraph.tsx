@@ -18,7 +18,7 @@ import NodeTooltip from './NodeTooltip';
 import EdgeTooltip from './EdgeTooltip';
 import ZoomControls from './ZoomControls';
 import type { InvestigationSeed } from '../api/agentContext';
-import { serviceColor, serviceColorAtLightness } from '../utils/spans';
+import { entityColor } from '@criblio/app-utils/viz';
 import { serviceHealth, healthFromRate } from '../utils/health';
 import { useForceLayout, type SimNode, type SimLink } from '../hooks/useForceLayout';
 import { usePanZoom } from '../hooks/usePanZoom';
@@ -210,6 +210,7 @@ export default function IsometricGraph({
         if (e.p95DurUs > existing.p95DurUs) existing.p95DurUs = e.p95DurUs;
       } else {
         linkAgg.set(key, {
+          id: key,
           source: e.parent,
           target: e.child,
           value: e.callCount,
@@ -484,7 +485,7 @@ export default function IsometricGraph({
         {/* Edges connect cylinder TOPS (cy - CYL_HEIGHT). Draw below the
             cylinders so they visually sit behind any node they reach. */}
         <g>
-          {simLinksRef.current.map((l, i) => {
+          {simLinksRef.current.map((l) => {
             const srcId = (l.source as SimNode).id;
             const tgtId = (l.target as SimNode).id;
             const src = projectedNodes.get(srcId);
@@ -510,13 +511,13 @@ export default function IsometricGraph({
             const stroke = isHighlighted ? '#0190ff' : baseStroke;
             const isMessaging = l.kind === 'messaging';
             const dashArray = isMessaging ? '6 4' : undefined;
-            const edgeKey = `${l.kind ?? 'rpc'}\u0000${srcId}\u0000${tgtId}`;
+            const edgeKey = l.id;
             const computedWidth = Math.max(
               1,
               Math.log10(l.value + 1) + (hasErrors ? 1 : 0),
             );
             return (
-              <g key={i}>
+              <g key={l.id}>
                 <line
                   x1={sx}
                   y1={sy}
@@ -602,9 +603,9 @@ export default function IsometricGraph({
             const health = serviceHealth(summary, prevSummary);
             const isFocused = focusId === n.id;
             const isPinned = pinned === n.id;
-            const idColor = serviceColor(n.id);
-            const sideColor = serviceColorAtLightness(n.id, 32);
-            const rimColor = serviceColorAtLightness(n.id, 22);
+            const idColor = entityColor(n.id);
+            const sideColor = entityColor(n.id, 32);
+            const rimColor = entityColor(n.id, 22);
 
             const rx = p.r;
             const ry = rx * CYL_TOP_RY_RATIO;

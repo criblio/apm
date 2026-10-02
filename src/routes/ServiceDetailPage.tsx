@@ -4,9 +4,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import TimeRangePicker from '../components/TimeRangePicker';
 import { binSecondsFor } from '../components/timeRanges';
 import LineChart, { type LineSeries } from '../components/LineChart';
-import StackedColumnChart, {
-  type StackedSeries,
-} from '../components/StackedColumnChart';
+import { StackedColumnChart, type StackedSeries } from '@criblio/app-utils/viz';
 import TraceBriefList from '../components/TraceBriefList';
 import StatusBanner from '../components/StatusBanner';
 import ResilienceBoundary from '../components/ResilienceBoundary';
@@ -31,7 +29,7 @@ import {
 import { runQuery } from '../api/cribl';
 import * as Q from '../api/queries';
 import { kqlStringLiteral } from '../api/kqlSafety';
-import { serviceColor } from '../utils/spans';
+import { entityColor } from '@criblio/app-utils/viz';
 import { previousWindow } from '../utils/timeRange';
 import { useRangeParam } from '../hooks/useRangeParam';
 import DeltaChip from '../components/DeltaChip';
@@ -629,7 +627,7 @@ export default function ServiceDetailPage() {
     };
   }, [clearPartialFailure, metricCardsVisible, range, recordPartialFailure, retryNonce, serviceName]);
 
-  const color = serviceColor(serviceName);
+  const color = entityColor(serviceName);
   const rangeMinutes = relativeTimeMs(range) / 60_000;
 
   // ─────────────────────────────────────────────────────────────
@@ -1253,6 +1251,7 @@ export default function ServiceDetailPage() {
             series={statusMixSeries}
             yFormat={(v) => (v >= 1 ? v.toFixed(0) : v.toFixed(1))}
             emptyMessage={loadingStatusMix ? 'Loading…' : 'No requests'}
+            height={180}
           />
         </div>
       </section>
@@ -1537,7 +1536,7 @@ export default function ServiceDetailPage() {
                             <div className={s.depsLeft}>
                               <span
                                 className={s.depsSvcDot}
-                                style={{ background: serviceColor(e.parent) }}
+                                style={{ background: entityColor(e.parent) }}
                               />
                               <span className={s.depsSvc}>{e.parent}</span>
                             </div>
@@ -1574,7 +1573,7 @@ export default function ServiceDetailPage() {
                             <div className={s.depsLeft}>
                               <span
                                 className={s.depsSvcDot}
-                                style={{ background: serviceColor(e.child) }}
+                                style={{ background: entityColor(e.child) }}
                               />
                               <span className={s.depsSvc}>{e.child}</span>
                             </div>

@@ -20,7 +20,7 @@ import InvestigateButton from '../components/InvestigateButton';
 import { buildAlertSeed } from '../api/agentContext';
 import { runQuery } from '../api/cribl';
 import * as Q from '../api/queries';
-import { serviceColor } from '../utils/spans';
+import { entityColor } from '@criblio/app-utils/viz';
 import { listCachedIncidents, readCachedAlertHistory } from '../api/panelCache';
 import { commitHumanIncidentAction, type HumanIncidentAction } from '../api/incidents';
 import {
@@ -473,14 +473,14 @@ export default function IncidentPage() {
         <div className={s.summaryBody}>
           <p>
             Alerts fired on{' '}
-            <strong style={{ color: serviceColor(incident.rootService) }}>{incident.rootService}</strong>
+            <strong style={{ color: entityColor(incident.rootService) }}>{incident.rootService}</strong>
             {' '}first{downstream.length > 0 && (
               <>
                 , followed by{' '}
                 {downstream.map((m, i) => (
                   <span key={m.service}>
                     {i > 0 && ', '}
-                    <strong style={{ color: serviceColor(m.service) }}>{m.service}</strong>
+                    <strong style={{ color: entityColor(m.service) }}>{m.service}</strong>
                   </span>
                 ))}
               </>
@@ -495,7 +495,7 @@ export default function IncidentPage() {
               <ul className={s.findings}>
                 {concluded.map((iv) => (
                   <li key={iv.investigationId}>
-                    <strong style={{ color: serviceColor(iv.svc) }}>{iv.svc}</strong>: {iv.conclusion}
+                    <strong style={{ color: entityColor(iv.svc) }}>{iv.svc}</strong>: {iv.conclusion}
                     {' '}<Link to={`/investigate?investigation=${encodeURIComponent(iv.investigationId)}`}>transcript →</Link>
                   </li>
                 ))}
@@ -533,7 +533,7 @@ export default function IncidentPage() {
                       {iv.eventType === 'investigation_failed' && <Tag color="warning">Failed</Tag>}
                       {iv.eventType === 'linked' && <Tag color="info">Linked</Tag>}
                     </td>
-                    <td><span style={{ color: serviceColor(iv.svc) }}>{iv.svc}</span></td>
+                    <td><span style={{ color: entityColor(iv.svc) }}>{iv.svc}</span></td>
                     <td style={{ whiteSpace: 'nowrap' }}>{new Date(iv.timeMs).toLocaleString()}</td>
                     <td className={s.conclusionCell}>{iv.conclusion || '—'}</td>
                     <td>
@@ -565,7 +565,7 @@ export default function IncidentPage() {
                     <Link
                       to={`/service/${encodeURIComponent(m.service)}?range=-1h`}
                       className={s.svcLink}
-                      style={{ color: serviceColor(m.service) }}
+                      style={{ color: entityColor(m.service) }}
                     >
                       {m.service}
                     </Link>

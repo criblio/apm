@@ -11,7 +11,8 @@
  * doesn't try to do exact span-id matching; it diffs the call shape.
  */
 import type { JaegerTrace, JaegerSpan } from '../api/types';
-import { buildTimeline, type SpanNode } from './spans';
+import type { TimelineRow } from '@criblio/app-utils/viz';
+import { traceTimeline } from './spans';
 
 export type DiffMark = 'both' | 'left' | 'right';
 
@@ -28,7 +29,7 @@ export interface DiffRow {
 }
 
 interface IndexedNode {
-  node: SpanNode;
+  node: TimelineRow<JaegerSpan>;
   service: string;
   signature: string;
   children: IndexedNode[];
@@ -36,15 +37,15 @@ interface IndexedNode {
 
 /** Build a service-tagged tree from a trace. */
 function indexTrace(trace: JaegerTrace): IndexedNode[] {
-  const timeline = buildTimeline(trace);
+  const timeline = traceTimeline(trace);
   // The timeline is already DFS-ordered with depths; rebuild a tree structure
   // by tracking parents via depth.
   const stack: IndexedNode[] = [];
   const roots: IndexedNode[] = [];
-  for (const sn of timeline.nodes) {
-    const proc = trace.processes[sn.span.processID];
+  for (const sn of timeline.rows) {
+    const proc = trace.processes[sn.item.processID];
     const service = proc?.serviceName ?? 'unknown';
-    const signature = `${service}\u0000${sn.span.operationName}`;
+    const signature = `${service}\u0000${sn.item.operationName}`;
     const node: IndexedNode = { node: sn, service, signature, children: [] };
     while (stack.length > 0 && stack[stack.length - 1].node.depth >= sn.depth) {
       stack.pop();
@@ -98,11 +99,11 @@ function walk(
         mark: 'both',
         depth,
         service: l.service,
-        operationName: l.node.span.operationName,
-        leftDurationUs: l.node.span.duration,
-        rightDurationUs: r.node.span.duration,
-        leftSpan: l.node.span,
-        rightSpan: r.node.span,
+        operationName: l.node.item.operationName,
+        leftDurationUs: l.node.item.duration,
+        rightDurationUs: r.node.item.duration,
+        leftSpan: l.node.item,
+        rightSpan: r.node.item,
       });
       walk(l.children, r.children, depth + 1, out);
     } else {
@@ -121,11 +122,11 @@ function emitSubtree(node: IndexedNode, depth: number, side: 'left' | 'right', o
     mark: side,
     depth,
     service: node.service,
-    operationName: node.node.span.operationName,
-    leftDurationUs: side === 'left' ? node.node.span.duration : null,
-    rightDurationUs: side === 'right' ? node.node.span.duration : null,
-    leftSpan: side === 'left' ? node.node.span : null,
-    rightSpan: side === 'right' ? node.node.span : null,
+    operationName: node.node.item.operationName,
+    leftDurationUs: side === 'left' ? node.node.item.duration : null,
+    rightDurationUs: side === 'right' ? node.node.item.duration : null,
+    leftSpan: side === 'left' ? node.node.item : null,
+    rightSpan: side === 'right' ? node.node.item : null,
   });
   for (const c of node.children) {
     emitSubtree(c, depth + 1, side, out);

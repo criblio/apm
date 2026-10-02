@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { JaegerTrace, JaegerSpan, TraceLogEntry } from '../api/types';
-import { formatDurationUs, serviceColor } from '../utils/spans';
+import { entityColor } from '@criblio/app-utils/viz';
+import { formatDurationUs } from '../utils/spans';
 import TraceLogsView from './TraceLogsView';
 import s from './SpanDetail.module.css';
 
@@ -143,7 +144,7 @@ export default function SpanDetail({
   }
   const proc = trace.processes[span.processID];
   const svc = proc?.serviceName ?? 'unknown';
-  const color = serviceColor(svc);
+  const color = entityColor(svc);
   const errored = isError(span);
   const origin = attributeOrigin(trace, span);
 

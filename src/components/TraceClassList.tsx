@@ -8,7 +8,7 @@
  * worst/most-recent sample trace.
  */
 import { Link } from 'react-router-dom';
-import { serviceColor } from '../utils/spans';
+import { entityColor } from '@criblio/app-utils/viz';
 import s from './TraceClassList.module.css';
 
 type Mode = 'duration' | 'errors';
@@ -147,7 +147,7 @@ export default function TraceClassList({
                   <div className={s.topLine}>
                     <span
                       className={s.svcDot}
-                      style={{ background: serviceColor(item.service) }}
+                      style={{ background: entityColor(item.service) }}
                     />
                     <span className={s.svcName}>{item.service}</span>
                     <span className={s.opName}>{item.operation}</span>

@@ -13,7 +13,7 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, Tag, type TagColor } from '@capra/core';
-import { serviceColor } from '../utils/spans';
+import { entityColor } from '@criblio/app-utils/viz';
 import type { IncidentSummary } from '../api/types';
 import s from './IncidentsSection.module.css';
 
@@ -109,7 +109,7 @@ export default function IncidentsSection({ incidents }: { incidents: IncidentSum
                     {inc.services.map((m, i) => (
                       <span key={m.service}>
                         {i > 0 && ', '}
-                        <span style={{ color: serviceColor(m.service) }}>{m.service}</span>
+                        <span style={{ color: entityColor(m.service) }}>{m.service}</span>
                       </span>
                     ))}
                   </td>

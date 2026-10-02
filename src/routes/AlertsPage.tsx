@@ -9,7 +9,7 @@ import { buildAlertSeed } from '../api/agentContext';
 import { runQuery } from '../api/cribl';
 import { newQueryGeneration, captureQueryGeneration } from '../api/queryGeneration';
 import * as Q from '../api/queries';
-import { serviceColor } from '../utils/spans';
+import { entityColor } from '@criblio/app-utils/viz';
 import { latestRunRows } from '@criblio/app-utils/vt-results';
 import { listCachedIncidents, readCachedAlertHistory, type CachedAlertRow } from '../api/panelCache';
 import IncidentsSection from '../components/IncidentsSection';
@@ -300,7 +300,7 @@ export default function AlertsPage() {
                     <Link
                       to={`/service/${encodeURIComponent(inc.service)}?range=-1h`}
                       className={s.svcLink}
-                      style={{ color: serviceColor(inc.service) }}
+                      style={{ color: entityColor(inc.service) }}
                     >
                       {inc.service}
                     </Link>
@@ -395,7 +395,7 @@ export default function AlertsPage() {
                   <tr key={a.alertId}>
                     <td><Tag color={ss.color}>{ss.label}</Tag></td>
                     <td>
-                      <Link to={`/service/${encodeURIComponent(a.service)}?range=-1h`} className={s.svcLink} style={{ color: serviceColor(a.service) }}>
+                      <Link to={`/service/${encodeURIComponent(a.service)}?range=-1h`} className={s.svcLink} style={{ color: entityColor(a.service) }}>
                         {a.service}
                       </Link>
                     </td>

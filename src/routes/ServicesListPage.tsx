@@ -21,7 +21,7 @@ import {
   getDependencies,
 } from '../api/search';
 import { listCachedHomePanels } from '../api/panelCache';
-import { serviceColor } from '../utils/spans';
+import { entityColor } from '@criblio/app-utils/viz';
 import { serviceHealth, healthRowBg } from '../utils/health';
 import { previousWindow } from '../utils/timeRange';
 import { useRangeParam } from '../hooks/useRangeParam';
@@ -472,7 +472,7 @@ export default function ServicesListPage() {
             </thead>
             <tbody>
               {sortedSummaries.map((svc) => {
-                const color = serviceColor(svc.service);
+                const color = entityColor(svc.service);
                 const err = fmtErrorRate(svc.errorRate);
                 const reqSpark = sparksByService.requests.get(svc.service) ?? [];
                 const p95Spark = sparksByService.p95.get(svc.service) ?? [];

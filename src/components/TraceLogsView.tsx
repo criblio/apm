@@ -14,7 +14,7 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { TraceLogEntry } from '../api/types';
-import { serviceColor } from '../utils/spans';
+import { entityColor } from '@criblio/app-utils/viz';
 import s from './TraceLogsView.module.css';
 
 /** Stringify an attribute value the way a developer would want to read it. */
@@ -189,7 +189,7 @@ export default function TraceLogsView({
                     ? s.sevInfo
                     : s.sevDebug;
             const offsetMs = l.time - referenceMs;
-            const color = serviceColor(l.service);
+            const color = entityColor(l.service);
             return (
               <li
                 key={k}

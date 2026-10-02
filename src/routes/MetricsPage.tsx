@@ -43,7 +43,7 @@ import {
 } from '../api/search';
 import { binSecondsFor } from '../components/timeRanges';
 import { useRangeParam } from '../hooks/useRangeParam';
-import { serviceColor } from '../utils/spans';
+import { entityColor } from '@criblio/app-utils/viz';
 import type {
   MetricSummary,
   MetricSeries,
@@ -340,7 +340,7 @@ export default function MetricsPage() {
   // Build LineChart series from the (possibly multi-group) result.
   // When there's group-by, apply top-N limiting by most recent value
   // so the legend stays useful. When there's no group-by, render a
-  // single-colored line. Colors derive from serviceColor() which
+  // single-colored line. Colors derive from entityColor() which
   // gives consistent identity coloring when group-by is service.name.
   const chartSeries: LineSeries[] = useMemo(() => {
     if (!series || series.groups.length === 0) return [];
@@ -369,7 +369,7 @@ export default function MetricsPage() {
     const top = ranked.slice(0, TOP_N_GROUPS);
     return top.map((g) => ({
       name: g.key || '(empty)',
-      color: serviceColor(g.key || 'other'),
+      color: entityColor(g.key || 'other'),
       data: g.points,
       format: valueFmt,
     }));
