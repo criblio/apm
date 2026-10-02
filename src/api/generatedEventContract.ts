@@ -14,6 +14,7 @@ import {
   STORED_DATATYPE_EXPR,
   defineGeneratedEvents,
   eventIdExpr,
+  kqlExpr,
 } from '@criblio/app-utils/generated-events';
 
 export { STORED_DATATYPE_EXPR, eventIdExpr };
@@ -25,22 +26,30 @@ export const DEPLOY_EVENT_DATATYPE = 'criblapm_deploy';
 /**
  * APM's generated events: the reader predicate and the post-reconcile
  * canary (send one sentinel per datatype through the real export boundary,
- * read it back through the consumers' predicate). Canary rows carry the
- * static columns of a real evaluation / deploy row; every APM reader of
- * these datatypes excludes them (`is_canary`, or an event_type the canary
- * never has).
+ * read it back through the consumers' predicate). Canary rows carry every
+ * column of a real evaluation / deploy row ({@link AlertEvaluationEvent},
+ * {@link DeployEvent}) — including the per-run `evaluation_id` / `version`
+ * (the canary id) and the `now()`-typed `evaluated_at` / `first_seen` the
+ * real producers write — so the round trip exercises the full shape through
+ * the export boundary, as APM's own canary did before the framework uptake.
+ * Every APM reader of these datatypes excludes them (`is_canary`, or an
+ * event_type the canary never has).
  */
 export const GENERATED_EVENTS = defineGeneratedEvents({
   datatypes: [ALERT_EVENT_DATATYPE, DEPLOY_EVENT_DATATYPE],
   schemaVersion: GENERATED_EVENT_SCHEMA_VERSION,
   canaryProducer: 'criblapm_contract_canary',
   canaryFields: {
-    [ALERT_EVENT_DATATYPE]: {
-      record_kind: 'evaluation', event_type: 'evaluated',
+    [ALERT_EVENT_DATATYPE]: (canaryId) => ({
+      record_kind: 'evaluation', evaluation_id: canaryId, evaluated_at: kqlExpr('now()'),
+      event_type: 'evaluated',
       alert_id: '__canary__', alert_status: 'ok', svc: '__canary__',
       signal_type: 'canary', consecutive_bad: 0, consecutive_good: 0, fire_count: 0,
-    },
-    [DEPLOY_EVENT_DATATYPE]: { record_kind: 'deploy', svc: '__canary__', n_spans: 0 },
+    }),
+    [DEPLOY_EVENT_DATATYPE]: (canaryId) => ({
+      record_kind: 'deploy', svc: '__canary__', version: canaryId,
+      first_seen: kqlExpr('now()'), n_spans: 0,
+    }),
   },
 });
 

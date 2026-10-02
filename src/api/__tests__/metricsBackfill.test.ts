@@ -15,6 +15,7 @@ import { setCurrentDataset } from '@criblio/app-utils/dataset';
 import {
   createMetricsCoverageProbe,
   DEFAULT_BACKFILL_WINDOW_SECONDS,
+  windowTilingError,
   type ExportStats,
 } from '@criblio/app-utils/metrics-backfill';
 import type { MetricsTransport } from '@criblio/app-utils/metrics';
@@ -97,6 +98,43 @@ describe('makeApmPlanWindows', () => {
     expect(await plan(hist('h'), { earliestSec: 60, latestSec: 420 })).toEqual([
       { earliestSec: 60, latestSec: 300 }, { earliestSec: 300, latestSec: 420 },
     ]);
+  });
+
+  it('tiles the gap exactly — bridging a bin with no spans, and one window when there are none', async () => {
+    // runMetricsBackfill (0.12.4) fails an emitter whose windows leave a
+    // hole, overlap, or stray outside the gap. The bin at 300 is missing
+    // (no spans): the window above it starts where the one below ended,
+    // instead of leaving a hole.
+    const sparse = makeApmPlanWindows(noHttp, async () => [
+      { tSec: 0, count: 30_000 }, { tSec: 600, count: 30_000 },
+    ]);
+    const gap = { earliestSec: 60, latestSec: 840 };
+    const w = await sparse(hist('h'), gap);
+    expect(w).toEqual([{ earliestSec: 60, latestSec: 300 }, { earliestSec: 300, latestSec: 840 }]);
+    expect(windowTilingError(w, gap)).toBeNull();
+
+    const empty = makeApmPlanWindows(noHttp, async () => []);
+    expect(await empty(hist('h'), gap)).toEqual([gap]);
+  });
+
+  it('every planner output tiles its gap', async () => {
+    const gaps = [
+      { earliestSec: 0, latestSec: 900 },
+      { earliestSec: 60, latestSec: 420 },
+      { earliestSec: 120, latestSec: DEFAULT_BACKFILL_WINDOW_SECONDS * 3 + 7 * 60 },
+    ];
+    const plan = makeApmPlanWindows(noHttp, async (e, l) => {
+      const bins: SpanCountBin[] = [];
+      for (let t = Math.floor(e / 300_000) * 300; t * 1000 < l; t += 300) {
+        if (t % 900 !== 0) bins.push({ tSec: t, count: 25_000 });
+      }
+      return bins;
+    });
+    for (const gap of gaps) {
+      for (const em of [counter('c'), hist('h'), hist('h', 0.1)]) {
+        expect(windowTilingError(await plan(em, gap), gap), `${em.id}@${gap.earliestSec}`).toBeNull();
+      }
+    }
   });
 
   it('parses backfillSpanCounts rows', () => {
@@ -204,33 +242,44 @@ describe('runMetricsBackfill with APM deps — drop handling (adopted framework 
 });
 
 describe('coverage probe for the per-quantile percentile gauges', () => {
-  /** NDJSON a `count by (quantile)` range query returns: p50/p95 from 120s,
-   *  p99 only from 600s. */
+  /** A metrics store holding p50/p95 from 120s and p99 only from 600s; it
+   *  answers `count(m{quantile="pN"})` with that quantile's samples alone
+   *  (no labels on the result, as `count()` drops them) and a bare
+   *  `count(m)` with every sample. */
+  const stored = [
+    ...[120, 180, 600].map((t) => ({ t, quantile: 'p50' })),
+    ...[120, 600].map((t) => ({ t, quantile: 'p95' })),
+    { t: 600, quantile: 'p99' },
+  ];
   const transportCalls: string[] = [];
   const transport: MetricsTransport = async (query) => {
     transportCalls.push(query);
-    const rows = [
-      ...[120, 180, 600].map((t) => ({ _kind: 'sample', _time: t, _value: 4, quantile: 'p50' })),
-      ...[120, 600].map((t) => ({ _kind: 'sample', _time: t, _value: 4, quantile: 'p95' })),
-      { _kind: 'sample', _time: 600, _value: 4, quantile: 'p99' },
-    ];
+    const q = /quantile="(p\d+)"/.exec(query)?.[1];
+    const rows = stored
+      .filter((r) => !q || r.quantile === q)
+      .map((r) => ({ _kind: 'sample', _time: r.t, _value: 1 }));
     return [JSON.stringify({ isFinished: true, totalEventCount: rows.length }), ...rows.map((r) => JSON.stringify(r))].join('\n');
   };
   const probe = createMetricsCoverageProbe<BackfillEmitter>({ transport });
   const byId = new Map(getMetricEmitters().map((e) => [e.id, e]));
 
-  it('probes count by (quantile) and takes only the emitter’s own quantile', async () => {
+  it('probes only the emitter’s own quantile (coverageLabels)', async () => {
     transportCalls.length = 0;
     expect(await probe(byId.get('criblapm__metric_req_lat_p95')!, 0, 900_000)).toBe(120);
     expect(await probe(byId.get('criblapm__metric_req_lat_p99')!, 0, 900_000)).toBe(600);
-    expect(transportCalls[0]).toBe('count by (quantile) (criblapm_request_latency_ms)');
+    expect(transportCalls).toEqual([
+      'count(criblapm_request_latency_ms{quantile="p95"})',
+      'count(criblapm_request_latency_ms{quantile="p99"})',
+    ]);
   });
 
   it('reads a quantile with no samples as uncovered even when its siblings exist', async () => {
     const edge = byId.get('criblapm__metric_edge_lat_p95')!;
-    const noP95: MetricsTransport = async () =>
-      [JSON.stringify({ isFinished: true, totalEventCount: 1 }), JSON.stringify({ _kind: 'sample', _time: 60, _value: 1, quantile: 'p50' })].join('\n');
-    expect(await createMetricsCoverageProbe<BackfillEmitter>({ transport: noP95 })(edge, 0, 900_000)).toBeNull();
+    // The store holds only p50 for this family, so the p95 selector matches nothing.
+    const onlyP50: MetricsTransport = async (query) =>
+      [JSON.stringify({ isFinished: true, totalEventCount: 0 }),
+        ...(query.includes('quantile="p95"') ? [] : [JSON.stringify({ _kind: 'sample', _time: 60, _value: 1 })])].join('\n');
+    expect(await createMetricsCoverageProbe<BackfillEmitter>({ transport: onlyP50 })(edge, 0, 900_000)).toBeNull();
   });
 
   it('probes plain counters with count(metric)', async () => {
@@ -259,7 +308,7 @@ describe('getMetricEmitters', () => {
     for (const e of em) {
       expect(e.query).toContain('export to metrics');
       // A bare PromQL identifier: the framework probe rejects selectors, so
-      // the quantile lives in coverageSplit, not in the name.
+      // the quantile lives in coverageLabels, not in the name.
       expect(e.metricName).toMatch(/^criblapm_[a-z_]+$/);
       expect(['counter', 'histogram']).toContain(e.kind);
     }
@@ -268,8 +317,11 @@ describe('getMetricEmitters', () => {
     const lat = em.find((e) => e.id === 'criblapm__metric_req_lat_p95')!;
     expect(lat.kind).toBe('counter');
     expect(lat.query).toContain('percentile(dur_ms, 95)');
-    expect(lat.coverageSplit).toEqual({ label: 'quantile', values: ['p95'] });
+    expect(lat.coverageLabels).toEqual({ quantile: 'p95' });
+    expect(lat.coverageSplit).toBeUndefined();
     expect(emitterFamilyLabel(lat)).toBe('criblapm_request_latency_ms{quantile="p95"}');
-    expect(em.find((e) => e.id === 'criblapm__metric_requests')!.coverageSplit).toBeUndefined();
+    const requests = em.find((e) => e.id === 'criblapm__metric_requests')!;
+    expect(requests.coverageLabels).toBeUndefined();
+    expect(emitterFamilyLabel(requests)).toBe('criblapm_requests_total');
   });
 });
