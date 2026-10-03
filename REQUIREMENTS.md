@@ -718,10 +718,20 @@ Metrics store (`export to metrics` / PromQL):
   recorded 40-char SHA that CI and release both read. Extraction rule:
   push code down into the framework only when a second consumer
   exists.
-- Build once, promote that exact artifact: byte-identical rebuild
-  check, SHA-256 checksums, SBOM, archive inspection (rejects
-  unexpected proxy grants, scripts, dependencies, server code),
-  install the produced tgz before publishing.
+- Build once, promote that exact artifact: the release workflow
+  builds the `.tgz` once, installs that file in the validation
+  workspace, smoke-tests it, then attests and uploads the same file
+  with its SHA-256 checksum, SBOM, and build provenance. Archive
+  inspection rejects unexpected proxy grants, scripts, dependencies,
+  and server code. Never rebuild a different artifact within a
+  workflow.
+- Rebuilds are not required to be byte-identical. APM packages with
+  `apps package` (`@cribl/apps`), the platform packer, whose archives
+  embed file mtimes and owners. The owner decided on 2026-10-02 that
+  byte-identical rebuilds are not worth keeping the deprecated
+  `cribl-app-package` for, and the platform packer cannot be changed
+  from here. Trust comes from the checksum and provenance of the one
+  built file, not from rebuilding it.
 - Releases are tag-triggered; the tag must match `package.json`; a
   lint failure on the tagged commit publishes nothing. Run lint, unit
   tests, type-check, and package locally before tagging.

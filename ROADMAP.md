@@ -164,8 +164,10 @@ burn-down table above records their current disposition.
 **Stop-ship done =** the live contract canary passes; a fault produces
 exactly one firing/resolved pair; adversarial inputs cannot add KQL
 pipeline stages; the package has no unused proxy capability or known
-high-severity advisory; and the released tgz is byte-identical to the
-artifact tested with the recorded framework SHA.
+high-severity advisory; and the released tgz is the same file that was
+tested, attested by checksum and provenance. (Byte-identical rebuilds
+were dropped on 2026-10-02 with the move to `apps package`; see
+REQUIREMENTS §3.5.)
 
 ### P1 resilience — make overload and partial failure boring
 
