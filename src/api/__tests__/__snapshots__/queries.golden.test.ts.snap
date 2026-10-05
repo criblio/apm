@@ -1177,8 +1177,8 @@ exports[`queries.ts — golden snapshots + invariants > metricEdgeCallsExport > 
     | where svc != psvc
     | summarize value=count() by bin(_time, 1m), parent=psvc, child=svc, outcome
     | project-rename _time=bin_time_1m
-    | extend name="criblapm_edge_calls_total", type="counter"
-    | export to metrics typeField=type timeField=_time nameField=name valueField=value labelFields=[parent, child, outcome]"
+    | extend name="criblapm_edge_calls_total"
+    | export to metrics type=counter timeField=_time nameField=name valueField=value labelFields=[parent, child, outcome]"
 `;
 
 exports[`queries.ts — golden snapshots + invariants > metricEdgeDurationExport > snapshot stable 1`] = `
@@ -1221,8 +1221,8 @@ exports[`queries.ts — golden snapshots + invariants > metricEdgeLatencyP95Expo
       ) on trace_id, $left.parent_sid == $right.psid
     | where svc != psvc
     | summarize value=percentile(dur_ms, 95) by _time, parent=psvc, child=svc
-    | extend name="criblapm_edge_latency_ms", type="gauge", quantile="p95"
-    | export to metrics typeField=type timeField=_time nameField=name valueField=value labelFields=[parent, child, quantile]"
+    | extend name="criblapm_edge_latency_ms", quantile="p95"
+    | export to metrics type=gauge timeField=_time nameField=name valueField=value labelFields=[parent, child, quantile]"
 `;
 
 exports[`queries.ts — golden snapshots + invariants > metricLatencyPercentileExport > snapshot stable 1`] = `
@@ -1235,8 +1235,8 @@ exports[`queries.ts — golden snapshots + invariants > metricLatencyPercentileE
     | where dur_us < 30000000
     | summarize value=percentile(dur_ms, 95) by bin(_time, 1m), svc
     | project-rename _time=bin_time_1m
-    | extend name="criblapm_request_latency_ms", type="gauge", quantile="p95"
-    | export to metrics typeField=type timeField=_time nameField=name valueField=value labelFields=[svc, quantile]"
+    | extend name="criblapm_request_latency_ms", quantile="p95"
+    | export to metrics type=gauge timeField=_time nameField=name valueField=value labelFields=[svc, quantile]"
 `;
 
 exports[`queries.ts — golden snapshots + invariants > metricLatencyPercentileExport op > snapshot stable 1`] = `
@@ -1250,8 +1250,8 @@ exports[`queries.ts — golden snapshots + invariants > metricLatencyPercentileE
     | where dur_us < 30000000
     | summarize value=percentile(dur_ms, 50) by bin(_time, 1m), svc, operation
     | project-rename _time=bin_time_1m
-    | extend name="criblapm_op_latency_ms", type="gauge", quantile="p50"
-    | export to metrics typeField=type timeField=_time nameField=name valueField=value labelFields=[svc, operation, quantile]"
+    | extend name="criblapm_op_latency_ms", quantile="p50"
+    | export to metrics type=gauge timeField=_time nameField=name valueField=value labelFields=[svc, operation, quantile]"
 `;
 
 exports[`queries.ts — golden snapshots + invariants > metricMessagingDurationExport > snapshot stable 1`] = `
@@ -1282,8 +1282,8 @@ exports[`queries.ts — golden snapshots + invariants > metricMessagingExport > 
     | where dur_us < 30000000
     | summarize value=count() by bin(_time, 1m), svc, dest, op, system, outcome
     | project-rename _time=bin_time_1m
-    | extend name="criblapm_messaging_total", type="counter"
-    | export to metrics typeField=type timeField=_time nameField=name valueField=value labelFields=[svc, dest, op, system, outcome]"
+    | extend name="criblapm_messaging_total"
+    | export to metrics type=counter timeField=_time nameField=name valueField=value labelFields=[svc, dest, op, system, outcome]"
 `;
 
 exports[`queries.ts — golden snapshots + invariants > metricMessagingLatencyP95Export > snapshot stable 1`] = `
@@ -1298,8 +1298,8 @@ exports[`queries.ts — golden snapshots + invariants > metricMessagingLatencyP9
     | where isnotempty(dest) and isnotempty(op) and dur_ms >= 0
     | where dur_us < 30000000
     | summarize value=percentile(dur_ms, 95) by _time, svc, dest, op, system
-    | extend name="criblapm_msg_latency_ms", type="gauge", quantile="p95"
-    | export to metrics typeField=type timeField=_time nameField=name valueField=value labelFields=[svc, dest, op, system, quantile]"
+    | extend name="criblapm_msg_latency_ms", quantile="p95"
+    | export to metrics type=gauge timeField=_time nameField=name valueField=value labelFields=[svc, dest, op, system, quantile]"
 `;
 
 exports[`queries.ts — golden snapshots + invariants > metricRequestsExport > snapshot stable 1`] = `
@@ -1313,8 +1313,8 @@ exports[`queries.ts — golden snapshots + invariants > metricRequestsExport > s
     | where dur_us < 30000000
     | summarize value=count() by bin(_time, 1m), svc, operation, outcome
     | project-rename _time=bin_time_1m
-    | extend name="criblapm_requests_total", type="counter"
-    | export to metrics typeField=type timeField=_time nameField=name valueField=value labelFields=[svc, operation, outcome]"
+    | extend name="criblapm_requests_total"
+    | export to metrics type=counter timeField=_time nameField=name valueField=value labelFields=[svc, operation, outcome]"
 `;
 
 exports[`queries.ts — golden snapshots + invariants > metricSampleRecords > snapshot stable 1`] = `"dataset="otel" | where datatype == "generic_metrics" | limit 500"`;
@@ -1357,8 +1357,8 @@ exports[`queries.ts — golden snapshots + invariants > metricStatusClassExport 
         "ok")
     | summarize value=count() by bin(_time, 1m), svc, status_class
     | project-rename _time=bin_time_1m
-    | extend name="criblapm_status_class_total", type="counter"
-    | export to metrics typeField=type timeField=_time nameField=name valueField=value labelFields=[svc, status_class]"
+    | extend name="criblapm_status_class_total"
+    | export to metrics type=counter timeField=_time nameField=name valueField=value labelFields=[svc, status_class]"
 `;
 
 exports[`queries.ts — golden snapshots + invariants > metricTimeSeries (basic) > snapshot stable 1`] = `

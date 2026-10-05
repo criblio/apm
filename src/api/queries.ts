@@ -2460,9 +2460,14 @@ export function listMetricNames(): string {
 //  1. After `summarize … by bin(_time,1m)` the time column is
 //     `bin_time_1m`; rename it to `_time` or the export drops every
 //     event with no error.
-//  2. Histogram type is the LITERAL `type=histogram` param; counter is
-//     `typeField=<field>` (the literal `type=` only accepts histogram,
-//     and `"histogram"` via typeField drops as invalid_type).
+//  2. The metric kind is the LITERAL `type=` param — `counter`, `gauge`
+//     or `histogram`. It used to accept only `histogram`, so counters and
+//     gauges had to pass `typeField=<field>` instead; Cribl Search removed
+//     `typeField` outright on 2026-10-04 ("unknown parameter for export
+//     operator: typeField"), which killed every emitter here at parse time
+//     until they moved to the literal. All three kinds are accepted now,
+//     verified live against the API, so there is no reason to reintroduce a
+//     field reference.
 // Always confirm an emit with the export output table
 // (eventsOut/eventsDropped/dropReasons) — a `completed` job can drop
 // 100% of events.
@@ -2492,8 +2497,8 @@ export function metricRequestsExport(): string {
     ${streamFilterSpanKqlClause()}
     | summarize value=count() by bin(_time, 1m), svc, operation, outcome
     | project-rename _time=bin_time_1m
-    | extend name="${METRIC_REQUESTS_TOTAL}", type="counter"
-    | export to metrics typeField=type timeField=_time nameField=name valueField=value labelFields=[svc, operation, outcome]`;
+    | extend name="${METRIC_REQUESTS_TOTAL}"
+    | export to metrics type=counter timeField=_time nameField=name valueField=value labelFields=[svc, operation, outcome]`;
 }
 
 /**
@@ -2525,8 +2530,8 @@ export function metricStatusClassExport(): string {
         "ok")
     | summarize value=count() by bin(_time, 1m), svc, status_class
     | project-rename _time=bin_time_1m
-    | extend name="${METRIC_STATUS_CLASS_TOTAL}", type="counter"
-    | export to metrics typeField=type timeField=_time nameField=name valueField=value labelFields=[svc, status_class]`;
+    | extend name="${METRIC_STATUS_CLASS_TOTAL}"
+    | export to metrics type=counter timeField=_time nameField=name valueField=value labelFields=[svc, status_class]`;
 }
 
 const QUANTILE_LABEL: Record<number, string> = { 50: 'p50', 95: 'p95', 99: 'p99' };
@@ -2559,8 +2564,8 @@ export function metricLatencyPercentileExport(
     ${streamFilterSpanKqlClause()}
     | summarize value=percentile(dur_ms, ${q}) by ${groupBy}
     | project-rename _time=bin_time_1m
-    | extend name="${name}", type="gauge", quantile="${QUANTILE_LABEL[q]}"
-    | export to metrics typeField=type timeField=_time nameField=name valueField=value labelFields=${labels}`;
+    | extend name="${name}", quantile="${QUANTILE_LABEL[q]}"
+    | export to metrics type=gauge timeField=_time nameField=name valueField=value labelFields=${labels}`;
 }
 
 /**
@@ -2615,8 +2620,8 @@ export function metricEdgeCallsExport(): string {
     | where svc != psvc
     | summarize value=count() by bin(_time, 1m), parent=psvc, child=svc, outcome
     | project-rename _time=bin_time_1m
-    | extend name="${METRIC_EDGE_CALLS_TOTAL}", type="counter"
-    | export to metrics typeField=type timeField=_time nameField=name valueField=value labelFields=[parent, child, outcome]`;
+    | extend name="${METRIC_EDGE_CALLS_TOTAL}"
+    | export to metrics type=counter timeField=_time nameField=name valueField=value labelFields=[parent, child, outcome]`;
 }
 
 /** Edge latency histogram — child-span duration per (parent, child). */
@@ -2662,8 +2667,8 @@ export function metricEdgeLatencyP95Export(): string {
       ) on trace_id, $left.parent_sid == $right.psid
     | where svc != psvc
     | summarize value=percentile(dur_ms, 95) by _time, parent=psvc, child=svc
-    | extend name="${METRIC_EDGE_LATENCY_MS}", type="gauge", quantile="p95"
-    | export to metrics typeField=type timeField=_time nameField=name valueField=value labelFields=[parent, child, quantile]`;
+    | extend name="${METRIC_EDGE_LATENCY_MS}", quantile="p95"
+    | export to metrics type=gauge timeField=_time nameField=name valueField=value labelFields=[parent, child, quantile]`;
 }
 
 /** Messaging (kafka etc.) edge counter, labelled by (svc, dest, op,
@@ -2680,8 +2685,8 @@ export function metricMessagingExport(): string {
     ${streamFilterSpanKqlClause()}
     | summarize value=count() by bin(_time, 1m), svc, dest, op, system, outcome
     | project-rename _time=bin_time_1m
-    | extend name="${METRIC_MESSAGING_TOTAL}", type="counter"
-    | export to metrics typeField=type timeField=_time nameField=name valueField=value labelFields=[svc, dest, op, system, outcome]`;
+    | extend name="${METRIC_MESSAGING_TOTAL}"
+    | export to metrics type=counter timeField=_time nameField=name valueField=value labelFields=[svc, dest, op, system, outcome]`;
 }
 
 /** Messaging latency histogram per (svc, dest, op, system). */
@@ -2715,8 +2720,8 @@ export function metricMessagingLatencyP95Export(): string {
     | where isnotempty(dest) and isnotempty(op) and dur_ms >= 0
     ${streamFilterSpanKqlClause()}
     | summarize value=percentile(dur_ms, 95) by _time, svc, dest, op, system
-    | extend name="${METRIC_MSG_LATENCY_MS}", type="gauge", quantile="p95"
-    | export to metrics typeField=type timeField=_time nameField=name valueField=value labelFields=[svc, dest, op, system, quantile]`;
+    | extend name="${METRIC_MSG_LATENCY_MS}", quantile="p95"
+    | export to metrics type=gauge timeField=_time nameField=name valueField=value labelFields=[svc, dest, op, system, quantile]`;
 }
 
 /**

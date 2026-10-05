@@ -16,15 +16,74 @@ import { setMetricsEmit } from '../metricsEmit';
 setCurrentDataset('otel');
 afterEach(() => setMetricsEmit(false));
 
+/**
+ * Every emitter in the provisioning plan, not just the two built directly
+ * above. On 2026-10-04 Cribl Search removed the `export to metrics`
+ * `typeField` parameter; all 13 scheduled emitters carried it, so each one
+ * began failing at parse time with "unknown parameter for export operator:
+ * typeField" and the metrics store went silent for 31 hours. Nothing caught
+ * it: the per-emitter tests only covered two builders, and a failing
+ * scheduled search is invisible from inside the app.
+ *
+ * Asserting across the plan is what makes this a family-wide guard. It
+ * cannot detect the platform changing the contract again — only a live
+ * export can — but it does stop an emitter being added or reverted with a
+ * parameter the operator no longer accepts.
+ */
+describe('every metric emitter in the provisioning plan', () => {
+  setMetricsEmit(true);
+  const emitters = getProvisioningPlan().filter((s) => s.query.includes('export to metrics'));
+  setMetricsEmit(false);
+
+  it('includes the whole emitter family', () => {
+    expect(emitters.length).toBeGreaterThanOrEqual(12);
+  });
+
+  it.each(emitters.map((e) => [e.id, e.query] as const))(
+    '%s declares its kind with the literal type= and no typeField',
+    (_id, query) => {
+      expect(query).not.toContain('typeField');
+      expect(query).toMatch(/export to metrics type=(counter|gauge|histogram)\b/);
+    },
+  );
+
+  // Rule 1 from the emitter comment: binning INSIDE the `summarize … by`
+  // clause names the column `bin_time_1m`, and an export that keeps that
+  // name drops every event WITHOUT erroring — the other way these go quiet.
+  // Emitters that bin in an earlier `extend` already group by `_time` and
+  // need no rename, so only the `by bin(...)` form is checked.
+  it.each(
+    emitters
+      .filter((e) => /by [^|]*bin\(_time, 1m\)/.test(e.query))
+      .map((e) => [e.id, e.query] as const),
+  )('%s renames the bin column back to _time', (_id, query) => {
+    expect(query).toContain('project-rename _time=bin_time_1m');
+  });
+
+  // Whichever form it uses, the exported timeField must exist as `_time`.
+  it.each(emitters.map((e) => [e.id, e.query] as const))(
+    '%s exports timeField=_time and actually produces that column',
+    (_id, query) => {
+      expect(query).toContain('timeField=_time');
+      expect(
+        /project-rename _time=bin_time_1m/.test(query) || /_time=bin\(_time, 1m\)/.test(query),
+      ).toBe(true);
+    },
+  );
+});
+
 describe('metricRequestsExport (counter emitter)', () => {
   const q = metricRequestsExport();
   it('renames the summarize bin column to _time (else export drops all events)', () => {
     expect(q).toContain('project-rename _time=bin_time_1m');
   });
-  it('emits a counter via typeField (not the literal type= param)', () => {
-    expect(q).toContain('typeField=type');
-    expect(q).toContain('type="counter"');
-    expect(q).not.toMatch(/export to metrics[^|]*\btype=counter\b/);
+  // Cribl Search removed `typeField` on 2026-10-04 and every emitter began
+  // failing with "unknown parameter for export operator: typeField". The
+  // literal now accepts counter/gauge/histogram, so no emitter may carry a
+  // field reference — this asserts the whole family, not just this one.
+  it('declares the counter kind with the literal type= param, never typeField', () => {
+    expect(q).toContain('export to metrics type=counter');
+    expect(q).not.toContain('typeField');
   });
   it('labels by svc and outcome, names the metric criblapm_requests_total', () => {
     expect(q).toContain('labelFields=[svc, operation, outcome]');
@@ -35,7 +94,7 @@ describe('metricRequestsExport (counter emitter)', () => {
 
 describe('metricDurationExport (histogram emitter)', () => {
   const q = metricDurationExport();
-  it('uses the LITERAL type=histogram param (typeField would drop as invalid_type)', () => {
+  it('uses the LITERAL type=histogram param', () => {
     expect(q).toContain('export to metrics type=histogram');
     expect(q).not.toContain('typeField');
   });
